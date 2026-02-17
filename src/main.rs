@@ -80,7 +80,6 @@ enum HookSub {
 
 #[derive(Debug, Serialize)]
 struct EditorState {
-    workspace: String,
     panes: Vec<PaneEntry>,
 }
 
@@ -144,7 +143,7 @@ struct RawEditor {
     sel_end: i64,
 }
 
-fn query_editors(db_path: &Path, cwd: &Path) -> Result<(String, Vec<RawEditor>), String> {
+fn query_editors(db_path: &Path) -> Result<Vec<RawEditor>, String> {
     let conn = rusqlite::Connection::open_with_flags(
         db_path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -155,18 +154,6 @@ fn query_editors(db_path: &Path, cwd: &Path) -> Result<(String, Vec<RawEditor>),
     conn.pragma_update(None, "journal_mode", "wal")
         .map_err(|e| format!("failed to set journal_mode: {e}"))?;
 
-    let cwd_str = cwd.to_string_lossy();
-
-    // Find workspace matching cwd
-    let (workspace_id, workspace_path): (i64, String) = conn
-        .query_row(
-            "SELECT workspace_id, paths FROM workspaces \
-             WHERE paths LIKE ?1 ORDER BY timestamp DESC LIMIT 1",
-            [format!("%{cwd_str}%")],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .map_err(|e| format!("no workspace found for {cwd_str}: {e}"))?;
-
     let mut stmt = conn
         .prepare(
             "SELECT i.pane_id, e.path, es.start, es.end \
@@ -174,14 +161,13 @@ fn query_editors(db_path: &Path, cwd: &Path) -> Result<(String, Vec<RawEditor>),
              JOIN editors e ON i.item_id = e.item_id AND i.workspace_id = e.workspace_id \
              JOIN editor_selections es \
                ON e.item_id = es.editor_id AND e.workspace_id = es.workspace_id \
-             WHERE i.workspace_id = ?1 AND i.kind = 'Editor' \
+             WHERE i.kind = 'Editor' \
              ORDER BY i.pane_id, e.path, es.start",
         )
         .map_err(|e| format!("prepare failed: {e}"))?;
 
     let editors: Vec<RawEditor> = stmt
-        .query_map([workspace_id], |row| {
-            // path is stored as BLOB in Zed's DB, read as bytes and convert
+        .query_map([], |row| {
             let path_bytes: Vec<u8> = row.get(1)?;
             let path = String::from_utf8(path_bytes).unwrap_or_default();
             Ok(RawEditor {
@@ -195,7 +181,7 @@ fn query_editors(db_path: &Path, cwd: &Path) -> Result<(String, Vec<RawEditor>),
         .filter_map(|r| r.ok())
         .collect();
 
-    Ok((workspace_path, editors))
+    Ok(editors)
 }
 
 // --- Byte offset to line:col ---
@@ -217,18 +203,16 @@ fn byte_offset_to_position(content: &[u8], offset: usize) -> Position {
 
 // --- Build structured state ---
 
-fn build_editor_state(
-    workspace_path: &str,
-    raw_editors: Vec<RawEditor>,
-    cwd: &Path,
-) -> EditorState {
-    let cwd_str = cwd.to_string_lossy();
+fn build_editor_state(raw_editors: Vec<RawEditor>, cwd: Option<&Path>) -> EditorState {
+    let cwd_str = cwd.map(|p| p.to_string_lossy().to_string());
 
     // Group by (pane_id, path), preserving order via BTreeMap
     let mut pane_files: BTreeMap<(i64, String), Vec<(i64, i64)>> = BTreeMap::new();
     for ed in &raw_editors {
-        if !ed.path.starts_with(cwd_str.as_ref()) {
-            continue;
+        if let Some(ref cwd) = cwd_str {
+            if !ed.path.starts_with(cwd.as_str()) {
+                continue;
+            }
         }
         pane_files
             .entry((ed.pane_id, ed.path.clone()))
@@ -244,10 +228,14 @@ fn build_editor_state(
             Err(_) => continue, // file deleted, skip
         };
 
-        let rel_path = if let Some(stripped) = path.strip_prefix(&format!("{cwd_str}/")) {
-            stripped.to_string()
-        } else if let Some(stripped) = path.strip_prefix(cwd_str.as_ref()) {
-            stripped.trim_start_matches('/').to_string()
+        let rel_path = if let Some(ref cwd) = cwd_str {
+            if let Some(stripped) = path.strip_prefix(&format!("{cwd}/")) {
+                stripped.to_string()
+            } else if let Some(stripped) = path.strip_prefix(cwd.as_str()) {
+                stripped.trim_start_matches('/').to_string()
+            } else {
+                path.clone()
+            }
         } else {
             path.clone()
         };
@@ -274,10 +262,7 @@ fn build_editor_state(
         });
     }
 
-    EditorState {
-        workspace: workspace_path.to_string(),
-        panes,
-    }
+    EditorState { panes }
 }
 
 // --- Output formatting ---
@@ -312,8 +297,8 @@ fn format_json(state: &EditorState) -> String {
 
 fn get_state(cwd: &Path) -> Option<(EditorState, String)> {
     let db_path = find_zed_db()?;
-    let (workspace_path, raw_editors) = query_editors(&db_path, cwd).ok()?;
-    let state = build_editor_state(&workspace_path, raw_editors, cwd);
+    let raw_editors = query_editors(&db_path).ok()?;
+    let state = build_editor_state(raw_editors, Some(cwd));
     if state.panes.is_empty() {
         return None;
     }
@@ -633,21 +618,17 @@ fn main() {
         }
 
         None => {
-            let cwd = cli
-                .cwd
-                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-
             let db_path = match find_zed_db() {
                 Some(p) => p,
                 None => return, // silent exit
             };
 
-            let (workspace_path, raw_editors) = match query_editors(&db_path, &cwd) {
+            let raw_editors = match query_editors(&db_path) {
                 Ok(r) => r,
                 Err(_) => return, // silent exit
             };
 
-            let state = build_editor_state(&workspace_path, raw_editors, &cwd);
+            let state = build_editor_state(raw_editors, cli.cwd.as_deref());
             if state.panes.is_empty() {
                 return;
             }
