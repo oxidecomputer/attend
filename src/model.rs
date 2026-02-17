@@ -1,16 +1,16 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::fs;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::db::{self, RawEditor};
 
 /// Resolved editor state: open files with cursor positions and terminal cwds.
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditorState {
     /// Open editor tabs with resolved line:col selections.
     pub files: Vec<FileEntry>,
@@ -19,7 +19,7 @@ pub struct EditorState {
 }
 
 /// An open file with its cursor/selection positions.
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileEntry {
     /// Absolute or cwd-relative file path.
     pub path: String,
@@ -28,7 +28,7 @@ pub struct FileEntry {
 }
 
 /// A 1-based line:col position in a file.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Position {
     /// 1-based line number.
     pub line: usize,
@@ -37,7 +37,7 @@ pub struct Position {
 }
 
 /// A selection range (or cursor when start == end).
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Selection {
     /// Start of the selection.
     pub start: Position,
@@ -192,6 +192,78 @@ fn resolve_selections(path: &Path, raw: &[(i64, i64)]) -> anyhow::Result<Vec<Sel
             Ok(Selection { start, end })
         })
         .collect()
+}
+
+/// Reorder files and selections so recently changed items appear first.
+///
+/// - Files not present in the previous state (new) or with changed selections
+///   move to the front, preserving their relative (alphabetical) order.
+/// - Unchanged files retain their position from the previous (cached) order.
+/// - Within a touched file, new/changed selections come first; unchanged
+///   selections keep their cached order.
+pub fn reorder_by_newness(state: &mut EditorState, previous: &EditorState) {
+    // Map previous path → (index, &selections)
+    let prev_map: HashMap<&str, (usize, &Vec<Selection>)> = previous
+        .files
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.path.as_str(), (i, &f.selections)))
+        .collect();
+
+    // Classify each file as touched (None) or unchanged (Some(cached_index))
+    let mut tagged: Vec<(Option<usize>, FileEntry)> = Vec::with_capacity(state.files.len());
+
+    for file in state.files.drain(..) {
+        match prev_map.get(file.path.as_str()) {
+            None => {
+                // New file → touched
+                tagged.push((None, file));
+            }
+            Some(&(cached_idx, prev_sels)) => {
+                if file.selections == *prev_sels {
+                    // Unchanged → keep cached position
+                    tagged.push((Some(cached_idx), file));
+                } else {
+                    // Changed selections → touched; reorder selections
+                    let mut new_sels = Vec::with_capacity(file.selections.len());
+                    let mut unchanged_sels: Vec<(usize, Selection)> = Vec::new();
+
+                    // Build a set of (cached_index) for previous selections
+                    let prev_sel_indices: HashMap<(&Position, &Position), usize> = prev_sels
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| ((&s.start, &s.end), i))
+                        .collect();
+
+                    for sel in file.selections {
+                        match prev_sel_indices.get(&(&sel.start, &sel.end)) {
+                            Some(&idx) => unchanged_sels.push((idx, sel)),
+                            None => new_sels.push(sel),
+                        }
+                    }
+                    unchanged_sels.sort_by_key(|(idx, _)| *idx);
+                    new_sels.extend(unchanged_sels.into_iter().map(|(_, s)| s));
+
+                    tagged.push((
+                        None,
+                        FileEntry {
+                            path: file.path,
+                            selections: new_sels,
+                        },
+                    ));
+                }
+            }
+        }
+    }
+
+    // Stable partition: touched (None) first, then unchanged sorted by cached index.
+    // touched files keep their relative order (alphabetical from build_editor_state).
+    tagged.sort_by_key(|(cached_idx, _)| match cached_idx {
+        None => (0, 0),
+        Some(idx) => (1, *idx),
+    });
+
+    state.files = tagged.into_iter().map(|(_, f)| f).collect();
 }
 
 /// Build resolved editor state from raw DB rows: filter, group, resolve, relativize.

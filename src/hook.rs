@@ -14,7 +14,7 @@ fn cache_dir() -> Option<PathBuf> {
 
 /// Return the cache file path for a given session ID.
 fn cache_path(session_id: &str) -> Option<PathBuf> {
-    Some(cache_dir()?.join(format!("cache-{session_id}.txt")))
+    Some(cache_dir()?.join(format!("cache-{session_id}.json")))
 }
 
 /// Read stdin and parse as JSON, returning `None` on any failure.
@@ -66,6 +66,7 @@ pub fn session_start() -> anyhow::Result<()> {
         "Each <pos> is line:col (cursor) or line:col-line:col (selection). ",
         "Multiple positions are comma-separated. ",
         "One file per line. Lines ending with $ are active terminal working directories.\n",
+        "Files, cursors, and selections are ordered by recency: recently opened or changed items appear first.\n",
         "</zed-context-instructions>",
     ));
     Ok(())
@@ -89,29 +90,38 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
         .or(stdin_cwd)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-    let state = match model::get_editor_state(Some(&cwd))? {
+    let mut state = match model::get_editor_state(Some(&cwd))? {
         Some(s) => s,
         None => return Ok(()),
     };
-    let human = state.to_string();
 
-    // Compare to cache
+    // Load previous cached state and reorder by newness
+    let previous = session_id
+        .as_deref()
+        .and_then(cache_path)
+        .and_then(|cp| fs::read_to_string(&cp).ok())
+        .and_then(|s| serde_json::from_str::<model::EditorState>(&s).ok());
+
+    if let Some(prev) = &previous {
+        model::reorder_by_newness(&mut state, prev);
+    }
+
+    // If unchanged from cache, suppress output
+    if previous.as_ref() == Some(&state) {
+        return Ok(());
+    }
+
+    // Write reordered state as JSON cache
     if let Some(sid) = &session_id
         && let Some(cp) = cache_path(sid)
     {
-        if let Ok(cached) = fs::read_to_string(&cp)
-            && cached == human
-        {
-            return Ok(()); // unchanged
-        }
-        // Write new cache
         if let Some(parent) = cp.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let _ = fs::write(&cp, &human);
+        let _ = fs::write(&cp, serde_json::to_string(&state).unwrap_or_default());
     }
 
-    println!("<zed-context>\n{human}\n</zed-context>");
+    println!("<zed-context>\n{state}\n</zed-context>");
     Ok(())
 }
 
