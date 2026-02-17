@@ -137,7 +137,6 @@ fn find_zed_db() -> Option<PathBuf> {
 // --- DB query ---
 
 struct RawEditor {
-    pane_id: i64,
     path: String,
     sel_start: Option<i64>,
     sel_end: Option<i64>,
@@ -156,25 +155,24 @@ fn query_editors(db_path: &Path) -> Result<Vec<RawEditor>, String> {
 
     let mut stmt = conn
         .prepare(
-            "SELECT i.pane_id, e.path, es.start, es.end \
+            "SELECT e.path, es.start, es.end \
              FROM items i \
              JOIN editors e ON i.item_id = e.item_id AND i.workspace_id = e.workspace_id \
              LEFT JOIN editor_selections es \
                ON e.item_id = es.editor_id AND e.workspace_id = es.workspace_id \
              WHERE i.kind = 'Editor' AND i.active = 1 \
-             ORDER BY i.pane_id, e.path, es.start",
+             ORDER BY e.path, es.start",
         )
         .map_err(|e| format!("prepare failed: {e}"))?;
 
     let editors: Vec<RawEditor> = stmt
         .query_map([], |row| {
-            let path_bytes: Vec<u8> = row.get(1)?;
+            let path_bytes: Vec<u8> = row.get(0)?;
             let path = String::from_utf8(path_bytes).unwrap_or_default();
             Ok(RawEditor {
-                pane_id: row.get(0)?,
                 path,
-                sel_start: row.get(2)?,
-                sel_end: row.get(3)?,
+                sel_start: row.get(1)?,
+                sel_end: row.get(2)?,
             })
         })
         .map_err(|e| format!("query failed: {e}"))?
@@ -206,24 +204,22 @@ fn byte_offset_to_position(content: &[u8], offset: usize) -> Position {
 fn build_editor_state(raw_editors: Vec<RawEditor>, cwd: Option<&Path>) -> EditorState {
     let cwd_str = cwd.map(|p| p.to_string_lossy().to_string());
 
-    // Group by (pane_id, path), preserving order via BTreeMap
-    let mut pane_files: BTreeMap<(i64, String), Vec<(i64, i64)>> = BTreeMap::new();
+    // Group by path, merging selections across panes/workspaces
+    let mut files: BTreeMap<String, Vec<(i64, i64)>> = BTreeMap::new();
     for ed in &raw_editors {
         if let Some(ref cwd) = cwd_str {
             if !ed.path.starts_with(cwd.as_str()) {
                 continue;
             }
         }
-        let entry = pane_files
-            .entry((ed.pane_id, ed.path.clone()))
-            .or_default();
+        let entry = files.entry(ed.path.clone()).or_default();
         if let (Some(start), Some(end)) = (ed.sel_start, ed.sel_end) {
             entry.push((start, end));
         }
     }
 
     let mut panes = Vec::new();
-    for ((_pane_id, path), selections) in &pane_files {
+    for (path, selections) in &files {
         let rel_path = if let Some(ref cwd) = cwd_str {
             if let Some(stripped) = path.strip_prefix(&format!("{cwd}/")) {
                 stripped.to_string()
@@ -249,7 +245,10 @@ fn build_editor_state(raw_editors: Vec<RawEditor>, cwd: Option<&Path>) -> Editor
         let mut cursors = Vec::new();
         let mut sels = Vec::new();
         if let Some(ref content) = content {
-            for &(start, end) in selections {
+            let mut seen: Vec<(i64, i64)> = selections.clone();
+            seen.sort();
+            seen.dedup();
+            for &(start, end) in &seen {
                 let start_pos = byte_offset_to_position(content, start as usize);
                 if start == end {
                     cursors.push(start_pos);
