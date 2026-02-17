@@ -69,7 +69,7 @@ impl fmt::Display for FileEntry {
         write!(f, "{}", self.path)?;
         let positions: Vec<String> = self.selections.iter().map(|s| s.to_string()).collect();
         if !positions.is_empty() {
-            write!(f, " {}", positions.join(","))?;
+            write!(f, " {}", positions.join(", "))?;
         }
         Ok(())
     }
