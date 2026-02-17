@@ -14,3 +14,4 @@ which = "7"
 
 [dev-dependencies]
 proptest = "1"
+tempfile = "3"
