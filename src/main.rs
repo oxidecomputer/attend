@@ -139,8 +139,8 @@ fn find_zed_db() -> Option<PathBuf> {
 struct RawEditor {
     pane_id: i64,
     path: String,
-    sel_start: i64,
-    sel_end: i64,
+    sel_start: Option<i64>,
+    sel_end: Option<i64>,
 }
 
 fn query_editors(db_path: &Path) -> Result<Vec<RawEditor>, String> {
@@ -159,9 +159,9 @@ fn query_editors(db_path: &Path) -> Result<Vec<RawEditor>, String> {
             "SELECT i.pane_id, e.path, es.start, es.end \
              FROM items i \
              JOIN editors e ON i.item_id = e.item_id AND i.workspace_id = e.workspace_id \
-             JOIN editor_selections es \
+             LEFT JOIN editor_selections es \
                ON e.item_id = es.editor_id AND e.workspace_id = es.workspace_id \
-             WHERE i.kind = 'Editor' \
+             WHERE i.kind = 'Editor' AND i.active = 1 \
              ORDER BY i.pane_id, e.path, es.start",
         )
         .map_err(|e| format!("prepare failed: {e}"))?;
@@ -214,20 +214,16 @@ fn build_editor_state(raw_editors: Vec<RawEditor>, cwd: Option<&Path>) -> Editor
                 continue;
             }
         }
-        pane_files
+        let entry = pane_files
             .entry((ed.pane_id, ed.path.clone()))
-            .or_default()
-            .push((ed.sel_start, ed.sel_end));
+            .or_default();
+        if let (Some(start), Some(end)) = (ed.sel_start, ed.sel_end) {
+            entry.push((start, end));
+        }
     }
 
     let mut panes = Vec::new();
     for ((_pane_id, path), selections) in &pane_files {
-        // Read file content for offset conversion
-        let content = match fs::read(path) {
-            Ok(c) => c,
-            Err(_) => continue, // file deleted, skip
-        };
-
         let rel_path = if let Some(ref cwd) = cwd_str {
             if let Some(stripped) = path.strip_prefix(&format!("{cwd}/")) {
                 stripped.to_string()
@@ -240,18 +236,30 @@ fn build_editor_state(raw_editors: Vec<RawEditor>, cwd: Option<&Path>) -> Editor
             path.clone()
         };
 
+        // Read file content for offset conversion (only needed if there are selections)
+        let content = if !selections.is_empty() {
+            match fs::read(path) {
+                Ok(c) => Some(c),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
         let mut cursors = Vec::new();
         let mut sels = Vec::new();
-        for &(start, end) in selections {
-            let start_pos = byte_offset_to_position(&content, start as usize);
-            if start == end {
-                cursors.push(start_pos);
-            } else {
-                let end_pos = byte_offset_to_position(&content, end as usize);
-                sels.push(Selection {
-                    start: start_pos,
-                    end: end_pos,
-                });
+        if let Some(ref content) = content {
+            for &(start, end) in selections {
+                let start_pos = byte_offset_to_position(content, start as usize);
+                if start == end {
+                    cursors.push(start_pos);
+                } else {
+                    let end_pos = byte_offset_to_position(content, end as usize);
+                    sels.push(Selection {
+                        start: start_pos,
+                        end: end_pos,
+                    });
+                }
             }
         }
 
