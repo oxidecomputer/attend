@@ -171,9 +171,12 @@ fn query_editors(db_path: &Path, cwd: &Path) -> Result<(String, Vec<RawEditor>),
 
     let editors: Vec<RawEditor> = stmt
         .query_map([workspace_id], |row| {
+            // path is stored as BLOB in Zed's DB, read as bytes and convert
+            let path_bytes: Vec<u8> = row.get(1)?;
+            let path = String::from_utf8(path_bytes).unwrap_or_default();
             Ok(RawEditor {
                 pane_id: row.get(0)?,
-                path: row.get(1)?,
+                path,
                 sel_start: row.get(2)?,
                 sel_end: row.get(3)?,
             })
