@@ -37,9 +37,9 @@ pub enum Command {
 
 #[derive(Subcommand)]
 pub enum Hook {
-    /// Claude Code hooks
+    /// Run a hook
     #[command(subcommand)]
-    Claude(ClaudeHook),
+    Run(RunHook),
     /// Install hooks into agent settings
     Install {
         /// Agent to install for
@@ -67,6 +67,13 @@ pub enum Hook {
 }
 
 #[derive(Subcommand)]
+pub enum RunHook {
+    /// Claude Code hooks
+    #[command(subcommand)]
+    Claude(ClaudeHook),
+}
+
+#[derive(Subcommand)]
 pub enum ClaudeHook {
     /// Emit editor context for a user prompt
     UserPrompt,
@@ -76,15 +83,15 @@ pub enum ClaudeHook {
 
 impl Cli {
     pub fn run(self) -> anyhow::Result<()> {
-        use crate::{format, model};
+        use crate::model;
 
         match self.command {
             Some(command) => command.run(self.cwd)?,
             None => {
                 if let Some(state) = model::get_editor_state(self.cwd.as_deref())? {
                     match self.format {
-                        Format::Human => println!("{}", format::format_human(&state)),
-                        Format::Json => println!("{}", format::format_json(&state)),
+                        Format::Human => println!("{state}"),
+                        Format::Json => println!("{}", serde_json::to_string_pretty(&state).unwrap_or_default()),
                     }
                 }
             }
@@ -107,8 +114,8 @@ impl Hook {
         use crate::hook;
 
         match self {
-            Hook::Claude(ClaudeHook::UserPrompt) => hook::run(cwd),
-            Hook::Claude(ClaudeHook::SessionStart) => hook::session_start(),
+            Hook::Run(RunHook::Claude(ClaudeHook::UserPrompt)) => hook::run(cwd),
+            Hook::Run(RunHook::Claude(ClaudeHook::SessionStart)) => hook::session_start(),
             Hook::Install { agent, project, dev } => hook::install(agent, project, dev),
             Hook::Uninstall { agent, project } => hook::uninstall(agent, project),
         }

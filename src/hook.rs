@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, bail};
 
 use crate::cli::Agent;
-use crate::format::format_human;
 use crate::model;
 
 fn cache_dir() -> Option<PathBuf> {
@@ -88,7 +87,7 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
         Some(s) => s,
         None => return Ok(()),
     };
-    let human = format_human(&state);
+    let human = state.to_string();
 
     // Compare to cache
     if let Some(sid) = &session_id
@@ -159,8 +158,8 @@ pub fn install(agent: Agent, project: Option<PathBuf>, dev: bool) -> anyhow::Res
         .context("settings is not an object")?;
 
     // Build hook commands
-    let session_start_cmd = format!("{bin_cmd} hook {agent_str} session-start");
-    let prompt_cmd = format!("{bin_cmd} hook {agent_str} user-prompt");
+    let session_start_cmd = format!("{bin_cmd} hook run {agent_str} session-start");
+    let prompt_cmd = format!("{bin_cmd} hook run {agent_str} user-prompt");
 
     // Build the hooks structure
     let hooks = obj.entry("hooks").or_insert_with(|| serde_json::json!({}));

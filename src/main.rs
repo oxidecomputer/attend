@@ -1,6 +1,5 @@
 mod cli;
 mod db;
-mod format;
 mod hook;
 mod model;
 

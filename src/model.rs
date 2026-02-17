@@ -60,6 +60,27 @@ impl fmt::Display for FileEntry {
     }
 }
 
+impl fmt::Display for EditorState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        for file in &self.files {
+            if !first {
+                writeln!(f)?;
+            }
+            write!(f, "{file}")?;
+            first = false;
+        }
+        for terminal in &self.terminals {
+            if !first {
+                writeln!(f)?;
+            }
+            write!(f, "{terminal} $")?;
+            first = false;
+        }
+        Ok(())
+    }
+}
+
 /// Convert sorted, deduplicated byte offsets to (line, col) positions in a
 /// single forward pass. Offsets past EOF map to the final position.
 fn byte_offsets_to_positions(path: &str, offsets: &[usize]) -> anyhow::Result<Vec<Position>> {
