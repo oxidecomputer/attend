@@ -4,17 +4,22 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 /// Top-level CLI definition.
 #[derive(Parser)]
-#[command(name = "zed-context", about = "Read Zed editor state.", version, args_conflicts_with_subcommands = true)]
+#[command(
+    name = "zc",
+    about = "Read Zed editor state.",
+    version,
+    args_conflicts_with_subcommands = true
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
     /// Filter to files under this directory and show relative paths.
-    #[arg(long, global = true)]
-    pub cwd: Option<PathBuf>,
+    #[arg(long, short, global = true)]
+    pub dir: Option<PathBuf>,
 
     /// Output format.
-    #[arg(long, default_value = "human")]
+    #[arg(long, short, default_value = "human")]
     pub format: Format,
 }
 
@@ -51,11 +56,11 @@ pub enum Hook {
     /// Install hooks into agent settings.
     Install {
         /// Agent to install for.
-        #[arg(long)]
+        #[arg(long, short)]
         agent: Agent,
 
         /// Install to a project-local settings file instead of global.
-        #[arg(long)]
+        #[arg(long, short)]
         project: Option<PathBuf>,
 
         /// Use absolute path to current binary instead of $PATH lookup.
@@ -65,11 +70,11 @@ pub enum Hook {
     /// Remove hooks from agent settings.
     Uninstall {
         /// Agent to uninstall for.
-        #[arg(long)]
+        #[arg(long, short)]
         agent: Agent,
 
         /// Remove from a project-local settings file instead of global.
-        #[arg(long)]
+        #[arg(long, short)]
         project: Option<PathBuf>,
     },
 }
@@ -96,12 +101,15 @@ impl Cli {
         use crate::model;
 
         match self.command {
-            Some(command) => command.run(self.cwd)?,
+            Some(command) => command.run(self.dir)?,
             None => {
-                if let Some(state) = model::EditorState::current(self.cwd.as_deref(), None)? {
+                if let Some(state) = model::EditorState::current(self.dir.as_deref(), None)? {
                     match self.format {
                         Format::Human => println!("{state}"),
-                        Format::Json => println!("{}", serde_json::to_string_pretty(&state).unwrap_or_default()),
+                        Format::Json => println!(
+                            "{}",
+                            serde_json::to_string_pretty(&state).unwrap_or_default()
+                        ),
                     }
                 }
             }
@@ -126,7 +134,11 @@ impl Hook {
         match self {
             Hook::Run(RunHook::Claude(ClaudeHook::UserPrompt)) => hook::run(cwd),
             Hook::Run(RunHook::Claude(ClaudeHook::SessionStart)) => hook::session_start(),
-            Hook::Install { agent, project, dev } => hook::install(agent, project, dev),
+            Hook::Install {
+                agent,
+                project,
+                dev,
+            } => hook::install(agent, project, dev),
             Hook::Uninstall { agent, project } => hook::uninstall(agent, project),
         }
     }

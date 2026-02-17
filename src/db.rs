@@ -57,10 +57,7 @@ pub fn query(db_path: &Path) -> anyhow::Result<QueryResult> {
     let editors = query_editors(&conn)?;
     let terminals = query_terminals(&conn)?;
 
-    Ok(QueryResult {
-        editors,
-        terminals,
-    })
+    Ok(QueryResult { editors, terminals })
 }
 
 /// Query active editor tabs with their byte-offset selections.

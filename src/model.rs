@@ -238,8 +238,7 @@ fn resolve_selections_from_reader(
 
 /// Resolve raw byte-offset pairs to line:col selections by reading from a file path.
 fn resolve_selections(path: &Path, raw: &[(i64, i64)]) -> anyhow::Result<Vec<Selection>> {
-    let file =
-        fs::File::open(path).context(format!("cannot open {}", path.display()))?;
+    let file = fs::File::open(path).context(format!("cannot open {}", path.display()))?;
     resolve_selections_from_reader(io::BufReader::new(file), raw)
 }
 
@@ -348,10 +347,7 @@ pub fn build_editor_state(
         });
     }
 
-    let terminals: Vec<String> = raw_terminals
-        .iter()
-        .map(|p| relativize(p, cwd))
-        .collect();
+    let terminals: Vec<String> = raw_terminals.iter().map(|p| relativize(p, cwd)).collect();
 
     Ok(EditorState { files, terminals })
 }

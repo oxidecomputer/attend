@@ -506,16 +506,34 @@ fn first_invocation_alphabetical() {
     assert_eq!(state.files[2].path, "c.rs");
 
     // a.rs: (3,3) → cursor at 2:1
-    assert_eq!(state.files[0].selections[0].start, Position { line: 2, col: 1 });
-    assert_eq!(state.files[0].selections[0].end, Position { line: 2, col: 1 });
+    assert_eq!(
+        state.files[0].selections[0].start,
+        Position { line: 2, col: 1 }
+    );
+    assert_eq!(
+        state.files[0].selections[0].end,
+        Position { line: 2, col: 1 }
+    );
 
     // b.rs: (1,4) → selection 1:2-2:2
-    assert_eq!(state.files[1].selections[0].start, Position { line: 1, col: 2 });
-    assert_eq!(state.files[1].selections[0].end, Position { line: 2, col: 2 });
+    assert_eq!(
+        state.files[1].selections[0].start,
+        Position { line: 1, col: 2 }
+    );
+    assert_eq!(
+        state.files[1].selections[0].end,
+        Position { line: 2, col: 2 }
+    );
 
     // c.rs: (0,0) → cursor at 1:1
-    assert_eq!(state.files[2].selections[0].start, Position { line: 1, col: 1 });
-    assert_eq!(state.files[2].selections[0].end, Position { line: 1, col: 1 });
+    assert_eq!(
+        state.files[2].selections[0].start,
+        Position { line: 1, col: 1 }
+    );
+    assert_eq!(
+        state.files[2].selections[0].end,
+        Position { line: 1, col: 1 }
+    );
 }
 
 /// Identical second invocation → cache hit: `changed == false`, state equals cached.
@@ -759,10 +777,19 @@ fn selection_level_reordering() {
     assert!(changed);
     assert_eq!(state2.files[0].selections.len(), 3);
     // New cursor (1:2) first
-    assert_eq!(state2.files[0].selections[0].start, Position { line: 1, col: 2 });
+    assert_eq!(
+        state2.files[0].selections[0].start,
+        Position { line: 1, col: 2 }
+    );
     // Then existing in cached order: 1:1, 2:1
-    assert_eq!(state2.files[0].selections[1].start, Position { line: 1, col: 1 });
-    assert_eq!(state2.files[0].selections[2].start, Position { line: 2, col: 1 });
+    assert_eq!(
+        state2.files[0].selections[1].start,
+        Position { line: 1, col: 1 }
+    );
+    assert_eq!(
+        state2.files[0].selections[2].start,
+        Position { line: 2, col: 1 }
+    );
 }
 
 /// Adding or removing a terminal triggers `changed == true`.

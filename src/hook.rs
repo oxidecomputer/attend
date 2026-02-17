@@ -34,7 +34,6 @@ fn settings_path(project: Option<&Path>) -> anyhow::Result<PathBuf> {
     }
 }
 
-
 /// Handle the `SessionStart` hook: clear cache and emit format instructions.
 pub fn session_start() -> anyhow::Result<()> {
     let stdin_json = read_stdin_json();
@@ -99,10 +98,7 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
         .and_then(|cp| fs::read_to_string(&cp).ok())
         .and_then(|s| serde_json::from_str::<model::EditorState>(&s).ok());
 
-    let state = match model::EditorState::current(
-        Some(&cwd),
-        previous.as_ref(),
-    )? {
+    let state = match model::EditorState::current(Some(&cwd), previous.as_ref())? {
         Some(s) => s,
         None => return Ok(()),
     };
@@ -142,7 +138,7 @@ pub fn install(agent: Agent, project: Option<PathBuf>, dev: bool) -> anyhow::Res
                 .to_string_lossy()
                 .to_string()
         })
-        .unwrap_or_else(|| "zed-context".to_string());
+        .unwrap_or_else(|| "zc".to_string());
 
     let bin_cmd = if dev {
         std::env::current_exe()
@@ -278,7 +274,7 @@ pub fn uninstall(agent: Agent, project: Option<PathBuf>) -> anyhow::Result<()> {
             let before = arr.len();
             arr.retain(|entry| {
                 let s = serde_json::to_string(entry).unwrap_or_default();
-                !s.contains("zed-context")
+                !s.contains("zed-context") && !s.contains("\"zc ")
             });
             if arr.len() < before {
                 removed = true;
@@ -292,7 +288,7 @@ pub fn uninstall(agent: Agent, project: Option<PathBuf>) -> anyhow::Result<()> {
         fs::write(&settings_path, format!("{output}\n")).context("cannot write settings file")?;
         println!("Removed hooks from {}", settings_path.display());
     } else {
-        println!("No zed-context hooks found in {}", settings_path.display());
+        println!("No zc hooks found in {}", settings_path.display());
     }
 
     Ok(())
