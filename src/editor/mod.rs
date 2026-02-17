@@ -1,4 +1,5 @@
 mod zed;
+// <-- When adding an editor, add a module for it here
 
 use std::path::PathBuf;
 
@@ -29,6 +30,7 @@ pub fn query() -> anyhow::Result<Option<QueryResult>> {
         editors.extend(result.editors);
         terminals.extend(result.terminals);
     }
+    // <-- Query future editors here
 
     if editors.is_empty() && terminals.is_empty() {
         return Ok(None);

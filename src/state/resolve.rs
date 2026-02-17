@@ -1,11 +1,44 @@
 use std::collections::HashMap;
-use std::fs;
 use std::io::{self, BufRead};
 use std::path::Path;
+use std::{fmt, fs};
 
 use anyhow::Context;
+use serde::{Deserialize, Serialize};
 
-use crate::state::{Position, Selection};
+/// A 1-based line:col position in a file.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Position {
+    /// 1-based line number.
+    pub line: usize,
+    /// 1-based column (byte offset within the line).
+    pub col: usize,
+}
+
+/// A selection range (or cursor when start == end).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Selection {
+    /// Start of the selection.
+    pub start: Position,
+    /// End of the selection (equal to start for a cursor).
+    pub end: Position,
+}
+
+impl fmt::Display for Position {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.line, self.col)
+    }
+}
+
+impl fmt::Display for Selection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.start == self.end {
+            write!(f, "{}", self.start)
+        } else {
+            write!(f, "{}-{}", self.start, self.end)
+        }
+    }
+}
 
 impl Position {
     /// Convert sorted, deduplicated byte offsets to (line, col) positions in a

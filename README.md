@@ -1,8 +1,8 @@
-# `attend`
+# `attend` to your editor
 
 Connects editors to AI coding agents, regardless of whether they're natively
-integrated. Reads the editor's current state — open files, cursor positions,
-selections, terminal working directories — and delivers it as structured context
+integrated. Reads the editor's current state (visible open files, cursor
+positions, selections, terminal working directories) and delivers it as context
 that the agent can use to understand what the user is looking at.
 
 Currently supports Zed (editor) and Claude Code (agent). The architecture is
@@ -10,10 +10,12 @@ intended to support other editors and agents; contributions are welcome.
 
 ## How it works
 
-The tool queries the editor's internal database (read-only), resolves byte
-offsets to line:column positions by scanning files on disk, and orders output
-by recency so recently touched files and cursors appear first. A per-session
-cache suppresses output when nothing has changed.
+The tool queries the editor (using different strategies depending on the editor)
+for selection and cursor locations in visible panes, resolves byte offsets to
+line:column positions by scanning files on disk, and orders output by recency so
+visible files with recently moved cursors or selections appear first, with their
+cursors and selections ordered by recency. A per-session cache suppresses output
+when nothing has changed.
 
 ## Usage
 

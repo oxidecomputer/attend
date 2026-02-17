@@ -86,6 +86,7 @@ pub enum RunHook {
     /// Claude Code hooks.
     #[command(subcommand)]
     Claude(ClaudeHook),
+    // <-- Future agent hook runners go here
 }
 
 /// Individual Claude Code hook events.
@@ -132,6 +133,7 @@ impl Hook {
         match self {
             Hook::Run(RunHook::Claude(ClaudeHook::UserPrompt)) => crate::hook::run(cwd),
             Hook::Run(RunHook::Claude(ClaudeHook::SessionStart)) => crate::hook::session_start(),
+            // <-- Future agent hook dispatch goes here
             Hook::Install {
                 agent,
                 project,
