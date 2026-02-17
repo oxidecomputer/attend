@@ -56,11 +56,12 @@ pub fn session_start() -> anyhow::Result<()> {
         "\n",
         "Format: <zed-context>\n",
         "<path> [<pos>[,<pos>]...]\n",
+        "<terminal-cwd> $\n",
         "</zed-context>\n",
         "\n",
         "Each <pos> is line:col (cursor) or line:col-line:col (selection). ",
         "Multiple positions are comma-separated. ",
-        "One file per line.\n",
+        "One file per line. Lines ending with $ are active terminal working directories.\n",
         "</zed-context-instructions>",
     ));
     Ok(())

@@ -9,6 +9,11 @@ pub struct RawEditor {
     pub sel_end: Option<i64>,
 }
 
+pub struct QueryResult {
+    pub editors: Vec<RawEditor>,
+    pub terminals: Vec<String>,
+}
+
 pub fn find_zed_db() -> Option<PathBuf> {
     let data_dir = dirs::data_dir()?;
     let zed_db_dir = data_dir.join("Zed").join("db");
@@ -33,17 +38,23 @@ pub fn find_zed_db() -> Option<PathBuf> {
     candidates.into_iter().next()
 }
 
-pub fn query_editors(db_path: &Path) -> anyhow::Result<Vec<RawEditor>> {
+pub fn query(db_path: &Path) -> anyhow::Result<QueryResult> {
     let conn = rusqlite::Connection::open_with_flags(
         db_path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .context("failed to open DB")?;
 
-    // Enable WAL mode reading
-    conn.pragma_update(None, "journal_mode", "wal")
-        .context("failed to set journal_mode")?;
+    let editors = query_editors(&conn)?;
+    let terminals = query_terminals(&conn)?;
 
+    Ok(QueryResult {
+        editors,
+        terminals,
+    })
+}
+
+fn query_editors(conn: &rusqlite::Connection) -> anyhow::Result<Vec<RawEditor>> {
     let mut stmt = conn
         .prepare(
             "SELECT e.path, es.start, es.end \
@@ -71,4 +82,23 @@ pub fn query_editors(db_path: &Path) -> anyhow::Result<Vec<RawEditor>> {
         .collect();
 
     Ok(editors)
+}
+
+fn query_terminals(conn: &rusqlite::Connection) -> anyhow::Result<Vec<String>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT t.working_directory_path \
+             FROM items i \
+             JOIN terminals t ON i.item_id = t.item_id AND i.workspace_id = t.workspace_id \
+             WHERE i.kind = 'Terminal' AND i.active = 1",
+        )
+        .context("prepare failed")?;
+
+    let terminals: Vec<String> = stmt
+        .query_map([], |row| row.get(0))
+        .context("query failed")?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(terminals)
 }

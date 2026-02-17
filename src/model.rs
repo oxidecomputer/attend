@@ -11,16 +11,16 @@ use crate::db::{self, RawEditor};
 #[derive(Debug, Serialize)]
 pub struct EditorState {
     pub files: Vec<FileEntry>,
+    pub terminals: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct FileEntry {
     pub path: String,
-    pub cursors: Vec<Position>,
     pub selections: Vec<Selection>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Position {
     pub line: usize,
     pub col: usize,
@@ -38,19 +38,20 @@ impl fmt::Display for Position {
     }
 }
 
+impl fmt::Display for Selection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.start == self.end {
+            write!(f, "{}", self.start)
+        } else {
+            write!(f, "{}-{}", self.start, self.end)
+        }
+    }
+}
+
 impl fmt::Display for FileEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.path)?;
-        let positions: Vec<String> = self
-            .cursors
-            .iter()
-            .map(|c| c.to_string())
-            .chain(
-                self.selections
-                    .iter()
-                    .map(|s| format!("{}-{}", s.start, s.end)),
-            )
-            .collect();
+        let positions: Vec<String> = self.selections.iter().map(|s| s.to_string()).collect();
         if !positions.is_empty() {
             write!(f, " {}", positions.join(","))?;
         }
@@ -111,14 +112,33 @@ fn byte_offsets_to_positions(path: &str, offsets: &[usize]) -> Option<Vec<Positi
     Some(result)
 }
 
-pub fn build_editor_state(raw_editors: Vec<RawEditor>, cwd: Option<&Path>) -> EditorState {
+fn relativize(path: &str, cwd: Option<&str>) -> String {
+    let Some(cwd) = cwd else {
+        return path.to_string();
+    };
+    let rel = if let Some(stripped) = path.strip_prefix(&format!("{cwd}/")) {
+        stripped.to_string()
+    } else if let Some(stripped) = path.strip_prefix(cwd) {
+        stripped.trim_start_matches('/').to_string()
+    } else {
+        path.to_string()
+    };
+    if rel.is_empty() { ".".to_string() } else { rel }
+}
+
+pub fn build_editor_state(
+    raw_editors: Vec<RawEditor>,
+    raw_terminals: Vec<String>,
+    cwd: Option<&Path>,
+) -> EditorState {
     let cwd_str = cwd.map(|p| p.to_string_lossy().to_string());
+    let cwd_ref = cwd_str.as_deref();
 
     // Group by path, merging selections across panes/workspaces
     let mut files_map: BTreeMap<String, Vec<(i64, i64)>> = BTreeMap::new();
     for ed in &raw_editors {
-        if let Some(ref cwd) = cwd_str
-            && !ed.path.starts_with(cwd.as_str())
+        if let Some(cwd) = cwd_ref
+            && !ed.path.starts_with(cwd)
         {
             continue;
         }
@@ -130,62 +150,39 @@ pub fn build_editor_state(raw_editors: Vec<RawEditor>, cwd: Option<&Path>) -> Ed
 
     let mut files = Vec::new();
     for (path, selections) in &files_map {
-        let rel_path = if let Some(ref cwd) = cwd_str {
-            if let Some(stripped) = path.strip_prefix(&format!("{cwd}/")) {
-                stripped.to_string()
-            } else if let Some(stripped) = path.strip_prefix(cwd.as_str()) {
-                stripped.trim_start_matches('/').to_string()
-            } else {
-                path.clone()
-            }
-        } else {
-            path.clone()
-        };
-
-        let mut cursors = Vec::new();
         let mut sels = Vec::new();
         if !selections.is_empty() {
             let mut seen: Vec<(i64, i64)> = selections.clone();
             seen.sort();
             seen.dedup();
 
-            // Collect all offsets in sorted order for a single forward scan
             let all_offsets: Vec<usize> = seen
                 .iter()
-                .flat_map(|&(s, e)| {
-                    if s == e {
-                        vec![s as usize]
-                    } else {
-                        vec![s as usize, e as usize]
-                    }
-                })
+                .flat_map(|&(s, e)| [s as usize, e as usize])
                 .collect();
 
             if let Some(positions) = byte_offsets_to_positions(path, &all_offsets) {
                 let mut pos_iter = positions.into_iter();
-                for &(start, end) in &seen {
-                    let start_pos = pos_iter.next().unwrap();
-                    if start == end {
-                        cursors.push(start_pos);
-                    } else {
-                        let end_pos = pos_iter.next().unwrap();
-                        sels.push(Selection {
-                            start: start_pos,
-                            end: end_pos,
-                        });
-                    }
+                for _ in &seen {
+                    let start = pos_iter.next().unwrap();
+                    let end = pos_iter.next().unwrap();
+                    sels.push(Selection { start, end });
                 }
             }
         }
 
         files.push(FileEntry {
-            path: rel_path,
-            cursors,
+            path: relativize(path, cwd_ref),
             selections: sels,
         });
     }
 
-    EditorState { files }
+    let terminals: Vec<String> = raw_terminals
+        .iter()
+        .map(|p| relativize(p, cwd_ref))
+        .collect();
+
+    EditorState { files, terminals }
 }
 
 /// Find the Zed DB, query editors, and build state for the given cwd.
@@ -195,9 +192,9 @@ pub fn get_editor_state(cwd: Option<&Path>) -> anyhow::Result<Option<EditorState
         Some(p) => p,
         None => return Ok(None),
     };
-    let raw_editors = db::query_editors(&db_path)?;
-    let state = build_editor_state(raw_editors, cwd);
-    if state.files.is_empty() {
+    let result = db::query(&db_path)?;
+    let state = build_editor_state(result.editors, result.terminals, cwd);
+    if state.files.is_empty() && state.terminals.is_empty() {
         return Ok(None);
     }
     Ok(Some(state))
