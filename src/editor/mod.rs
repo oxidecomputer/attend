@@ -1,5 +1,5 @@
 mod zed;
-// <-- When adding an editor, add a module for it here
+// <-- Add new editor modules here
 
 use std::path::PathBuf;
 
@@ -21,16 +21,31 @@ pub struct QueryResult {
     pub terminals: Vec<PathBuf>,
 }
 
+/// A backend that can query an editor for open files and terminals.
+pub trait Editor {
+    /// Returns `Ok(None)` when the editor is not running or has no data.
+    fn query(&self) -> anyhow::Result<Option<QueryResult>>;
+}
+
+/// All registered editor backends.
+fn backends() -> &'static [&'static dyn Editor] {
+    &[
+        &zed::Zed,
+        // <-- Add new editors here
+    ]
+}
+
 /// Query all active editors for current state, merging results.
 pub fn query() -> anyhow::Result<Option<QueryResult>> {
     let mut editors = Vec::new();
     let mut terminals = Vec::new();
 
-    if let Some(result) = zed::query()? {
-        editors.extend(result.editors);
-        terminals.extend(result.terminals);
+    for backend in backends() {
+        if let Some(result) = backend.query()? {
+            editors.extend(result.editors);
+            terminals.extend(result.terminals);
+        }
     }
-    // <-- Query future editors here
 
     if editors.is_empty() && terminals.is_empty() {
         return Ok(None);

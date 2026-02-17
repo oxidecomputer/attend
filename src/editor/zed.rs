@@ -3,12 +3,17 @@ use std::path::Path;
 
 use anyhow::Context;
 
-use super::{QueryResult, RawEditor};
+use super::{Editor, QueryResult, RawEditor};
 
-/// Query active editors and terminals from the Zed database.
-///
-/// Returns `None` when no Zed database is found (Zed not running or no data).
-pub fn query() -> anyhow::Result<Option<QueryResult>> {
+pub struct Zed;
+
+impl Editor for Zed {
+    fn query(&self) -> anyhow::Result<Option<QueryResult>> {
+        query()
+    }
+}
+
+fn query() -> anyhow::Result<Option<QueryResult>> {
     let db_path = match find_db() {
         Some(p) => p,
         None => return Ok(None),

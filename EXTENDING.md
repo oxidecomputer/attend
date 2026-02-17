@@ -34,10 +34,16 @@ editor exposes (database, socket, file, CLI) and returns a `QueryResult`.
 
 ### 1. Create the module — `src/editor/<name>.rs`
 
-Implement a single public function:
+Implement the `Editor` trait:
 
 ```rust
-pub fn query() -> anyhow::Result<Option<QueryResult>> { ... }
+use super::{Editor, QueryResult, RawEditor};
+
+pub struct Name;
+
+impl Editor for Name {
+    fn query(&self) -> anyhow::Result<Option<QueryResult>> { ... }
+}
 ```
 
 Return `Ok(None)` when the editor isn't running or has no data. See
@@ -48,22 +54,19 @@ The `QueryResult` contains:
   byte-offset selection start/end
 - `terminals: Vec<PathBuf>` — working directories of active terminal tabs
 
-### 2. Register the module — `src/editor/mod.rs`
+### 2. Register the backend — `src/editor/mod.rs`
 
-Two changes, both marked with `// <--` comments:
+Add the module and register it in the `backends()` array:
 
 ```rust
 mod zed;
-mod <name>;  // <-- When adding an editor, add a module for it here
+mod <name>;
 ```
 
 ```rust
-// inside query():
-if let Some(result) = <name>::query()? {
-    editors.extend(result.editors);
-    terminals.extend(result.terminals);
+fn backends() -> &'static [&'static dyn Editor] {
+    &[&zed::Zed, &<name>::Name]
 }
-// <-- Query future editors here
 ```
 
 That's it. Everything downstream (offset resolution, reordering, caching,
@@ -71,9 +74,9 @@ display) works automatically since it operates on the shared `QueryResult` type.
 
 ### Checklist
 
-- [ ] `src/editor/<name>.rs` — implements `query() -> Result<Option<QueryResult>>`
+- [ ] `src/editor/<name>.rs` — `pub struct Name` + `impl Editor for Name`
 - [ ] `src/editor/mod.rs` — `mod <name>;` declaration
-- [ ] `src/editor/mod.rs` — call `<name>::query()?` in the `query()` function
+- [ ] `src/editor/mod.rs` — add `&<name>::Name` to `backends()`
 
 ## Adding a new agent
 
