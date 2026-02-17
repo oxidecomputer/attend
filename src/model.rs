@@ -2,34 +2,46 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io::{self, BufRead};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use serde::Serialize;
 
 use crate::db::{self, RawEditor};
 
+/// Resolved editor state: open files with cursor positions and terminal cwds.
 #[derive(Debug, Serialize)]
 pub struct EditorState {
+    /// Open editor tabs with resolved line:col selections.
     pub files: Vec<FileEntry>,
+    /// Working directories of active terminal tabs.
     pub terminals: Vec<String>,
 }
 
+/// An open file with its cursor/selection positions.
 #[derive(Debug, Serialize)]
 pub struct FileEntry {
+    /// Absolute or cwd-relative file path.
     pub path: String,
+    /// Cursor positions and selections in this file.
     pub selections: Vec<Selection>,
 }
 
+/// A 1-based line:col position in a file.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Position {
+    /// 1-based line number.
     pub line: usize,
+    /// 1-based column (byte offset within the line).
     pub col: usize,
 }
 
+/// A selection range (or cursor when start == end).
 #[derive(Debug, Serialize)]
 pub struct Selection {
+    /// Start of the selection.
     pub start: Position,
+    /// End of the selection (equal to start for a cursor).
     pub end: Position,
 }
 
@@ -83,13 +95,13 @@ impl fmt::Display for EditorState {
 
 /// Convert sorted, deduplicated byte offsets to (line, col) positions in a
 /// single forward pass. Offsets past EOF map to the final position.
-fn byte_offsets_to_positions(path: &str, offsets: &[usize]) -> anyhow::Result<Vec<Position>> {
+fn byte_offsets_to_positions(path: &Path, offsets: &[usize]) -> anyhow::Result<Vec<Position>> {
     let max_offset = match offsets.last() {
         Some(&o) => o,
         None => return Ok(Vec::new()),
     };
 
-    let file = fs::File::open(path).context(format!("cannot open {path}"))?;
+    let file = fs::File::open(path).context(format!("cannot open {}", path.display()))?;
     let mut reader = io::BufReader::new(file);
     let mut result = Vec::with_capacity(offsets.len());
     let mut line = 1;
@@ -107,7 +119,7 @@ fn byte_offsets_to_positions(path: &str, offsets: &[usize]) -> anyhow::Result<Ve
             break;
         }
 
-        let buf = reader.fill_buf().context(format!("read error in {path}"))?;
+        let buf = reader.fill_buf().context(format!("read error in {}", path.display()))?;
         if buf.is_empty() {
             break;
         }
@@ -134,19 +146,23 @@ fn byte_offsets_to_positions(path: &str, offsets: &[usize]) -> anyhow::Result<Ve
     Ok(result)
 }
 
-fn relativize(path: &str, cwd: Option<&Path>) -> String {
+/// Make `path` relative to `cwd`, or return it unchanged if outside cwd.
+fn relativize(path: &Path, cwd: Option<&Path>) -> String {
     let Some(cwd) = cwd else {
-        return path.to_string();
+        return path.to_string_lossy().into_owned();
     };
-    match Path::new(path).strip_prefix(cwd) {
+    match path.strip_prefix(cwd) {
         Ok(rel) if rel.as_os_str().is_empty() => ".".to_string(),
-        Ok(rel) => rel.to_string_lossy().to_string(),
-        Err(_) => path.to_string(),
+        Ok(rel) => rel.to_string_lossy().into_owned(),
+        Err(_) => path.to_string_lossy().into_owned(),
     }
 }
 
 /// Resolve raw byte-offset pairs to line:col selections by reading the file.
-fn resolve_selections(path: &str, raw: &[(i64, i64)]) -> anyhow::Result<Vec<Selection>> {
+///
+/// Deduplicates pairs, collects unique offsets for a single forward scan,
+/// then reconstructs selections from the offset-to-position lookup.
+fn resolve_selections(path: &Path, raw: &[(i64, i64)]) -> anyhow::Result<Vec<Selection>> {
     let mut seen: Vec<(i64, i64)> = raw.to_vec();
     seen.sort();
     seen.dedup();
@@ -168,30 +184,31 @@ fn resolve_selections(path: &str, raw: &[(i64, i64)]) -> anyhow::Result<Vec<Sele
             let start = lookup
                 .get(&(s as usize))
                 .cloned()
-                .context(format!("missing offset {s} in lookup for {path}"))?;
+                .context(format!("missing offset {s} in lookup for {}", path.display()))?;
             let end = lookup
                 .get(&(e as usize))
                 .cloned()
-                .context(format!("missing offset {e} in lookup for {path}"))?;
+                .context(format!("missing offset {e} in lookup for {}", path.display()))?;
             Ok(Selection { start, end })
         })
         .collect()
 }
 
+/// Build resolved editor state from raw DB rows: filter, group, resolve, relativize.
 pub fn build_editor_state(
     raw_editors: Vec<RawEditor>,
-    raw_terminals: Vec<String>,
+    raw_terminals: Vec<PathBuf>,
     cwd: Option<&Path>,
 ) -> anyhow::Result<EditorState> {
     // Group by path, merging selections across panes/workspaces
-    let mut files_map: BTreeMap<String, Vec<(i64, i64)>> = BTreeMap::new();
+    let mut files_map: BTreeMap<&Path, Vec<(i64, i64)>> = BTreeMap::new();
     for ed in &raw_editors {
         if let Some(cwd) = cwd
-            && !Path::new(&ed.path).starts_with(cwd)
+            && !ed.path.starts_with(cwd)
         {
             continue;
         }
-        let entry = files_map.entry(ed.path.clone()).or_default();
+        let entry = files_map.entry(&ed.path).or_default();
         if let (Some(start), Some(end)) = (ed.sel_start, ed.sel_end) {
             entry.push((start, end));
         }

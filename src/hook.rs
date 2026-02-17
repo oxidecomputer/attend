@@ -7,20 +7,24 @@ use anyhow::{Context, bail};
 use crate::cli::Agent;
 use crate::model;
 
+/// Return the platform cache directory for session deduplication files.
 fn cache_dir() -> Option<PathBuf> {
     Some(dirs::cache_dir()?.join("zed-context"))
 }
 
+/// Return the cache file path for a given session ID.
 fn cache_path(session_id: &str) -> Option<PathBuf> {
     Some(cache_dir()?.join(format!("cache-{session_id}.txt")))
 }
 
+/// Read stdin and parse as JSON, returning `None` on any failure.
 fn read_stdin_json() -> Option<serde_json::Value> {
     let mut buf = String::new();
     io::stdin().read_to_string(&mut buf).ok()?;
     serde_json::from_str(&buf).ok()
 }
 
+/// Resolve the agent settings file path (global or project-local).
 fn settings_path(project: Option<&Path>) -> anyhow::Result<PathBuf> {
     if let Some(proj) = project {
         Ok(proj.join(".claude").join("settings.json"))
@@ -30,6 +34,7 @@ fn settings_path(project: Option<&Path>) -> anyhow::Result<PathBuf> {
     }
 }
 
+/// Handle the `SessionStart` hook: clear cache and emit format instructions.
 pub fn session_start() -> anyhow::Result<()> {
     let stdin_json = read_stdin_json();
     let session_id = stdin_json
@@ -66,6 +71,7 @@ pub fn session_start() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Handle the `UserPromptSubmit` hook: emit editor context if changed.
 pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
     let stdin_json = read_stdin_json();
     let session_id = stdin_json
@@ -109,6 +115,7 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Install hooks into the agent's settings file.
 pub fn install(agent: Agent, project: Option<PathBuf>, dev: bool) -> anyhow::Result<()> {
     let agent_str = match agent {
         Agent::Claude => "claude",
@@ -233,6 +240,7 @@ pub fn install(agent: Agent, project: Option<PathBuf>, dev: bool) -> anyhow::Res
     Ok(())
 }
 
+/// Remove hooks from the agent's settings file.
 pub fn uninstall(agent: Agent, project: Option<PathBuf>) -> anyhow::Result<()> {
     match agent {
         Agent::Claude => {}

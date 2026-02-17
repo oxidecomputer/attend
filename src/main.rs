@@ -1,3 +1,5 @@
+//! Read Zed editor state (open files, selections, terminals) for agent integration.
+
 mod cli;
 mod db;
 mod hook;

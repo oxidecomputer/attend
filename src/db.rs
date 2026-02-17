@@ -3,17 +3,25 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 
+/// A row from the editors + selections join, before offset resolution.
 pub struct RawEditor {
-    pub path: String,
+    /// Absolute file path.
+    pub path: PathBuf,
+    /// Byte offset of selection start, if any.
     pub sel_start: Option<i64>,
+    /// Byte offset of selection end, if any.
     pub sel_end: Option<i64>,
 }
 
+/// Raw editors and terminals returned from the Zed database.
 pub struct QueryResult {
+    /// Active editor tabs with byte-offset selections.
     pub editors: Vec<RawEditor>,
-    pub terminals: Vec<String>,
+    /// Working directories of active terminal tabs.
+    pub terminals: Vec<PathBuf>,
 }
 
+/// Find the most recently active Zed SQLite database.
 pub fn find_zed_db() -> Option<PathBuf> {
     let data_dir = dirs::data_dir()?;
     let zed_db_dir = data_dir.join("Zed").join("db");
@@ -38,6 +46,7 @@ pub fn find_zed_db() -> Option<PathBuf> {
     candidates.into_iter().next()
 }
 
+/// Query active editors and terminals from the Zed database.
 pub fn query(db_path: &Path) -> anyhow::Result<QueryResult> {
     let conn = rusqlite::Connection::open_with_flags(
         db_path,
@@ -54,6 +63,7 @@ pub fn query(db_path: &Path) -> anyhow::Result<QueryResult> {
     })
 }
 
+/// Query active editor tabs with their byte-offset selections.
 fn query_editors(conn: &rusqlite::Connection) -> anyhow::Result<Vec<RawEditor>> {
     let mut stmt = conn
         .prepare(
@@ -70,7 +80,7 @@ fn query_editors(conn: &rusqlite::Connection) -> anyhow::Result<Vec<RawEditor>> 
     let editors: Vec<RawEditor> = stmt
         .query_map([], |row| {
             let path_bytes: Vec<u8> = row.get(0)?;
-            let path = String::from_utf8(path_bytes).unwrap_or_default();
+            let path = PathBuf::from(String::from_utf8(path_bytes).unwrap_or_default());
             Ok(RawEditor {
                 path,
                 sel_start: row.get(1)?,
@@ -84,7 +94,8 @@ fn query_editors(conn: &rusqlite::Connection) -> anyhow::Result<Vec<RawEditor>> 
     Ok(editors)
 }
 
-fn query_terminals(conn: &rusqlite::Connection) -> anyhow::Result<Vec<String>> {
+/// Query working directories of active terminal tabs.
+fn query_terminals(conn: &rusqlite::Connection) -> anyhow::Result<Vec<PathBuf>> {
     let mut stmt = conn
         .prepare(
             "SELECT t.working_directory_path \
@@ -94,8 +105,11 @@ fn query_terminals(conn: &rusqlite::Connection) -> anyhow::Result<Vec<String>> {
         )
         .context("prepare failed")?;
 
-    let terminals: Vec<String> = stmt
-        .query_map([], |row| row.get(0))
+    let terminals: Vec<PathBuf> = stmt
+        .query_map([], |row| {
+            let s: String = row.get(0)?;
+            Ok(PathBuf::from(s))
+        })
         .context("query failed")?
         .filter_map(|r| r.ok())
         .collect();

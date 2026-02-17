@@ -2,82 +2,92 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+/// Top-level CLI definition.
 #[derive(Parser)]
-#[command(name = "zed-context", about = "Read Zed editor state", version, args_conflicts_with_subcommands = true)]
+#[command(name = "zed-context", about = "Read Zed editor state.", version, args_conflicts_with_subcommands = true)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
-    /// Filter to files under this directory and show relative paths
+    /// Filter to files under this directory and show relative paths.
     #[arg(long, global = true)]
     pub cwd: Option<PathBuf>,
 
-    /// Output format
+    /// Output format.
     #[arg(long, default_value = "human")]
     pub format: Format,
 }
 
+/// Output format for the default command.
 #[derive(Clone, ValueEnum)]
 pub enum Format {
+    /// Human-readable text.
     Human,
+    /// Pretty-printed JSON.
     Json,
 }
 
+/// Supported agent targets for hook install/uninstall.
 #[derive(Clone, ValueEnum)]
 pub enum Agent {
+    /// Claude Code.
     Claude,
 }
 
+/// Top-level subcommands.
 #[derive(Subcommand)]
 pub enum Command {
-    /// Hook mode for agent integration
+    /// Hook mode for agent integration.
     #[command(subcommand)]
     Hook(Hook),
 }
 
+/// Hook subcommands: run hooks, or manage hook installation.
 #[derive(Subcommand)]
 pub enum Hook {
-    /// Run a hook
+    /// Run a hook.
     #[command(subcommand)]
     Run(RunHook),
-    /// Install hooks into agent settings
+    /// Install hooks into agent settings.
     Install {
-        /// Agent to install for
+        /// Agent to install for.
         #[arg(long)]
         agent: Agent,
 
-        /// Install to a project-local settings file instead of global
+        /// Install to a project-local settings file instead of global.
         #[arg(long)]
         project: Option<PathBuf>,
 
-        /// Use absolute path to current binary instead of $PATH lookup
+        /// Use absolute path to current binary instead of $PATH lookup.
         #[arg(long)]
         dev: bool,
     },
-    /// Remove hooks from agent settings
+    /// Remove hooks from agent settings.
     Uninstall {
-        /// Agent to uninstall for
+        /// Agent to uninstall for.
         #[arg(long)]
         agent: Agent,
 
-        /// Remove from a project-local settings file instead of global
+        /// Remove from a project-local settings file instead of global.
         #[arg(long)]
         project: Option<PathBuf>,
     },
 }
 
+/// Agent-specific hook runners.
 #[derive(Subcommand)]
 pub enum RunHook {
-    /// Claude Code hooks
+    /// Claude Code hooks.
     #[command(subcommand)]
     Claude(ClaudeHook),
 }
 
+/// Individual Claude Code hook events.
 #[derive(Subcommand)]
 pub enum ClaudeHook {
-    /// Emit editor context for a user prompt
+    /// Emit editor context for a user prompt.
     UserPrompt,
-    /// Clear cache and emit instructions for a new session
+    /// Clear cache and emit instructions for a new session.
     SessionStart,
 }
 
