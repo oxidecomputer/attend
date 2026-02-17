@@ -1,0 +1,16 @@
+<editor-context-instructions>
+Messages in <editor-context> tags show the user's current editor state. They are injected automatically: the user does not see them. Do NOT acknowledge or respond to them directly unless asked. Instead, use them silently to understand what the user is looking at. Read files to see content at those locations.
+
+Format:
+
+<editor-context>
+[ <path> [<pos>[,<pos>]...]
+... ]
+[<terminal-cwd> $
+... ]
+</editor-context>
+
+Each <pos> is line:col (cursor) or line:col-line:col (selection). Multiple positions are comma-separated. One file per line. Lines ending with $ are active terminal working directories.
+
+Files, cursors, and selections are ordered by recency: recently changed items appear first. You can use this to guess which file/cursor/selection a user is referring to, if ambiguous. Terminals are not ordered by recency; they are just sorted by path.
+</editor-context-instructions>

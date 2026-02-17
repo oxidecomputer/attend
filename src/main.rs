@@ -1,9 +1,10 @@
-//! Read Zed editor state (open files, selections, terminals) for agent integration.
+//! Read editor state (open files, selections, terminals) for agent integration.
 
+mod agent;
 mod cli;
-mod db;
+mod editor;
 mod hook;
-mod model;
+mod state;
 
 use clap::Parser;
 

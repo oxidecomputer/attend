@@ -1,24 +1,28 @@
-# `zc`: Zed Context
+# `attend`
 
-Reads the current state of the [Zed](https://zed.dev) editor — visible files,
-cursor positions, selections, and terminal working directories — and outputs it
-for consumption by humans or (primarily) AI coding agents.
+Connects editors to AI coding agents, regardless of whether they're natively
+integrated. Reads the editor's current state — open files, cursor positions,
+selections, terminal working directories — and delivers it as structured context
+that the agent can use to understand what the user is looking at.
 
-It works by querying Zed's internal SQLite database (read-only), resolving byte
-offsets to line:column positions by scanning the actual files on disk, and
-optionally ordering output by recency so the most recently touched files and
-cursors appear first.
+Currently supports Zed (editor) and Claude Code (agent). The architecture is
+intended to support other editors and agents; contributions are welcome.
+
+## How it works
+
+The tool queries the editor's internal database (read-only), resolves byte
+offsets to line:column positions by scanning files on disk, and orders output
+by recency so recently touched files and cursors appear first. A per-session
+cache suppresses output when nothing has changed.
 
 ## Usage
 
 ```
-zc [-d <PATH>] [-f human|json]
+attend [-d <PATH>] [-f human|json]
 ```
 
 With no subcommand, prints the current editor state to stdout and exits.
-
-`--dir`/`-d` filters to files under the specified directory and makes paths
-relative to it.
+`--dir`/`-d` filters to files under that directory and makes paths relative.
 
 ### Output format
 
@@ -30,57 +34,40 @@ src/db.rs 1:1
 
 Each line is a file path followed by comma-separated positions. A position is
 `line:col` (cursor) or `line:col-line:col` (selection). Lines ending with `$`
-are terminal working directories. With `--format json`, output is a JSON object
-with `files` and `terminals` arrays.
+are terminal working directories. `--format json` emits a JSON object with
+`files` and `terminals` arrays.
 
 ## Agent integration
 
-Currently supports [Claude Code](https://claude.com/product/claude-code).
-Expansion to other agents is planned, PRs are welcome.
+When installed as a hook, the agent receives an `<editor-context>` block
+before each prompt — but only when the editor state has actually changed
+since the last prompt. This keeps the agent aware of what the user is looking
+at without repeating stale information.
 
-Once installed as a hook in the agent, the agent receives a `<zed-context>`
-block only if the user has changed their visible editor state since the last
-time the hook was run. This provides an up-to-date reference to what the user is
-looking at, so the agent can more easily understand the user's work in context.
-
-### Install hooks
+### Install
 
 ```
-zc hook install --agent claude
+attend hook install --agent claude
 ```
 
-This writes two entries into the agent's settings file:
+This writes two hook entries into the agent's settings file:
 
-- **SessionStart** — clears the per-session cache and emits format instructions
-  that teach the agent how to read `<zed-context>` blocks.
-- **UserPromptSubmit** — queries Zed, compares against cached state, and emits a
-  `<zed-context>` block only if something changed.
+- **SessionStart** — clears the per-session cache and emits format
+  instructions that teach the agent how to read `<editor-context>` blocks.
+- **UserPromptSubmit** — queries the editor, compares against the cache, and
+  emits an `<editor-context>` block only if something changed.
 
-Use `--project <PATH>` to install into a project-local `.claude/settings.json`
-instead. Use `--dev` to embed the absolute binary path rather than relying on
+`--project <PATH>` installs to a project-local settings file instead of
+global. `--dev` embeds the absolute binary path rather than relying on
 `$PATH`.
 
 ### Uninstall
 
 ```
-zc hook uninstall --agent claude
+attend hook uninstall --agent claude
 ```
 
-Use `--project <PATH>` to install into a project-local `.claude/settings.json`
-instead.
-
-### How the cache works
-
-Each session gets a JSON cache file under the platform cache directory (e.g.
-`~/.cache/zed-context/` on Linux). On each prompt the hook builds the current
-state, reorders it by recency against the cached previous state, and compares.
-If nothing changed the hook is silent. Otherwise it writes the new state to the
-cache and emits output. The cache is cleared on session start.
-
-The effect of this is that the hook only runs when the user has changed their
-visible file(s), cursor position(s), selection(s), or terminal(s) since the last
-time such information was reported to the agent, so the agent is always up to
-date about what you're looking at.
+`--project <PATH>` to target a project-local settings file.
 
 ## Building
 
@@ -88,8 +75,8 @@ date about what you're looking at.
 cargo build --release
 ```
 
-Requires Rust 2024 edition (1.85+). The SQLite driver is bundled via `rusqlite`
-so no system library is needed.
+Requires Rust 2024 edition (1.85+). The SQLite driver is bundled via
+`rusqlite`; no system library needed.
 
 ## Testing
 
@@ -97,14 +84,6 @@ so no system library is needed.
 cargo test
 ```
 
-The test suite includes property-based tests for offset resolution and reorder
-invariants, plus integration tests that simulate multi-invocation hook sessions
-with real files on disk.
-
-## How it finds the database
-
-Zed stores its state in SQLite databases under the platform data directory (via
-the `dirs` crate — e.g. `~/Library/Application Support/Zed/db/` on macOS,
-`~/.local/share/Zed/db/` on Linux). The tool picks the database whose
-write-ahead log was most recently modified, opens it read-only, and queries the
-`items`, `editors`, `editor_selections`, and `terminals` tables for active tabs.
+The test suite includes property-based tests (proptest) for offset resolution
+and reorder invariants, plus integration tests that simulate multi-invocation
+hook sessions with real files on disk.

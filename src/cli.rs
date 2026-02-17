@@ -5,8 +5,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 /// Top-level CLI definition.
 #[derive(Parser)]
 #[command(
-    name = "zc",
-    about = "Read Zed editor state.",
+    name = "attend",
+    about = "Read editor state for AI coding agents.",
     version,
     args_conflicts_with_subcommands = true
 )]
@@ -37,6 +37,7 @@ pub enum Format {
 pub enum Agent {
     /// Claude Code.
     Claude,
+    // <-- Future agents go here
 }
 
 /// Top-level subcommands.
@@ -98,12 +99,11 @@ pub enum ClaudeHook {
 
 impl Cli {
     pub fn run(self) -> anyhow::Result<()> {
-        use crate::model;
-
         match self.command {
             Some(command) => command.run(self.dir)?,
             None => {
-                if let Some(state) = model::EditorState::current(self.dir.as_deref(), None)? {
+                if let Some(state) = crate::state::EditorState::current(self.dir.as_deref(), None)?
+                {
                     match self.format {
                         Format::Human => println!("{state}"),
                         Format::Json => println!(
@@ -129,17 +129,15 @@ impl Command {
 
 impl Hook {
     pub fn run(self, cwd: Option<PathBuf>) -> anyhow::Result<()> {
-        use crate::hook;
-
         match self {
-            Hook::Run(RunHook::Claude(ClaudeHook::UserPrompt)) => hook::run(cwd),
-            Hook::Run(RunHook::Claude(ClaudeHook::SessionStart)) => hook::session_start(),
+            Hook::Run(RunHook::Claude(ClaudeHook::UserPrompt)) => crate::hook::run(cwd),
+            Hook::Run(RunHook::Claude(ClaudeHook::SessionStart)) => crate::hook::session_start(),
             Hook::Install {
                 agent,
                 project,
                 dev,
-            } => hook::install(agent, project, dev),
-            Hook::Uninstall { agent, project } => hook::uninstall(agent, project),
+            } => crate::agent::install(agent, project, dev),
+            Hook::Uninstall { agent, project } => crate::agent::uninstall(agent, project),
         }
     }
 }

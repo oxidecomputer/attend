@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use proptest::prelude::*;
 
-use super::*;
-use crate::db::RawEditor;
+use super::{EditorState, FileEntry, Position, Selection};
+use crate::editor::RawEditor;
 
 // ── Reference oracle ────────────────────────────────────────────────────────
 
@@ -49,8 +49,12 @@ fn arb_selection() -> impl Strategy<Value = Selection> {
 }
 
 fn arb_file_entry() -> impl Strategy<Value = FileEntry> {
-    ("[a-e]\\.rs", prop::collection::vec(arb_selection(), 0..4))
-        .prop_map(|(path, selections)| FileEntry { path, selections })
+    ("[a-e]\\.rs", prop::collection::vec(arb_selection(), 0..4)).prop_map(|(path, selections)| {
+        FileEntry {
+            path: PathBuf::from(path),
+            selections,
+        }
+    })
 }
 
 fn arb_editor_state() -> impl Strategy<Value = EditorState> {
@@ -65,7 +69,12 @@ fn arb_editor_state() -> impl Strategy<Value = EditorState> {
                 .into_iter()
                 .filter(|f| seen.insert(f.path.clone()))
                 .collect();
-            EditorState { files, terminals }
+            let terminals = terminals.into_iter().map(PathBuf::from).collect();
+            EditorState {
+                files,
+                terminals,
+                cwd: None,
+            }
         })
 }
 
@@ -116,8 +125,8 @@ fn arb_raw_pairs(content_len: usize) -> impl Strategy<Value = Vec<(i64, i64)>> {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Collect (path, sorted multiset of (start, end)) for comparison.
-fn file_multiset(files: &[FileEntry]) -> HashMap<String, Vec<(Position, Position)>> {
-    let mut map: HashMap<String, Vec<(Position, Position)>> = HashMap::new();
+fn file_multiset(files: &[FileEntry]) -> HashMap<PathBuf, Vec<(Position, Position)>> {
+    let mut map: HashMap<PathBuf, Vec<(Position, Position)>> = HashMap::new();
     for f in files {
         let mut sels: Vec<_> = f
             .selections
@@ -143,7 +152,7 @@ proptest! {
     ) {
         let before = file_multiset(&current.files);
         let mut state = current;
-        reorder_by_newness(&mut state, &previous);
+        state.reorder_relative_to(&previous);
         let after = file_multiset(&state.files);
         prop_assert_eq!(before, after);
     }
@@ -154,14 +163,14 @@ proptest! {
         current in arb_editor_state(),
         previous in arb_editor_state(),
     ) {
-        let prev_map: HashMap<&str, &Vec<Selection>> = previous
-            .files.iter().map(|f| (f.path.as_str(), &f.selections)).collect();
+        let prev_map: HashMap<&Path, &Vec<Selection>> = previous
+            .files.iter().map(|f| (f.path.as_path(), &f.selections)).collect();
         let mut state = current;
-        reorder_by_newness(&mut state, &previous);
+        state.reorder_relative_to(&previous);
 
         let mut seen_unchanged = false;
         for f in &state.files {
-            let is_unchanged = prev_map.get(f.path.as_str())
+            let is_unchanged = prev_map.get(f.path.as_path())
                 .is_some_and(|prev_sels| *prev_sels == &f.selections);
             if is_unchanged {
                 seen_unchanged = true;
@@ -178,32 +187,32 @@ proptest! {
         current in arb_editor_state(),
         previous in arb_editor_state(),
     ) {
-        let prev_map: HashMap<&str, (usize, &Vec<Selection>)> = previous
+        let prev_map: HashMap<&Path, (usize, &Vec<Selection>)> = previous
             .files.iter().enumerate()
-            .map(|(i, f)| (f.path.as_str(), (i, &f.selections))).collect();
+            .map(|(i, f)| (f.path.as_path(), (i, &f.selections))).collect();
 
-        let input_order: Vec<String> = current.files.iter().map(|f| f.path.clone()).collect();
+        let input_order: Vec<PathBuf> = current.files.iter().map(|f| f.path.clone()).collect();
         let mut state = current;
-        reorder_by_newness(&mut state, &previous);
+        state.reorder_relative_to(&previous);
 
         // Touched files: should maintain relative input order
-        let touched: Vec<&str> = state.files.iter()
+        let touched: Vec<&Path> = state.files.iter()
             .filter(|f| {
-                prev_map.get(f.path.as_str())
+                prev_map.get(f.path.as_path())
                     .is_none_or(|(_, prev_sels)| *prev_sels != &f.selections)
             })
-            .map(|f| f.path.as_str())
+            .map(|f| f.path.as_path())
             .collect();
-        let touched_input_order: Vec<&str> = input_order.iter()
-            .filter(|p| touched.contains(&p.as_str()))
-            .map(|p| p.as_str())
+        let touched_input_order: Vec<&Path> = input_order.iter()
+            .filter(|p| touched.contains(&p.as_path()))
+            .map(|p| p.as_path())
             .collect();
         prop_assert_eq!(touched, touched_input_order);
 
         // Unchanged files: should be sorted by previous index
         let unchanged_prev_indices: Vec<usize> = state.files.iter()
             .filter_map(|f| {
-                prev_map.get(f.path.as_str()).and_then(|(idx, prev_sels)| {
+                prev_map.get(f.path.as_path()).and_then(|(idx, prev_sels)| {
                     if *prev_sels == &f.selections { Some(*idx) } else { None }
                 })
             })
@@ -220,8 +229,9 @@ proptest! {
         let mut ed = EditorState {
             files: state.files.clone(),
             terminals: state.terminals.clone(),
+            cwd: None,
         };
-        reorder_by_newness(&mut ed, &state);
+        ed.reorder_relative_to(&state);
         prop_assert_eq!(
             ed.files.iter().map(|f| &f.path).collect::<Vec<_>>(),
             original.iter().map(|f| &f.path).collect::<Vec<_>>(),
@@ -236,10 +246,11 @@ proptest! {
         let mut alpha = EditorState {
             files: alpha_files,
             terminals: cached.terminals.clone(),
+            cwd: None,
         };
-        reorder_by_newness(&mut alpha, &cached);
-        let expected_paths: Vec<&str> = cached.files.iter().map(|f| f.path.as_str()).collect();
-        let actual_paths: Vec<&str> = alpha.files.iter().map(|f| f.path.as_str()).collect();
+        alpha.reorder_relative_to(&cached);
+        let expected_paths: Vec<&Path> = cached.files.iter().map(|f| f.path.as_path()).collect();
+        let actual_paths: Vec<&Path> = alpha.files.iter().map(|f| f.path.as_path()).collect();
         prop_assert_eq!(actual_paths, expected_paths);
     }
 
@@ -251,7 +262,7 @@ proptest! {
     ) {
         let terminals_before = current.terminals.clone();
         let mut state = current;
-        reorder_by_newness(&mut state, &previous);
+        state.reorder_relative_to(&previous);
         prop_assert_eq!(state.terminals, terminals_before);
     }
 }
@@ -270,8 +281,9 @@ proptest! {
         let mut state = EditorState {
             files: current.files.clone(),
             terminals: current.terminals.clone(),
+            cwd: None,
         };
-        reorder_by_newness(&mut state, &current);
+        state.reorder_relative_to(&current);
         for (orig, reordered) in current.files.iter().zip(state.files.iter()) {
             prop_assert_eq!(&orig.selections, &reordered.selections);
         }
@@ -282,12 +294,12 @@ proptest! {
     fn reorder_new_file_selections(
         current in arb_editor_state(),
     ) {
-        let empty = EditorState { files: vec![], terminals: vec![] };
+        let empty = EditorState { files: vec![], terminals: vec![], cwd: None };
         let original_sels: Vec<Vec<Selection>> = current.files.iter()
             .map(|f| f.selections.clone())
             .collect();
         let mut state = current;
-        reorder_by_newness(&mut state, &empty);
+        state.reorder_relative_to(&empty);
         for (orig_sels, f) in original_sels.iter().zip(state.files.iter()) {
             prop_assert_eq!(orig_sels, &f.selections);
         }
@@ -299,12 +311,12 @@ proptest! {
         current in arb_editor_state(),
         previous in arb_editor_state(),
     ) {
-        let before_sels: HashMap<String, Vec<(Position, Position)>> = current.files.iter()
+        let before_sels: HashMap<PathBuf, Vec<(Position, Position)>> = current.files.iter()
             .map(|f| (f.path.clone(), f.selections.iter()
                 .map(|s| (s.start.clone(), s.end.clone())).collect()))
             .collect();
         let mut state = current;
-        reorder_by_newness(&mut state, &previous);
+        state.reorder_relative_to(&previous);
         for f in &state.files {
             if let Some(orig) = before_sels.get(&f.path) {
                 let mut after: Vec<_> = f.selections.iter()
@@ -324,13 +336,13 @@ proptest! {
         current in arb_editor_state(),
         previous in arb_editor_state(),
     ) {
-        let prev_map: HashMap<&str, &Vec<Selection>> = previous
-            .files.iter().map(|f| (f.path.as_str(), &f.selections)).collect();
+        let prev_map: HashMap<&Path, &Vec<Selection>> = previous
+            .files.iter().map(|f| (f.path.as_path(), &f.selections)).collect();
         let mut state = current;
-        reorder_by_newness(&mut state, &previous);
+        state.reorder_relative_to(&previous);
 
         for f in &state.files {
-            if let Some(prev_sels) = prev_map.get(f.path.as_str()) {
+            if let Some(prev_sels) = prev_map.get(f.path.as_path()) {
                 if *prev_sels == &f.selections {
                     continue; // unchanged
                 }
@@ -360,7 +372,7 @@ proptest! {
     #[test]
     fn offsets_matches_reference((content, offsets) in arb_content_and_offsets()) {
         let reader = io::Cursor::new(&content);
-        let positions = offsets_to_positions(reader, &offsets).unwrap();
+        let positions = Position::from_offsets(reader, &offsets).unwrap();
         for (i, &off) in offsets.iter().enumerate() {
             let expected = reference_position(&content, off);
             prop_assert_eq!(&positions[i], &expected,
@@ -382,7 +394,7 @@ proptest! {
         proptest::test_runner::TestRunner::new(Default::default())
             .run(&pairs, |raw| {
                 let reader = io::Cursor::new(&content);
-                let result = resolve_selections_from_reader(reader, &raw).unwrap();
+                let result = Selection::resolve_from_reader(reader, &raw).unwrap();
                 let mut unique = raw.clone();
                 unique.sort();
                 unique.dedup();
@@ -400,7 +412,7 @@ proptest! {
         proptest::test_runner::TestRunner::new(Default::default())
             .run(&pairs, |raw| {
                 let reader = io::Cursor::new(&content);
-                let result = resolve_selections_from_reader(reader, &raw).unwrap();
+                let result = Selection::resolve_from_reader(reader, &raw).unwrap();
                 let mut unique = raw.clone();
                 unique.sort();
                 unique.dedup();
@@ -442,7 +454,7 @@ fn write_temp_file(dir: &Path, name: &str, content: &str) -> PathBuf {
     path
 }
 
-/// Construct a raw editor row (bypassing the Zed DB).
+/// Construct a raw editor row (bypassing the database).
 fn make_editor(path: &Path, sel: Option<(i64, i64)>) -> RawEditor {
     RawEditor {
         path: path.to_path_buf(),
@@ -461,9 +473,9 @@ fn simulate(
     cwd: &Path,
     previous: Option<&EditorState>,
 ) -> (EditorState, bool) {
-    let mut state = build_editor_state(editors, terminals, Some(cwd)).unwrap();
+    let mut state = EditorState::build(editors, terminals, Some(cwd)).unwrap();
     if let Some(prev) = previous {
-        reorder_by_newness(&mut state, prev);
+        state.reorder_relative_to(prev);
     }
     let changed = previous != Some(&state);
     (state, changed)
@@ -501,9 +513,9 @@ fn first_invocation_alphabetical() {
     assert!(changed);
     // BTreeMap sorts by path → a.rs, b.rs, c.rs
     assert_eq!(state.files.len(), 3);
-    assert_eq!(state.files[0].path, "a.rs");
-    assert_eq!(state.files[1].path, "b.rs");
-    assert_eq!(state.files[2].path, "c.rs");
+    assert_eq!(state.files[0].path, a);
+    assert_eq!(state.files[1].path, b);
+    assert_eq!(state.files[2].path, c);
 
     // a.rs: (3,3) → cursor at 2:1
     assert_eq!(
@@ -596,10 +608,10 @@ fn changed_selection_reorders_file_to_front() {
     );
 
     assert!(changed);
-    assert_eq!(state2.files[0].path, "c.rs");
+    assert_eq!(state2.files[0].path, c);
     // Unchanged files retain cached order
-    assert_eq!(state2.files[1].path, "a.rs");
-    assert_eq!(state2.files[2].path, "b.rs");
+    assert_eq!(state2.files[1].path, a);
+    assert_eq!(state2.files[2].path, b);
 }
 
 /// Opening an additional file places it before unchanged files.
@@ -631,9 +643,9 @@ fn new_file_appears_first() {
     );
 
     assert!(changed);
-    assert_eq!(state2.files[0].path, "c.rs");
-    assert_eq!(state2.files[1].path, "a.rs");
-    assert_eq!(state2.files[2].path, "b.rs");
+    assert_eq!(state2.files[0].path, c);
+    assert_eq!(state2.files[1].path, a);
+    assert_eq!(state2.files[2].path, b);
 }
 
 /// Closing a file removes it from state and triggers `changed == true`.
@@ -667,8 +679,8 @@ fn removed_file_disappears() {
     assert!(changed);
     assert_eq!(state2.files.len(), 2);
     // Unchanged files in cached order (a was idx 0, c was idx 2)
-    assert_eq!(state2.files[0].path, "a.rs");
-    assert_eq!(state2.files[1].path, "c.rs");
+    assert_eq!(state2.files[0].path, a);
+    assert_eq!(state2.files[1].path, c);
 }
 
 /// Five invocations simulating a real session:
@@ -688,8 +700,8 @@ fn multi_step_sequence() {
         None,
     );
     assert!(changed1);
-    assert_eq!(state1.files[0].path, "a.rs");
-    assert_eq!(state1.files[1].path, "b.rs");
+    assert_eq!(state1.files[0].path, a);
+    assert_eq!(state1.files[1].path, b);
     let cached1 = round_trip(&state1);
 
     // Step 2: no-op (identical editors)
@@ -711,8 +723,8 @@ fn multi_step_sequence() {
         Some(&cached2),
     );
     assert!(changed3);
-    assert_eq!(state3.files[0].path, "b.rs");
-    assert_eq!(state3.files[1].path, "a.rs");
+    assert_eq!(state3.files[0].path, b);
+    assert_eq!(state3.files[1].path, a);
     let cached3 = round_trip(&state3);
 
     // Step 4: open c → c is new, then cached order (b, a)
@@ -727,9 +739,9 @@ fn multi_step_sequence() {
         Some(&cached3),
     );
     assert!(changed4);
-    assert_eq!(state4.files[0].path, "c.rs");
-    assert_eq!(state4.files[1].path, "b.rs");
-    assert_eq!(state4.files[2].path, "a.rs");
+    assert_eq!(state4.files[0].path, c);
+    assert_eq!(state4.files[1].path, b);
+    assert_eq!(state4.files[2].path, a);
     let cached4 = round_trip(&state4);
 
     // Step 5: close a → remaining in cached order (c, b)
@@ -741,8 +753,8 @@ fn multi_step_sequence() {
     );
     assert!(changed5);
     assert_eq!(state5.files.len(), 2);
-    assert_eq!(state5.files[0].path, "c.rs");
-    assert_eq!(state5.files[1].path, "b.rs");
+    assert_eq!(state5.files[0].path, c);
+    assert_eq!(state5.files[1].path, b);
 }
 
 /// Adding a third cursor to a file with two: new cursor appears first,
@@ -853,7 +865,7 @@ fn changes_outside_cwd_invisible() {
         None,
     );
     assert_eq!(state1.files.len(), 1);
-    assert_eq!(state1.files[0].path, "a.rs");
+    assert_eq!(state1.files[0].path, inside);
     let cached = round_trip(&state1);
 
     // Second invocation: change cursor on outside file only
@@ -869,5 +881,5 @@ fn changes_outside_cwd_invisible() {
 
     assert!(!changed);
     assert_eq!(state2.files.len(), 1);
-    assert_eq!(state2.files[0].path, "a.rs");
+    assert_eq!(state2.files[0].path, inside);
 }
