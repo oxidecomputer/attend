@@ -34,6 +34,7 @@ fn settings_path(project: Option<&Path>) -> anyhow::Result<PathBuf> {
     }
 }
 
+
 /// Handle the `SessionStart` hook: clear cache and emit format instructions.
 pub fn session_start() -> anyhow::Result<()> {
     let stdin_json = read_stdin_json();
@@ -54,19 +55,21 @@ pub fn session_start() -> anyhow::Result<()> {
         "<zed-context-instructions>\n",
         "Messages in <zed-context> tags show the user's current Zed editor state. ",
         "They are injected automatically: the user does not see them. ",
-        "Do NOT acknowledge or respond to them directly. ",
-        "Use them silently to understand what the user is looking at. ",
+        "Do NOT acknowledge or respond to them directly unless asked. ",
+        "Instead, use them silently to understand what the user is looking at. ",
         "Read files to see content at those locations.\n",
         "\n",
         "Format: <zed-context>\n",
-        "<path> [<pos>[,<pos>]...]\n",
-        "<terminal-cwd> $\n",
+        "[<path> [<pos>[,<pos>]...]\\n...]",
+        "[<terminal-cwd> $\\n...]",
         "</zed-context>\n",
         "\n",
         "Each <pos> is line:col (cursor) or line:col-line:col (selection). ",
         "Multiple positions are comma-separated. ",
         "One file per line. Lines ending with $ are active terminal working directories.\n",
-        "Files, cursors, and selections are ordered by recency: recently opened or changed items appear first.\n",
+        "Files, cursors, and selections are ordered by recency: recently changed items appear first. ",
+        "You can use this to guess which file/cursor/selection a user is referring to, if ambiguous. ",
+        "Terminals are not ordered by recency; they are just sorted by path.\n",
         "</zed-context-instructions>",
     ));
     Ok(())
@@ -90,28 +93,26 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
         .or(stdin_cwd)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-    let mut state = match model::get_editor_state(Some(&cwd))? {
-        Some(s) => s,
-        None => return Ok(()),
-    };
-
-    // Load previous cached state and reorder by newness
     let previous = session_id
         .as_deref()
         .and_then(cache_path)
         .and_then(|cp| fs::read_to_string(&cp).ok())
         .and_then(|s| serde_json::from_str::<model::EditorState>(&s).ok());
 
-    if let Some(prev) = &previous {
-        model::reorder_by_newness(&mut state, prev);
-    }
+    let state = match model::EditorState::current(
+        Some(&cwd),
+        previous.as_ref(),
+    )? {
+        Some(s) => s,
+        None => return Ok(()),
+    };
 
     // If unchanged from cache, suppress output
     if previous.as_ref() == Some(&state) {
         return Ok(());
     }
 
-    // Write reordered state as JSON cache
+    // Write cache and emit
     if let Some(sid) = &session_id
         && let Some(cp) = cache_path(sid)
     {

@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::{self, RawEditor};
 
+#[cfg(test)]
+mod tests;
+
 /// Resolved editor state: open files with cursor positions and terminal cwds.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditorState {
@@ -19,7 +22,7 @@ pub struct EditorState {
 }
 
 /// An open file with its cursor/selection positions.
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileEntry {
     /// Absolute or cwd-relative file path.
     pub path: String,
@@ -37,7 +40,7 @@ pub struct Position {
 }
 
 /// A selection range (or cursor when start == end).
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Selection {
     /// Start of the selection.
     pub start: Position,
@@ -93,21 +96,46 @@ impl fmt::Display for EditorState {
     }
 }
 
+impl EditorState {
+    /// Load current editor state from Zed DB, optionally reorder by cached previous.
+    pub fn current(
+        cwd: Option<&Path>,
+        previous: Option<&EditorState>,
+    ) -> anyhow::Result<Option<Self>> {
+        let db_path = match db::find_zed_db() {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        let result = db::query(&db_path)?;
+        let mut state = build_editor_state(result.editors, result.terminals, cwd)?;
+        if state.files.is_empty() && state.terminals.is_empty() {
+            return Ok(None);
+        }
+        if let Some(prev) = previous {
+            reorder_by_newness(&mut state, prev);
+        }
+        Ok(Some(state))
+    }
+}
+
 /// Convert sorted, deduplicated byte offsets to (line, col) positions in a
-/// single forward pass. Offsets past EOF map to the final position.
-fn byte_offsets_to_positions(path: &Path, offsets: &[usize]) -> anyhow::Result<Vec<Position>> {
+/// single forward pass over the given reader. Handles `\n`, `\r\n`, and `\r`
+/// line endings. Offsets past EOF map to the final position.
+fn offsets_to_positions(
+    mut reader: impl BufRead,
+    offsets: &[usize],
+) -> anyhow::Result<Vec<Position>> {
     let max_offset = match offsets.last() {
         Some(&o) => o,
         None => return Ok(Vec::new()),
     };
 
-    let file = fs::File::open(path).context(format!("cannot open {}", path.display()))?;
-    let mut reader = io::BufReader::new(file);
     let mut result = Vec::with_capacity(offsets.len());
     let mut line = 1;
     let mut col = 1;
     let mut cursor = 0;
     let mut offset_idx = 0;
+    let mut after_cr = false;
 
     while cursor <= max_offset && offset_idx < offsets.len() {
         // Emit positions for any offsets at the current cursor
@@ -119,18 +147,30 @@ fn byte_offsets_to_positions(path: &Path, offsets: &[usize]) -> anyhow::Result<V
             break;
         }
 
-        let buf = reader.fill_buf().context(format!("read error in {}", path.display()))?;
+        let buf = reader.fill_buf().context("read error")?;
         if buf.is_empty() {
             break;
         }
         let need = offsets[offset_idx] - cursor;
         let n = buf.len().min(need);
         for &b in &buf[..n] {
-            if b == b'\n' {
-                line += 1;
-                col = 1;
-            } else {
-                col += 1;
+            match b {
+                b'\n' if after_cr => {
+                    after_cr = false;
+                }
+                b'\n' => {
+                    line += 1;
+                    col = 1;
+                }
+                b'\r' => {
+                    line += 1;
+                    col = 1;
+                    after_cr = true;
+                }
+                _ => {
+                    col += 1;
+                    after_cr = false;
+                }
             }
         }
         cursor += n;
@@ -158,11 +198,14 @@ fn relativize(path: &Path, cwd: Option<&Path>) -> String {
     }
 }
 
-/// Resolve raw byte-offset pairs to line:col selections by reading the file.
+/// Resolve raw byte-offset pairs to line:col selections from a reader.
 ///
 /// Deduplicates pairs, collects unique offsets for a single forward scan,
 /// then reconstructs selections from the offset-to-position lookup.
-fn resolve_selections(path: &Path, raw: &[(i64, i64)]) -> anyhow::Result<Vec<Selection>> {
+fn resolve_selections_from_reader(
+    reader: impl BufRead,
+    raw: &[(i64, i64)],
+) -> anyhow::Result<Vec<Selection>> {
     let mut seen: Vec<(i64, i64)> = raw.to_vec();
     seen.sort();
     seen.dedup();
@@ -175,23 +218,29 @@ fn resolve_selections(path: &Path, raw: &[(i64, i64)]) -> anyhow::Result<Vec<Sel
     all_offsets.sort_unstable();
     all_offsets.dedup();
 
-    let positions = byte_offsets_to_positions(path, &all_offsets)?;
-    let lookup: std::collections::HashMap<usize, Position> =
-        all_offsets.into_iter().zip(positions).collect();
+    let positions = offsets_to_positions(reader, &all_offsets)?;
+    let lookup: HashMap<usize, Position> = all_offsets.into_iter().zip(positions).collect();
 
     seen.iter()
         .map(|&(s, e)| {
             let start = lookup
                 .get(&(s as usize))
                 .cloned()
-                .context(format!("missing offset {s} in lookup for {}", path.display()))?;
+                .context(format!("missing offset {s} in lookup"))?;
             let end = lookup
                 .get(&(e as usize))
                 .cloned()
-                .context(format!("missing offset {e} in lookup for {}", path.display()))?;
+                .context(format!("missing offset {e} in lookup"))?;
             Ok(Selection { start, end })
         })
         .collect()
+}
+
+/// Resolve raw byte-offset pairs to line:col selections by reading from a file path.
+fn resolve_selections(path: &Path, raw: &[(i64, i64)]) -> anyhow::Result<Vec<Selection>> {
+    let file =
+        fs::File::open(path).context(format!("cannot open {}", path.display()))?;
+    resolve_selections_from_reader(io::BufReader::new(file), raw)
 }
 
 /// Reorder files and selections so recently changed items appear first.
@@ -305,19 +354,4 @@ pub fn build_editor_state(
         .collect();
 
     Ok(EditorState { files, terminals })
-}
-
-/// Find the Zed DB, query editors, and build state for the given cwd.
-/// Returns `None` if no DB is found or no files match.
-pub fn get_editor_state(cwd: Option<&Path>) -> anyhow::Result<Option<EditorState>> {
-    let db_path = match db::find_zed_db() {
-        Some(p) => p,
-        None => return Ok(None),
-    };
-    let result = db::query(&db_path)?;
-    let state = build_editor_state(result.editors, result.terminals, cwd)?;
-    if state.files.is_empty() && state.terminals.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(state))
 }

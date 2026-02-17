@@ -98,7 +98,7 @@ impl Cli {
         match self.command {
             Some(command) => command.run(self.cwd)?,
             None => {
-                if let Some(state) = model::get_editor_state(self.cwd.as_deref())? {
+                if let Some(state) = model::EditorState::current(self.cwd.as_deref(), None)? {
                     match self.format {
                         Format::Human => println!("{state}"),
                         Format::Json => println!("{}", serde_json::to_string_pretty(&state).unwrap_or_default()),
