@@ -64,6 +64,16 @@ enum HookSub {
         #[arg(long)]
         dev: bool,
     },
+    /// Remove hooks from agent settings
+    Uninstall {
+        /// Agent to uninstall for
+        #[arg(long)]
+        agent: String,
+
+        /// Project path (removes from <path>/.claude/settings.json instead of global)
+        #[arg(long)]
+        project: Option<PathBuf>,
+    },
 }
 
 // --- Data model ---
@@ -523,6 +533,60 @@ fn run_hook_install(agent: &str, project: Option<PathBuf>, dev: bool) {
     println!("Installed hooks to {}", settings_path.display());
 }
 
+// --- Hook uninstall ---
+
+fn run_hook_uninstall(agent: &str, project: Option<PathBuf>) {
+    if agent != "claude" {
+        eprintln!("unsupported agent: {agent}");
+        process::exit(1);
+    }
+
+    let settings_path = if let Some(proj) = project {
+        proj.join(".claude").join("settings.json")
+    } else {
+        dirs::home_dir()
+            .expect("cannot determine home directory")
+            .join(".claude")
+            .join("settings.json")
+    };
+
+    if !settings_path.exists() {
+        println!("No settings file found at {}", settings_path.display());
+        return;
+    }
+
+    let content = fs::read_to_string(&settings_path).expect("cannot read settings file");
+    let mut settings: serde_json::Value =
+        serde_json::from_str(&content).expect("settings file is not valid JSON");
+
+    let Some(hooks) = settings.get_mut("hooks").and_then(|h| h.as_object_mut()) else {
+        println!("No hooks found in {}", settings_path.display());
+        return;
+    };
+
+    let mut removed = false;
+    for key in &["SessionStart", "UserPromptSubmit"] {
+        if let Some(arr) = hooks.get_mut(*key).and_then(|v| v.as_array_mut()) {
+            let before = arr.len();
+            arr.retain(|entry| {
+                let s = serde_json::to_string(entry).unwrap_or_default();
+                !s.contains("zed-context")
+            });
+            if arr.len() < before {
+                removed = true;
+            }
+        }
+    }
+
+    if removed {
+        let output = serde_json::to_string_pretty(&settings).expect("cannot serialize settings");
+        fs::write(&settings_path, format!("{output}\n")).expect("cannot write settings file");
+        println!("Removed hooks from {}", settings_path.display());
+    } else {
+        println!("No zed-context hooks found in {}", settings_path.display());
+    }
+}
+
 // --- Main ---
 
 fn main() {
@@ -540,6 +604,18 @@ fn main() {
                 }),
         }) => {
             run_hook_install(&install_agent, project, dev);
+        }
+
+        Some(Command::Hook {
+            agent: _,
+            session_start: _,
+            sub:
+                Some(HookSub::Uninstall {
+                    agent: uninstall_agent,
+                    project,
+                }),
+        }) => {
+            run_hook_uninstall(&uninstall_agent, project);
         }
 
         Some(Command::Hook {
