@@ -287,14 +287,18 @@ fn format_human(state: &EditorState) -> String {
         .panes
         .iter()
         .map(|p| {
-            let mut s = p.path.clone();
+            let mut positions: Vec<String> = Vec::new();
             for c in &p.cursors {
-                s.push_str(&format!(" {c}"));
+                positions.push(format!("{c}"));
             }
             for sel in &p.selections {
-                s.push_str(&format!(" sel {}-{}", sel.start, sel.end));
+                positions.push(format!("{}-{}", sel.start, sel.end));
             }
-            s
+            if positions.is_empty() {
+                p.path.clone()
+            } else {
+                format!("{} {}", p.path, positions.join(","))
+            }
         })
         .collect();
     parts.join(" | ")
@@ -371,15 +375,13 @@ fn run_hook(agent: &str, session_start: bool, cli_cwd: Option<PathBuf>) {
             "Use them silently to understand what the user is looking at. ",
             "Read files to see content at those locations.\n",
             "\n",
-            "Format: <zed-context><path> <line>:<col> ",
-            "[sel <start_line>:<col>-<end_line>:<col>]... ",
+            "Format: <zed-context><path> <pos>[,<pos>]... ",
             "[| <next pane>...]</zed-context>\n",
             "\n",
             "Paths are relative to the project root. ",
-            "Cursors are shown as line:col. ",
-            "Selections are shown as sel start-end. ",
-            "Multiple panes are separated by |. ",
-            "Multiple cursors/selections per file are space-separated.\n",
+            "Each <pos> is line:col (cursor) or line:col-line:col (selection). ",
+            "Multiple positions are comma-separated. ",
+            "Multiple panes are separated by |.\n",
             "</zed-context-instructions>",
         ));
         return;
