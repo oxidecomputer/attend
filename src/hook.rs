@@ -49,7 +49,7 @@ pub fn session_start() -> anyhow::Result<()> {
     print!(concat!(
         "<zed-context-instructions>\n",
         "Messages in <zed-context> tags show the user's current Zed editor state. ",
-        "They are injected automatically \u{2014} the user does not see them. ",
+        "They are injected automatically: the user does not see them. ",
         "Do NOT acknowledge or respond to them directly. ",
         "Use them silently to understand what the user is looking at. ",
         "Read files to see content at those locations.\n",
