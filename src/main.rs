@@ -294,7 +294,7 @@ fn format_human(state: &EditorState) -> String {
             }
         })
         .collect();
-    parts.join(" | ")
+    parts.join("\n")
 }
 
 fn format_json(state: &EditorState) -> String {
@@ -368,13 +368,13 @@ fn run_hook(agent: &str, session_start: bool, cli_cwd: Option<PathBuf>) {
             "Use them silently to understand what the user is looking at. ",
             "Read files to see content at those locations.\n",
             "\n",
-            "Format: <zed-context><path> <pos>[,<pos>]... ",
-            "[| <next pane>...]</zed-context>\n",
+            "Format: <zed-context>\n",
+            "<path> [<pos>[,<pos>]...]\n",
+            "</zed-context>\n",
             "\n",
-            "Paths are relative to the project root. ",
             "Each <pos> is line:col (cursor) or line:col-line:col (selection). ",
             "Multiple positions are comma-separated. ",
-            "Multiple panes are separated by |.\n",
+            "One file per line.\n",
             "</zed-context-instructions>",
         ));
         return;
@@ -401,7 +401,7 @@ fn run_hook(agent: &str, session_start: bool, cli_cwd: Option<PathBuf>) {
         let _ = fs::write(&cp, &human);
     }
 
-    println!("<zed-context>{human}</zed-context>");
+    println!("<zed-context>\n{human}\n</zed-context>");
 }
 
 // --- Hook install ---
