@@ -34,7 +34,7 @@ pub trait Editor {
 }
 
 /// All registered editor backends.
-const EDITORS: &'static [&'static dyn Editor] = &[
+const EDITORS: &[&'static dyn Editor] = &[
     &zed::Zed,
     // <-- Add new editors here
 ];

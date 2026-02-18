@@ -137,6 +137,9 @@ pub fn daemon(
     // Clean up any stale stop sentinel
     let _ = fs::remove_file(stop_sentinel_path());
 
+    // Preload model in background (overlaps with audio capture + recording)
+    let preload_handle = thread::spawn(move || transcribe::preload_model(&model_path));
+
     // Play start chime
     let _ = audio::play_chime(true);
 
@@ -176,14 +179,16 @@ pub fn daemon(
 
     eprintln!("Transcribing {:.1}s of audio...", recording.duration_secs());
 
-    // Ensure model exists (downloads if needed)
-    transcribe::ensure_model(&model_path)?;
+    // Join preload thread (usually already done by now)
+    let ctx = preload_handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("model preload thread panicked"))??;
 
     // Resample to 16kHz
     let samples_16k = audio::resample(&recording.flatten(), recording.sample_rate, 16000)?;
 
-    // Transcribe
-    let words = transcribe::transcribe(&samples_16k, &model_path)?;
+    // Transcribe with preloaded context
+    let words = transcribe::transcribe(&samples_16k, &ctx)?;
 
     // Collect editor events
     let (editor_snapshots, file_diffs) = editor_events.collect();

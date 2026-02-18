@@ -69,7 +69,7 @@ pub fn clap_command(agent: &dyn Agent) -> clap::Command {
 }
 
 /// All registered agent backends.
-pub const AGENTS: &'static [&'static dyn Agent] = &[
+pub const AGENTS: &[&'static dyn Agent] = &[
     &claude::Claude,
     // <-- Add new agents here
 ];

@@ -67,7 +67,7 @@ pub fn archive_dir(session_id: &str) -> PathBuf {
 
 /// Default Whisper model path.
 pub fn default_model_path() -> PathBuf {
-    cache_dir().join("models").join("ggml-base.en.bin")
+    cache_dir().join("models").join("ggml-small.en.bin")
 }
 
 /// Dictation CLI subcommands.
@@ -144,6 +144,9 @@ pub enum DictateCommand {
         #[arg(long, default_value_t = 5)]
         snip_tail: usize,
     },
+    /// Internal: benchmark model load and transcription latency.
+    #[command(name = "_bench", hide = true)]
+    Bench,
 }
 
 /// Supported editors for keybinding installation.
@@ -213,6 +216,42 @@ pub fn run(cmd: DictateCommand) -> anyhow::Result<()> {
             };
             record::daemon(model, session, snip_cfg)
         }
+        DictateCommand::Bench => run_bench(),
+    }
+}
+
+/// Run model benchmarks for base, small, and medium models.
+fn run_bench() -> anyhow::Result<()> {
+    #[cfg(feature = "dictate")]
+    {
+        let models_dir = cache_dir().join("models");
+        let models = [
+            "ggml-base.en.bin",
+            "ggml-small.en.bin",
+            "ggml-medium.en.bin",
+        ];
+
+        // Ensure all models are downloaded
+        for name in &models {
+            let path = models_dir.join(name);
+            eprintln!("Ensuring model: {name}");
+            transcribe::ensure_model(&path)?;
+        }
+
+        // 5 seconds of silence at 16 kHz
+        let samples = vec![0.0f32; 16000 * 5];
+
+        for name in &models {
+            let path = models_dir.join(name);
+            eprintln!("\n--- {name} ---");
+            transcribe::bench_model(&path, &samples);
+        }
+
+        Ok(())
+    }
+    #[cfg(not(feature = "dictate"))]
+    {
+        anyhow::bail!("benchmarking requires the `dictate` feature")
     }
 }
 
