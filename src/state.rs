@@ -23,13 +23,11 @@ pub use resolve::{Position, Selection};
 #[cfg(test)]
 mod tests;
 
-/// Resolved editor state: open files with cursor positions and terminal cwds.
+/// Resolved editor state: open files with cursor positions.
 #[derive(Debug, Default, Eq, Serialize, Deserialize)]
 pub struct EditorState {
     /// Open editor tabs with resolved line:col selections.
     pub files: Vec<FileEntry>,
-    /// Working directories of active terminal tabs.
-    pub terminals: Vec<PathBuf>,
     /// Working directory, used by Display for relativization.
     #[serde(skip)]
     pub cwd: Option<PathBuf>,
@@ -37,7 +35,7 @@ pub struct EditorState {
 
 impl PartialEq for EditorState {
     fn eq(&self, other: &Self) -> bool {
-        self.files == other.files && self.terminals == other.terminals
+        self.files == other.files
     }
 }
 
@@ -105,8 +103,8 @@ impl EditorState {
             Some(r) => r,
             None => return Ok(None),
         };
-        let mut state = Self::build(result.editors, result.terminals, cwd)?;
-        if state.files.is_empty() && state.terminals.is_empty() {
+        let mut state = Self::build(result.editors, cwd)?;
+        if state.files.is_empty() {
             return Ok(None);
         }
         let previous = Self::load_cached().unwrap_or_default();
@@ -136,11 +134,7 @@ impl EditorState {
     }
 
     /// Build resolved editor state from raw editor rows: filter, group, resolve.
-    pub fn build(
-        raw_editors: Vec<RawEditor>,
-        raw_terminals: Vec<PathBuf>,
-        cwd: Option<&Path>,
-    ) -> anyhow::Result<Self> {
+    pub fn build(raw_editors: Vec<RawEditor>, cwd: Option<&Path>) -> anyhow::Result<Self> {
         // Group by path, merging selections across panes/workspaces
         let mut files_map: BTreeMap<&Path, Vec<(i64, i64)>> = BTreeMap::new();
         for ed in &raw_editors {
@@ -170,7 +164,6 @@ impl EditorState {
 
         Ok(EditorState {
             files,
-            terminals: raw_terminals,
             cwd: cwd.map(Path::to_path_buf),
         })
     }

@@ -1,4 +1,4 @@
-//! Read editor state (open files, selections, terminals) for agent integration.
+//! Read editor state (open files, selections) for agent integration.
 
 mod agent;
 mod cli;

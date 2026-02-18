@@ -13,15 +13,13 @@ pub struct RawEditor {
     pub sel_end: Option<i64>,
 }
 
-/// Raw editors and terminals returned from an editor backend.
+/// Raw editors returned from an editor backend.
 pub struct QueryResult {
     /// Active editor tabs with byte-offset selections.
     pub editors: Vec<RawEditor>,
-    /// Working directories of active terminal tabs.
-    pub terminals: Vec<PathBuf>,
 }
 
-/// A backend that can query an editor for open files and terminals.
+/// A backend that can query an editor for open files.
 pub trait Editor {
     /// Returns `Ok(None)` when the editor is not running or has no data.
     fn query(&self) -> anyhow::Result<Option<QueryResult>>;
@@ -38,17 +36,15 @@ fn backends() -> &'static [&'static dyn Editor] {
 /// Query all active editors for current state, merging results.
 pub fn query() -> anyhow::Result<Option<QueryResult>> {
     let mut editors = Vec::new();
-    let mut terminals = Vec::new();
 
     for backend in backends() {
         if let Some(result) = backend.query()? {
             editors.extend(result.editors);
-            terminals.extend(result.terminals);
         }
     }
 
-    if editors.is_empty() && terminals.is_empty() {
+    if editors.is_empty() {
         return Ok(None);
     }
-    Ok(Some(QueryResult { editors, terminals }))
+    Ok(Some(QueryResult { editors }))
 }

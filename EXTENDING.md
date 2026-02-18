@@ -30,8 +30,8 @@ editor backend  →  editor::query()  →  EditorState::build()  →  hook / CLI
 
 ## Adding a new editor
 
-An editor backend reads open files and terminal state from whatever source the
-editor exposes (database, socket, file, CLI) and returns a `QueryResult`.
+An editor backend reads open files from whatever source the editor exposes
+(database, socket, file, CLI) and returns a `QueryResult`.
 
 ### 1. Create the module — `src/editor/<name>.rs`
 
@@ -53,7 +53,6 @@ Return `Ok(None)` when the editor isn't running or has no data. See
 The `QueryResult` contains:
 - `editors: Vec<RawEditor>` — each with an absolute `PathBuf` and optional
   byte-offset selection start/end
-- `terminals: Vec<PathBuf>` — working directories of active terminal tabs
 
 ### 2. Register the backend — `src/editor/mod.rs`
 

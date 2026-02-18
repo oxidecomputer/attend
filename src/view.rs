@@ -55,8 +55,7 @@ pub enum Extent {
 /// Parse compact format into FileEntry list.
 ///
 /// Tokens matching `\d+:\d+(-\d+:\d+)?` (with optional trailing comma) are
-/// positions; everything else starts a new file path. Terminal markers (`$`)
-/// are skipped.
+/// positions; everything else starts a new file path.
 pub fn parse_compact(input: &str) -> anyhow::Result<Vec<FileEntry>> {
     let tokens = tokenize(input);
     let mut entries: Vec<FileEntry> = Vec::new();
@@ -64,19 +63,6 @@ pub fn parse_compact(input: &str) -> anyhow::Result<Vec<FileEntry>> {
     let mut current_sels: Vec<Selection> = Vec::new();
 
     for token in tokens {
-        // Skip terminal markers
-        if token == "$" {
-            // Flush current file without its last "path" component (which was
-            // actually the terminal cwd). The `$` means the preceding path was
-            // a terminal, not a file.
-            if current_path.is_some() {
-                // The accumulated path was a terminal dir — discard it.
-                current_path = None;
-                current_sels.clear();
-            }
-            continue;
-        }
-
         // Strip trailing comma for position detection
         let stripped = token.strip_suffix(',').unwrap_or(&token);
 
@@ -796,15 +782,6 @@ fn main() {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].selections.len(), 2);
         assert_eq!(entries[1].selections.len(), 1);
-    }
-
-    #[test]
-    fn parse_compact_skips_terminal() {
-        let entries =
-            parse_compact("src/foo.rs 5:12\n/home/user/project $\nsrc/bar.rs 10:1").unwrap();
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].path.to_str().unwrap(), "src/foo.rs");
-        assert_eq!(entries[1].path.to_str().unwrap(), "src/bar.rs");
     }
 
     #[test]

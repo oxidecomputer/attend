@@ -25,9 +25,8 @@ fn query() -> anyhow::Result<Option<QueryResult>> {
     .context("failed to open DB")?;
 
     let editors = query_editors(&conn)?;
-    let terminals = query_terminals(&conn)?;
 
-    Ok(Some(QueryResult { editors, terminals }))
+    Ok(Some(QueryResult { editors }))
 }
 
 /// Find the most recently active Zed SQLite database.
@@ -90,27 +89,4 @@ fn query_editors(conn: &rusqlite::Connection) -> anyhow::Result<Vec<RawEditor>> 
         .collect();
 
     Ok(editors)
-}
-
-/// Query working directories of active terminal tabs.
-fn query_terminals(conn: &rusqlite::Connection) -> anyhow::Result<Vec<std::path::PathBuf>> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT t.working_directory_path \
-             FROM items i \
-             JOIN terminals t ON i.item_id = t.item_id AND i.workspace_id = t.workspace_id \
-             WHERE i.kind = 'Terminal' AND i.active = 1",
-        )
-        .context("prepare failed")?;
-
-    let terminals: Vec<std::path::PathBuf> = stmt
-        .query_map([], |row| {
-            let s: String = row.get(0)?;
-            Ok(std::path::PathBuf::from(s))
-        })
-        .context("query failed")?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(terminals)
 }

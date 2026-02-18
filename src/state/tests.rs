@@ -58,24 +58,15 @@ fn arb_file_entry() -> impl Strategy<Value = FileEntry> {
 }
 
 fn arb_editor_state() -> impl Strategy<Value = EditorState> {
-    (
-        prop::collection::vec(arb_file_entry(), 0..6),
-        prop::collection::vec("[a-c]/term", 0..3),
-    )
-        .prop_map(|(files, terminals)| {
-            // Deduplicate files by path (keep first occurrence)
-            let mut seen = std::collections::HashSet::new();
-            let files = files
-                .into_iter()
-                .filter(|f| seen.insert(f.path.clone()))
-                .collect();
-            let terminals = terminals.into_iter().map(PathBuf::from).collect();
-            EditorState {
-                files,
-                terminals,
-                cwd: None,
-            }
-        })
+    prop::collection::vec(arb_file_entry(), 0..6).prop_map(|files| {
+        // Deduplicate files by path (keep first occurrence)
+        let mut seen = std::collections::HashSet::new();
+        let files = files
+            .into_iter()
+            .filter(|f| seen.insert(f.path.clone()))
+            .collect();
+        EditorState { files, cwd: None }
+    })
 }
 
 /// Generate file content with consistent newline style and sorted unique offsets.
@@ -228,7 +219,6 @@ proptest! {
         let original = state.files.clone();
         let mut ed = EditorState {
             files: state.files.clone(),
-            terminals: state.terminals.clone(),
             cwd: None,
         };
         ed.reorder_relative_to(&state);
@@ -245,25 +235,12 @@ proptest! {
         alpha_files.sort_by(|a, b| a.path.cmp(&b.path));
         let mut alpha = EditorState {
             files: alpha_files,
-            terminals: cached.terminals.clone(),
             cwd: None,
         };
         alpha.reorder_relative_to(&cached);
         let expected_paths: Vec<&Path> = cached.files.iter().map(|f| f.path.as_path()).collect();
         let actual_paths: Vec<&Path> = alpha.files.iter().map(|f| f.path.as_path()).collect();
         prop_assert_eq!(actual_paths, expected_paths);
-    }
-
-    /// (f) Terminals are untouched.
-    #[test]
-    fn reorder_terminals_untouched(
-        current in arb_editor_state(),
-        previous in arb_editor_state(),
-    ) {
-        let terminals_before = current.terminals.clone();
-        let mut state = current;
-        state.reorder_relative_to(&previous);
-        prop_assert_eq!(state.terminals, terminals_before);
     }
 }
 
@@ -280,7 +257,6 @@ proptest! {
         // Use current as both state and previous → all unchanged
         let mut state = EditorState {
             files: current.files.clone(),
-            terminals: current.terminals.clone(),
             cwd: None,
         };
         state.reorder_relative_to(&current);
@@ -441,7 +417,6 @@ proptest! {
         let json = serde_json::to_string(&state).unwrap();
         let recovered: EditorState = serde_json::from_str(&json).unwrap();
         prop_assert_eq!(state.files, recovered.files);
-        prop_assert_eq!(state.terminals, recovered.terminals);
     }
 }
 
@@ -469,11 +444,10 @@ fn make_editor(path: &Path, sel: Option<(i64, i64)>) -> RawEditor {
 /// to match what `hook::run` does with its cache file.
 fn simulate(
     editors: Vec<RawEditor>,
-    terminals: Vec<PathBuf>,
     cwd: &Path,
     previous: &EditorState,
 ) -> (EditorState, bool) {
-    let mut state = EditorState::build(editors, terminals, Some(cwd)).unwrap();
+    let mut state = EditorState::build(editors, Some(cwd)).unwrap();
     state.reorder_relative_to(previous);
     let changed = *previous != state;
     (state, changed)
@@ -506,7 +480,7 @@ fn first_invocation_alphabetical() {
         make_editor(&a, Some((3, 3))),
         make_editor(&b, Some((1, 4))),
     ];
-    let (state, changed) = simulate(editors, vec![], dir.path(), &EditorState::default());
+    let (state, changed) = simulate(editors, dir.path(), &EditorState::default());
 
     assert!(changed);
     // BTreeMap sorts by path → a.rs, b.rs, c.rs
@@ -555,7 +529,6 @@ fn cache_hit_unchanged() {
 
     let (state1, _) = simulate(
         vec![make_editor(&a, Some((0, 0))), make_editor(&b, Some((3, 3)))],
-        vec![],
         dir.path(),
         &EditorState::default(),
     );
@@ -563,7 +536,6 @@ fn cache_hit_unchanged() {
 
     let (state2, changed) = simulate(
         vec![make_editor(&a, Some((0, 0))), make_editor(&b, Some((3, 3)))],
-        vec![],
         dir.path(),
         &cached,
     );
@@ -587,7 +559,6 @@ fn changed_selection_reorders_file_to_front() {
             make_editor(&b, Some((0, 0))),
             make_editor(&c, Some((0, 0))),
         ],
-        vec![],
         dir.path(),
         &EditorState::default(),
     );
@@ -600,7 +571,6 @@ fn changed_selection_reorders_file_to_front() {
             make_editor(&b, Some((0, 0))),
             make_editor(&c, Some((3, 3))),
         ],
-        vec![],
         dir.path(),
         &cached,
     );
@@ -621,7 +591,6 @@ fn new_file_appears_first() {
 
     let (state1, _) = simulate(
         vec![make_editor(&a, Some((0, 0))), make_editor(&b, Some((0, 0)))],
-        vec![],
         dir.path(),
         &EditorState::default(),
     );
@@ -635,7 +604,6 @@ fn new_file_appears_first() {
             make_editor(&b, Some((0, 0))),
             make_editor(&c, Some((0, 0))),
         ],
-        vec![],
         dir.path(),
         &cached,
     );
@@ -660,7 +628,6 @@ fn removed_file_disappears() {
             make_editor(&b, Some((0, 0))),
             make_editor(&c, Some((0, 0))),
         ],
-        vec![],
         dir.path(),
         &EditorState::default(),
     );
@@ -669,7 +636,6 @@ fn removed_file_disappears() {
     // Close b.rs
     let (state2, changed) = simulate(
         vec![make_editor(&a, Some((0, 0))), make_editor(&c, Some((0, 0)))],
-        vec![],
         dir.path(),
         &cached,
     );
@@ -693,7 +659,6 @@ fn multi_step_sequence() {
     // Step 1: open a+b, no cache
     let (state1, changed1) = simulate(
         vec![make_editor(&a, Some((0, 0))), make_editor(&b, Some((0, 0)))],
-        vec![],
         dir.path(),
         &EditorState::default(),
     );
@@ -705,7 +670,6 @@ fn multi_step_sequence() {
     // Step 2: no-op (identical editors)
     let (state2, changed2) = simulate(
         vec![make_editor(&a, Some((0, 0))), make_editor(&b, Some((0, 0)))],
-        vec![],
         dir.path(),
         &cached1,
     );
@@ -716,7 +680,6 @@ fn multi_step_sequence() {
     // Step 3: move cursor in b → b comes first
     let (state3, changed3) = simulate(
         vec![make_editor(&a, Some((0, 0))), make_editor(&b, Some((3, 3)))],
-        vec![],
         dir.path(),
         &cached2,
     );
@@ -732,7 +695,6 @@ fn multi_step_sequence() {
             make_editor(&b, Some((3, 3))),
             make_editor(&c, Some((0, 0))),
         ],
-        vec![],
         dir.path(),
         &cached3,
     );
@@ -745,7 +707,6 @@ fn multi_step_sequence() {
     // Step 5: close a → remaining in cached order (c, b)
     let (state5, changed5) = simulate(
         vec![make_editor(&b, Some((3, 3))), make_editor(&c, Some((0, 0)))],
-        vec![],
         dir.path(),
         &cached4,
     );
@@ -765,7 +726,6 @@ fn selection_level_reordering() {
     // First invocation: 2 cursors at 1:1 and 2:1
     let (state1, _) = simulate(
         vec![make_editor(&a, Some((0, 0))), make_editor(&a, Some((3, 3)))],
-        vec![],
         dir.path(),
         &EditorState::default(),
     );
@@ -779,7 +739,6 @@ fn selection_level_reordering() {
             make_editor(&a, Some((1, 1))),
             make_editor(&a, Some((3, 3))),
         ],
-        vec![],
         dir.path(),
         &cached,
     );
@@ -802,43 +761,6 @@ fn selection_level_reordering() {
     );
 }
 
-/// Adding or removing a terminal triggers `changed == true`.
-#[test]
-fn terminal_changes_detected() {
-    let dir = tempfile::tempdir().unwrap();
-    let a = write_temp_file(dir.path(), "a.rs", TEST_CONTENT);
-
-    // First invocation: no terminals
-    let (state1, _) = simulate(
-        vec![make_editor(&a, Some((0, 0)))],
-        vec![],
-        dir.path(),
-        &EditorState::default(),
-    );
-    let cached = round_trip(&state1);
-
-    // Second invocation: add terminal
-    let (state2, changed2) = simulate(
-        vec![make_editor(&a, Some((0, 0)))],
-        vec![dir.path().to_path_buf()],
-        dir.path(),
-        &cached,
-    );
-    assert!(changed2);
-    assert_eq!(state2.terminals.len(), 1);
-
-    // Third invocation: remove terminal
-    let cached2 = round_trip(&state2);
-    let (state3, changed3) = simulate(
-        vec![make_editor(&a, Some((0, 0)))],
-        vec![],
-        dir.path(),
-        &cached2,
-    );
-    assert!(changed3);
-    assert!(state3.terminals.is_empty());
-}
-
 /// Editors outside cwd are filtered out. Changes only to outside-cwd editors
 /// produce a cache hit (`changed == false`).
 #[test]
@@ -858,7 +780,6 @@ fn changes_outside_cwd_invisible() {
             make_editor(&inside, Some((0, 0))),
             make_editor(&out_file, Some((0, 0))),
         ],
-        vec![],
         &cwd,
         &EditorState::default(),
     );
@@ -872,7 +793,6 @@ fn changes_outside_cwd_invisible() {
             make_editor(&inside, Some((0, 0))),
             make_editor(&out_file, Some((3, 3))),
         ],
-        vec![],
         &cwd,
         &cached,
     );

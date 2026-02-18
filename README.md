@@ -2,7 +2,7 @@
 
 Connects editors to AI coding agents, regardless of whether they're natively
 integrated. Reads the editor's current state (visible open files, cursor
-positions, selections, terminal working directories) and delivers it as context
+positions, selections) and delivers it as context
 that the agent can use to understand what the user is looking at.
 
 Currently supports Zed (editor) and Claude Code (agent). The architecture is
@@ -31,13 +31,11 @@ With no subcommand, prints the current editor state to stdout and exits.
 ```
 src/main.rs 14:3, 20:1-20:18
 src/db.rs 1:1
-~/project $
 ```
 
 Each line is a file path followed by comma-separated positions. A position is
-`line:col` (cursor) or `line:col-line:col` (selection). Lines ending with `$`
-are terminal working directories. `--format json` emits a JSON object with
-`files` and `terminals` arrays.
+`line:col` (cursor) or `line:col-line:col` (selection). `--format json` emits
+a JSON object with a `files` array.
 
 ## Agent integration
 
