@@ -117,8 +117,7 @@ impl Selection {
     /// editors sometimes report for cursors.
     pub fn is_cursor_like(&self) -> bool {
         self.start == self.end
-            || (self.start.line == self.end.line
-                && self.end.col.get() == self.start.col.get() + 1)
+            || (self.start.line == self.end.line && self.end.col.get() == self.start.col.get() + 1)
     }
 
     /// Line range spanned by this selection, normalized so first <= last.

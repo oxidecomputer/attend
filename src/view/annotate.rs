@@ -1,6 +1,6 @@
 use crate::state::{Col, Line, Selection};
 
-use super::{ansi, Extent, Mode, CURSOR, SEL_CLOSE, SEL_OPEN};
+use super::{CURSOR, Extent, Mode, SEL_CLOSE, SEL_OPEN, ansi};
 
 /// A group of selections with overlapping visible line ranges.
 pub(super) struct Group<'a> {
@@ -14,11 +14,7 @@ pub(super) struct Group<'a> {
 
 impl<'a> Group<'a> {
     /// Group selections whose visible line ranges (including context) overlap.
-    pub fn compute(
-        sels: &'a [Selection],
-        total_lines: usize,
-        extent: Extent,
-    ) -> Vec<Self> {
+    pub fn compute(sels: &'a [Selection], total_lines: usize, extent: Extent) -> Vec<Self> {
         if sels.is_empty() || total_lines == 0 {
             return Vec::new();
         }
@@ -83,10 +79,7 @@ pub(super) enum EventKind {
 }
 
 /// Build column events for a specific line from the given selections.
-pub(super) fn line_events(
-    sels: &[&Selection],
-    line_num: Line,
-) -> (Vec<(Col, EventKind)>, bool) {
+pub(super) fn line_events(sels: &[&Selection], line_num: Line) -> (Vec<(Col, EventKind)>, bool) {
     let mut events = Vec::new();
     let mut in_sel_at_start = false;
 

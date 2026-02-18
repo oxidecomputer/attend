@@ -1,7 +1,7 @@
 use serde::Serialize;
 
-use crate::state::{EditorState, Line, Position, Selection};
 use crate::state::resolve::relativize;
+use crate::state::{EditorState, Line, Position, Selection};
 
 /// Return the current UTC time as an ISO 8601 string (e.g. `2026-02-18T15:30:45Z`).
 pub fn utc_now() -> String {

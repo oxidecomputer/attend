@@ -5,14 +5,14 @@ use std::io::IsTerminal;
 use std::path::Path;
 
 use crate::json::{self, ViewFile, ViewGroup, ViewPayload};
-use crate::state::resolve::relativize;
 use crate::state::FileEntry;
 #[cfg(test)]
 use crate::state::Selection;
+use crate::state::resolve::relativize;
 
-use annotate::{render_line_range, Group};
 #[cfg(test)]
 use annotate::line_events;
+use annotate::{Group, render_line_range};
 
 pub use parse::parse_compact;
 

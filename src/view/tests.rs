@@ -577,8 +577,7 @@ fn arb_range_selection() -> impl Strategy<Value = Selection> {
 fn arb_extent() -> impl Strategy<Value = Extent> {
     prop_oneof![
         Just(Extent::Exact),
-        (0usize..10, 0usize..10)
-            .prop_map(|(before, after)| Extent::Lines { before, after }),
+        (0usize..10, 0usize..10).prop_map(|(before, after)| Extent::Lines { before, after }),
         Just(Extent::Full),
     ]
 }
@@ -592,10 +591,10 @@ fn arb_file_with_selections() -> impl Strategy<Value = (String, Vec<Selection>)>
     arb_file_content().prop_flat_map(|content| {
         let line_count = content.lines().count().max(1);
         let longest = content.lines().map(|l| l.len()).max().unwrap_or(1).max(1);
-        let in_bounds = (1..=line_count, 1..=longest + 1)
-            .prop_map(|(l, c)| Position::of(l, c).unwrap());
-        let in_bounds_sel = (in_bounds.clone(), in_bounds)
-            .prop_map(|(start, end)| Selection { start, end });
+        let in_bounds =
+            (1..=line_count, 1..=longest + 1).prop_map(|(l, c)| Position::of(l, c).unwrap());
+        let in_bounds_sel =
+            (in_bounds.clone(), in_bounds).prop_map(|(start, end)| Selection { start, end });
         let sels = proptest::collection::vec(in_bounds_sel, 1..6);
         (Just(content), sels)
     })

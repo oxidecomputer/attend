@@ -37,8 +37,20 @@ pub fn session_start() -> anyhow::Result<()> {
 }
 
 /// Handle the `UserPromptSubmit` hook: emit editor context if changed.
+///
+/// When the dictate feature is enabled and the prompt is `/attend`,
+/// activates dictation mode instead of emitting editor context.
 pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
     let stdin_json = read_stdin_json();
+
+    // Check for /attend activation (dictate feature)
+    #[cfg(feature = "dictate")]
+    if let Some(ref json) = stdin_json
+        && is_attend_prompt(json)
+    {
+        return handle_attend_activate(json);
+    }
+
     let session_id = stdin_json
         .as_ref()
         .and_then(|v| v.get("session_id"))
@@ -79,4 +91,71 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
 
     println!("<editor-context>\n{state}\n</editor-context>");
     Ok(())
+}
+
+/// Check if the user prompt is `/attend`.
+#[cfg(feature = "dictate")]
+fn is_attend_prompt(json: &serde_json::Value) -> bool {
+    json.get("prompt")
+        .and_then(|v| v.as_str())
+        .is_some_and(|p| p.trim() == "/attend")
+}
+
+/// Activate dictation mode for this session.
+#[cfg(feature = "dictate")]
+fn handle_attend_activate(json: &serde_json::Value) -> anyhow::Result<()> {
+    let session_id = json
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("no session_id in hook stdin"))?;
+
+    let path = crate::dictate::listening_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, session_id)?;
+
+    // Return JSON to tell Claude that dictation is active
+    let response = serde_json::json!({
+        "additionalContext": "Dictation mode activated for this session. \
+            Listening for voice input.\n\n\
+            Run `attend dictate receive --wait` in the background to wait for dictation."
+    });
+    println!("{}", serde_json::to_string(&response)?);
+    Ok(())
+}
+
+#[cfg(all(test, feature = "dictate"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_attend_prompt_exact() {
+        let json = serde_json::json!({"prompt": "/attend", "session_id": "abc"});
+        assert!(is_attend_prompt(&json));
+    }
+
+    #[test]
+    fn is_attend_prompt_with_whitespace() {
+        let json = serde_json::json!({"prompt": "  /attend  ", "session_id": "abc"});
+        assert!(is_attend_prompt(&json));
+    }
+
+    #[test]
+    fn is_attend_prompt_different_text() {
+        let json = serde_json::json!({"prompt": "hello world", "session_id": "abc"});
+        assert!(!is_attend_prompt(&json));
+    }
+
+    #[test]
+    fn is_attend_prompt_no_prompt_field() {
+        let json = serde_json::json!({"session_id": "abc"});
+        assert!(!is_attend_prompt(&json));
+    }
+
+    #[test]
+    fn is_attend_prompt_partial() {
+        let json = serde_json::json!({"prompt": "/attend to this", "session_id": "abc"});
+        assert!(!is_attend_prompt(&json));
+    }
 }

@@ -1,0 +1,33 @@
+---
+source: src/dictate/merge.rs
+expression: md
+---
+Please look at this function
+
+```rust
+// src/main.rs:42
+fn parse_config(path: &Path) -> Result<Config> {
+    let raw = std::fs::read_to_string(path)?;
+    toml::from_str(&raw)
+}
+```
+
+and refactor it to use this struct
+
+```rust
+// src/lib.rs:8
+pub struct Config {
+    pub name: String,
+    pub timeout: Duration,
+}
+```
+
+I just changed the timeout field
+
+```diff
+// src/lib.rs
+-    pub timeout: u64,
++    pub timeout: Duration,
+```
+
+to use Duration instead

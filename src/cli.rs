@@ -83,6 +83,10 @@ pub enum Command {
     Hook(Hook),
     /// Continuously watch editor state.
     Watch(Watch),
+    /// Voice-driven prompt composition.
+    #[cfg(feature = "dictate")]
+    #[command(subcommand)]
+    Dictate(crate::dictate::DictateCommand),
     /// Show file content at editor selections.
     View {
         /// Resolve paths relative to this directory and show relative paths.
@@ -211,7 +215,9 @@ impl Cli {
         match self.command {
             Some(command) => {
                 if !matches!(self.format, Format::Human) {
-                    anyhow::bail!("--format is only valid without a subcommand (use subcommand's own --format)");
+                    anyhow::bail!(
+                        "--format is only valid without a subcommand (use subcommand's own --format)"
+                    );
                 }
                 command.run(self.dir)?;
             }
@@ -241,6 +247,8 @@ impl Command {
     pub fn run(self, cwd: Option<PathBuf>) -> anyhow::Result<()> {
         match self {
             Command::Watch(watch) => crate::watch::run(&watch, cwd.as_deref()),
+            #[cfg(feature = "dictate")]
+            Command::Dictate(cmd) => crate::dictate::run(cmd),
             Command::Hook(hook) => {
                 if cwd.is_some() {
                     anyhow::bail!("--dir is not valid with the hook subcommand");
@@ -280,14 +288,10 @@ impl Command {
                 };
                 match format {
                     Format::Human => {
-                        print!(
-                            "{}",
-                            crate::view::render(&entries, cwd.as_deref(), extent)?
-                        );
+                        print!("{}", crate::view::render(&entries, cwd.as_deref(), extent)?);
                     }
                     Format::Json => {
-                        let payload =
-                            crate::view::render_json(&entries, cwd.as_deref(), extent)?;
+                        let payload = crate::view::render_json(&entries, cwd.as_deref(), extent)?;
                         let wrapped = crate::json::Timestamped::now(payload);
                         println!(
                             "{}",

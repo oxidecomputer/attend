@@ -119,11 +119,7 @@ fn arb_raw_pairs(content_len: usize) -> impl Strategy<Value = Vec<(i64, i64)>> {
 fn file_multiset(files: &[FileEntry]) -> HashMap<PathBuf, Vec<(Position, Position)>> {
     let mut map: HashMap<PathBuf, Vec<(Position, Position)>> = HashMap::new();
     for f in files {
-        let mut sels: Vec<_> = f
-            .selections
-            .iter()
-            .map(|s| (s.start, s.end))
-            .collect();
+        let mut sels: Vec<_> = f.selections.iter().map(|s| (s.start, s.end)).collect();
         sels.sort_by(|a, b| a.0.line.cmp(&b.0.line).then(a.0.col.cmp(&b.0.col)));
         map.entry(f.path.clone()).or_default().extend(sels);
     }
@@ -442,11 +438,7 @@ fn make_editor(path: &Path, sel: Option<(i64, i64)>) -> RawEditor {
 ///
 /// Between invocations, tests should round-trip the state through [`round_trip`]
 /// to match what `hook::run` does with its cache file.
-fn simulate(
-    editors: Vec<RawEditor>,
-    cwd: &Path,
-    previous: &EditorState,
-) -> (EditorState, bool) {
+fn simulate(editors: Vec<RawEditor>, cwd: &Path, previous: &EditorState) -> (EditorState, bool) {
     let mut state = EditorState::build(editors, Some(cwd)).unwrap();
     state.reorder_relative_to(previous);
     let changed = *previous != state;
