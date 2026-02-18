@@ -42,9 +42,13 @@ pub struct FileEntry {
 impl fmt::Display for FileEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.path.display())?;
-        let positions: Vec<String> = self.selections.iter().map(|s| s.to_string()).collect();
-        if !positions.is_empty() {
-            write!(f, " {}", positions.join(", "))?;
+        for (i, sel) in self.selections.iter().enumerate() {
+            if i == 0 {
+                write!(f, " ")?;
+            } else {
+                write!(f, ", ")?;
+            }
+            write!(f, "{sel}")?;
         }
         Ok(())
     }
@@ -59,9 +63,13 @@ impl fmt::Display for EditorState {
             }
             let path = resolve::relativize(&file.path, self.cwd.as_deref());
             write!(f, "{path}")?;
-            let positions: Vec<String> = file.selections.iter().map(|s| s.to_string()).collect();
-            if !positions.is_empty() {
-                write!(f, " {}", positions.join(", "))?;
+            for (i, sel) in file.selections.iter().enumerate() {
+                if i == 0 {
+                    write!(f, " ")?;
+                } else {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{sel}")?;
             }
             first = false;
         }

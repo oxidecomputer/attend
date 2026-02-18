@@ -3,6 +3,17 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 
+/// Check whether a hook entry's commands reference `attend` or the given binary command.
+fn entry_has_attend_cmd(entry: &serde_json::Value, bin_cmd: Option<&str>) -> bool {
+    entry
+        .get("hooks")
+        .and_then(|h| h.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|h| h.get("command").and_then(|c| c.as_str()))
+        .any(|cmd| cmd.contains("attend") || bin_cmd.is_some_and(|b| cmd.contains(b)))
+}
+
 /// Resolve the Claude Code settings file path (global or project-local).
 fn settings_path(project: Option<&Path>) -> anyhow::Result<PathBuf> {
     if let Some(proj) = project {
@@ -57,10 +68,7 @@ pub fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
 
     // Remove existing attend entries (idempotent)
     let before = ss_vec.len();
-    ss_vec.retain(|entry| {
-        let s = serde_json::to_string(entry).unwrap_or_default();
-        !s.contains("attend") && !s.contains(bin_cmd)
-    });
+    ss_vec.retain(|entry| !entry_has_attend_cmd(entry, Some(bin_cmd)));
     let mut existing = before > ss_vec.len();
     ss_vec.push(session_start_hook);
 
@@ -83,10 +91,7 @@ pub fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
         .context("UserPromptSubmit is not an array")?;
 
     let before = ups_vec.len();
-    ups_vec.retain(|entry| {
-        let s = serde_json::to_string(entry).unwrap_or_default();
-        !s.contains("attend") && !s.contains(bin_cmd)
-    });
+    ups_vec.retain(|entry| !entry_has_attend_cmd(entry, Some(bin_cmd)));
     existing = existing || before > ups_vec.len();
     ups_vec.push(prompt_hook);
 
@@ -94,8 +99,10 @@ pub fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
     if let Some(parent) = settings_path.parent() {
         fs::create_dir_all(parent).context("cannot create settings directory")?;
     }
-    let output = serde_json::to_string_pretty(&settings).context("cannot serialize settings")?;
-    fs::write(&settings_path, format!("{output}\n")).context("cannot write settings file")?;
+    let mut output =
+        serde_json::to_string_pretty(&settings).context("cannot serialize settings")?;
+    output.push('\n');
+    fs::write(&settings_path, output).context("cannot write settings file")?;
 
     if existing {
         println!("Updated existing hooks in {}", settings_path.display());
@@ -127,10 +134,7 @@ pub fn uninstall(project: Option<PathBuf>) -> anyhow::Result<()> {
     for key in &["SessionStart", "UserPromptSubmit"] {
         if let Some(arr) = hooks.get_mut(*key).and_then(|v| v.as_array_mut()) {
             let before = arr.len();
-            arr.retain(|entry| {
-                let s = serde_json::to_string(entry).unwrap_or_default();
-                !s.contains("\"attend ")
-            });
+            arr.retain(|entry| !entry_has_attend_cmd(entry, None));
             if arr.len() < before {
                 removed = true;
             }
@@ -138,9 +142,10 @@ pub fn uninstall(project: Option<PathBuf>) -> anyhow::Result<()> {
     }
 
     if removed {
-        let output =
+        let mut output =
             serde_json::to_string_pretty(&settings).context("cannot serialize settings")?;
-        fs::write(&settings_path, format!("{output}\n")).context("cannot write settings file")?;
+        output.push('\n');
+        fs::write(&settings_path, output).context("cannot write settings file")?;
         println!("Removed hooks from {}", settings_path.display());
     } else {
         println!("No attend hooks found in {}", settings_path.display());

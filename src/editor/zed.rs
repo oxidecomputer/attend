@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::Path;
 
 use anyhow::Context;
 
@@ -36,7 +35,7 @@ fn find_db() -> Option<std::path::PathBuf> {
     let data_dir = dirs::data_dir()?;
     let zed_db_dir = data_dir.join("Zed").join("db");
 
-    let mut candidates: Vec<std::path::PathBuf> = fs::read_dir(&zed_db_dir)
+    let candidates: Vec<std::path::PathBuf> = fs::read_dir(&zed_db_dir)
         .ok()?
         .filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with("0-")))
@@ -44,16 +43,22 @@ fn find_db() -> Option<std::path::PathBuf> {
         .filter(|p| p.exists())
         .collect();
 
-    // Pick the one with the most recently modified WAL
-    candidates.sort_by(|a, b| {
-        let wal_mtime = |p: &Path| {
-            let wal = p.with_extension("sqlite-wal");
-            fs::metadata(&wal).and_then(|m| m.modified()).ok()
-        };
-        wal_mtime(b).cmp(&wal_mtime(a))
-    });
+    // Pick the one with the most recently modified WAL (precompute mtimes to
+    // avoid repeated syscalls inside the sort comparator).
+    let mut with_mtime: Vec<_> = candidates
+        .into_iter()
+        .map(|p| {
+            let mtime = p
+                .with_extension("sqlite-wal")
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok());
+            (p, mtime)
+        })
+        .collect();
+    with_mtime.sort_by(|(_, a), (_, b)| b.cmp(a));
 
-    candidates.into_iter().next()
+    with_mtime.into_iter().next().map(|(p, _)| p)
 }
 
 /// Query active editor tabs with their byte-offset selections.

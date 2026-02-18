@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{self, BufRead};
 use std::path::Path;
@@ -139,11 +140,11 @@ impl Selection {
                 let start = lookup
                     .get(&(s as usize))
                     .cloned()
-                    .context(format!("missing offset {s} in lookup"))?;
+                    .with_context(|| format!("missing offset {s} in lookup"))?;
                 let end = lookup
                     .get(&(e as usize))
                     .cloned()
-                    .context(format!("missing offset {e} in lookup"))?;
+                    .with_context(|| format!("missing offset {e} in lookup"))?;
                 Ok(Selection { start, end })
             })
             .collect()
@@ -151,19 +152,20 @@ impl Selection {
 
     /// Resolve raw byte-offset pairs to line:col selections by reading from a file path.
     pub(super) fn resolve(path: &Path, raw: &[(i64, i64)]) -> anyhow::Result<Vec<Self>> {
-        let file = fs::File::open(path).context(format!("cannot open {}", path.display()))?;
+        let file =
+            fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
         Self::resolve_from_reader(io::BufReader::new(file), raw)
     }
 }
 
 /// Make `path` relative to `cwd`, or return it unchanged if outside cwd.
-pub(super) fn relativize(path: &Path, cwd: Option<&Path>) -> String {
+pub(super) fn relativize<'a>(path: &'a Path, cwd: Option<&Path>) -> Cow<'a, str> {
     let Some(cwd) = cwd else {
-        return path.to_string_lossy().into_owned();
+        return path.to_string_lossy();
     };
     match path.strip_prefix(cwd) {
-        Ok(rel) if rel.as_os_str().is_empty() => ".".to_string(),
-        Ok(rel) => rel.to_string_lossy().into_owned(),
-        Err(_) => path.to_string_lossy().into_owned(),
+        Ok(rel) if rel.as_os_str().is_empty() => Cow::Borrowed("."),
+        Ok(rel) => rel.to_string_lossy(),
+        Err(_) => path.to_string_lossy(),
     }
 }

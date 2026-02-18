@@ -47,8 +47,7 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
     let session_id = stdin_json
         .as_ref()
         .and_then(|v| v.get("session_id"))
-        .and_then(|v| v.as_str())
-        .map(String::from);
+        .and_then(|v| v.as_str());
     let stdin_cwd = stdin_json
         .as_ref()
         .and_then(|v| v.get("cwd"))
@@ -60,7 +59,6 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
     let previous = session_id
-        .as_deref()
         .and_then(cache_path)
         .and_then(|cp| fs::read_to_string(&cp).ok())
         .and_then(|s| serde_json::from_str::<state::EditorState>(&s).ok());
@@ -76,13 +74,15 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
     }
 
     // Write cache and emit
-    if let Some(sid) = &session_id
+    if let Some(sid) = session_id
         && let Some(cp) = cache_path(sid)
     {
         if let Some(parent) = cp.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let _ = fs::write(&cp, serde_json::to_string(&state).unwrap_or_default());
+        if let Ok(file) = fs::File::create(&cp) {
+            let _ = serde_json::to_writer(io::BufWriter::new(file), &state);
+        }
     }
 
     println!("<editor-context>\n{state}\n</editor-context>");
