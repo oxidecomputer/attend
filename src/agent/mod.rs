@@ -42,8 +42,8 @@ impl HookEvent {
 pub trait Agent: Sync {
     /// CLI name (e.g., "claude").
     fn name(&self) -> &'static str;
-    /// Short description for `--help`.
-    fn about(&self) -> &'static str;
+    /// Full name (e.g. "Claude Code").
+    fn full_name(&self) -> &'static str;
     /// Run a hook event.
     fn run_hook(&self, event: HookEvent, cwd: Option<PathBuf>) -> anyhow::Result<()>;
     /// Install hooks into agent settings.
@@ -54,7 +54,8 @@ pub trait Agent: Sync {
 
 /// Build the clap subcommand for an agent (agent name + HookEvent sub-subcommands).
 pub fn clap_command(agent: &dyn Agent) -> clap::Command {
-    let mut cmd = clap::Command::new(agent.name()).about(agent.about());
+    let mut cmd =
+        clap::Command::new(agent.name()).about(format!("Hooks for {}", agent.full_name()));
     for event in HookEvent::ALL {
         cmd = cmd.subcommand(clap::Command::new(event.cli_name()).about(event.about()));
     }

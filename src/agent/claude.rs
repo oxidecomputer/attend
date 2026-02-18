@@ -12,7 +12,7 @@ impl Agent for Claude {
         "claude"
     }
 
-    fn about(&self) -> &'static str {
+    fn full_name(&self) -> &'static str {
         "Claude Code hooks"
     }
 

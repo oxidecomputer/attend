@@ -35,13 +35,13 @@ fn reference_position(content: &[u8], offset: usize) -> Position {
             }
         }
     }
-    Position { line, col }
+    Position::of(line, col).unwrap()
 }
 
 // ── Strategies ──────────────────────────────────────────────────────────────
 
 fn arb_position() -> impl Strategy<Value = Position> {
-    (1..20usize, 1..50usize).prop_map(|(line, col)| Position { line, col })
+    (1..20usize, 1..50usize).prop_map(|(line, col)| Position::of(line, col).unwrap())
 }
 
 fn arb_selection() -> impl Strategy<Value = Selection> {
@@ -122,7 +122,7 @@ fn file_multiset(files: &[FileEntry]) -> HashMap<PathBuf, Vec<(Position, Positio
         let mut sels: Vec<_> = f
             .selections
             .iter()
-            .map(|s| (s.start.clone(), s.end.clone()))
+            .map(|s| (s.start, s.end))
             .collect();
         sels.sort_by(|a, b| a.0.line.cmp(&b.0.line).then(a.0.col.cmp(&b.0.col)));
         map.entry(f.path.clone()).or_default().extend(sels);
@@ -289,14 +289,14 @@ proptest! {
     ) {
         let before_sels: HashMap<PathBuf, Vec<(Position, Position)>> = current.files.iter()
             .map(|f| (f.path.clone(), f.selections.iter()
-                .map(|s| (s.start.clone(), s.end.clone())).collect()))
+                .map(|s| (s.start, s.end)).collect()))
             .collect();
         let mut state = current;
         state.reorder_relative_to(&previous);
         for f in &state.files {
             if let Some(orig) = before_sels.get(&f.path) {
                 let mut after: Vec<_> = f.selections.iter()
-                    .map(|s| (s.start.clone(), s.end.clone())).collect();
+                    .map(|s| (s.start, s.end)).collect();
                 let mut expected = orig.clone();
                 after.sort_by(|a, b| a.0.line.cmp(&b.0.line).then(a.0.col.cmp(&b.0.col)));
                 expected.sort_by(|a, b| a.0.line.cmp(&b.0.line).then(a.0.col.cmp(&b.0.col)));
@@ -492,31 +492,31 @@ fn first_invocation_alphabetical() {
     // a.rs: (3,3) → cursor at 2:1
     assert_eq!(
         state.files[0].selections[0].start,
-        Position { line: 2, col: 1 }
+        Position::of(2, 1).unwrap()
     );
     assert_eq!(
         state.files[0].selections[0].end,
-        Position { line: 2, col: 1 }
+        Position::of(2, 1).unwrap()
     );
 
     // b.rs: (1,4) → selection 1:2-2:2
     assert_eq!(
         state.files[1].selections[0].start,
-        Position { line: 1, col: 2 }
+        Position::of(1, 2).unwrap()
     );
     assert_eq!(
         state.files[1].selections[0].end,
-        Position { line: 2, col: 2 }
+        Position::of(2, 2).unwrap()
     );
 
     // c.rs: (0,0) → cursor at 1:1
     assert_eq!(
         state.files[2].selections[0].start,
-        Position { line: 1, col: 1 }
+        Position::of(1, 1).unwrap()
     );
     assert_eq!(
         state.files[2].selections[0].end,
-        Position { line: 1, col: 1 }
+        Position::of(1, 1).unwrap()
     );
 }
 
@@ -748,16 +748,16 @@ fn selection_level_reordering() {
     // New cursor (1:2) first
     assert_eq!(
         state2.files[0].selections[0].start,
-        Position { line: 1, col: 2 }
+        Position::of(1, 2).unwrap()
     );
     // Then existing in cached order: 1:1, 2:1
     assert_eq!(
         state2.files[0].selections[1].start,
-        Position { line: 1, col: 1 }
+        Position::of(1, 1).unwrap()
     );
     assert_eq!(
         state2.files[0].selections[2].start,
-        Position { line: 2, col: 1 }
+        Position::of(2, 1).unwrap()
     );
 }
 

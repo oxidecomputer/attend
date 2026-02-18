@@ -17,7 +17,8 @@ pub fn parse_compact(input: &str) -> anyhow::Result<Vec<FileEntry>> {
         let stripped = token.strip_suffix(',').unwrap_or(&token);
 
         if is_position(stripped) {
-            let sel = Selection::parse_display(stripped)
+            let sel: Selection = stripped
+                .parse()
                 .with_context(|| format!("bad position: {stripped}"))?;
             current_sels.push(sel);
         } else {

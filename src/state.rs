@@ -18,7 +18,7 @@ fn shared_cache_path() -> Option<PathBuf> {
 }
 
 pub(crate) mod resolve;
-pub use resolve::{Position, Selection};
+pub use resolve::{Col, Line, Position, Selection};
 
 #[cfg(test)]
 mod tests;

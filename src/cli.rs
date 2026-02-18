@@ -7,18 +7,17 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[command(
     name = "attend",
     about = "Read editor state for AI coding agents.",
-    version,
-    args_conflicts_with_subcommands = true
+    version
 )]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
-    /// Filter to files under this directory and show relative paths.
+    /// Resolve paths relative to this directory and show relative paths.
     #[arg(long, short)]
     pub dir: Option<PathBuf>,
 
-    /// Output format.
+    /// Output format (only valid without a subcommand).
     #[arg(long, short, default_value = "human")]
     pub format: Format,
 }
@@ -45,6 +44,10 @@ pub enum Command {
     Hook(Hook),
     /// Show file content at editor selections.
     View {
+        /// Resolve paths relative to this directory and show relative paths.
+        #[arg(long, short)]
+        dir: Option<PathBuf>,
+
         /// Show entire file contents with highlights inline.
         #[arg(long, conflicts_with_all = ["before", "after"])]
         full: bool,
@@ -158,7 +161,12 @@ impl clap::Subcommand for RunHook {
 impl Cli {
     pub fn run(self) -> anyhow::Result<()> {
         match self.command {
-            Some(command) => command.run(self.dir)?,
+            Some(command) => {
+                if !matches!(self.format, Format::Human) {
+                    anyhow::bail!("--format is only valid without a subcommand");
+                }
+                command.run(self.dir)?;
+            }
             None => {
                 if let Some(state) = crate::state::EditorState::current(self.dir.as_deref())? {
                     match self.format {
@@ -179,13 +187,20 @@ impl Cli {
 impl Command {
     pub fn run(self, cwd: Option<PathBuf>) -> anyhow::Result<()> {
         match self {
-            Command::Hook(hook) => hook.run(cwd),
+            Command::Hook(hook) => {
+                if cwd.is_some() {
+                    anyhow::bail!("--dir is not valid with the hook subcommand");
+                }
+                hook.run()
+            }
             Command::View {
+                dir,
                 full,
                 before,
                 after,
                 args,
             } => {
+                let cwd = dir.or(cwd);
                 let entries = if args.is_empty() {
                     match crate::state::EditorState::current(cwd.as_deref())? {
                         Some(state) => state.files,
@@ -219,9 +234,9 @@ impl Command {
 }
 
 impl Hook {
-    pub fn run(self, cwd: Option<PathBuf>) -> anyhow::Result<()> {
+    pub fn run(self) -> anyhow::Result<()> {
         match self {
-            Hook::Run(run_hook) => run_hook.agent.run_hook(run_hook.event, cwd),
+            Hook::Run(run_hook) => run_hook.agent.run_hook(run_hook.event, None),
             Hook::Install {
                 agent,
                 project,

@@ -1,5 +1,5 @@
 use super::*;
-use crate::state::Position;
+use crate::state::{Line, Position};
 
 use proptest::prelude::*;
 
@@ -42,8 +42,8 @@ fn cursor_on_line() {
     let entries = vec![FileEntry {
         path,
         selections: vec![Selection {
-            start: Position { line: 3, col: 9 },
-            end: Position { line: 3, col: 9 },
+            start: Position::of(3, 9).unwrap(),
+            end: Position::of(3, 9).unwrap(),
         }],
     }];
     let result = render_markers(&entries, Some(dir.path())).unwrap();
@@ -60,8 +60,8 @@ fn multi_line_selection() {
     let entries = vec![FileEntry {
         path,
         selections: vec![Selection {
-            start: Position { line: 2, col: 5 },
-            end: Position { line: 4, col: 15 },
+            start: Position::of(2, 5).unwrap(),
+            end: Position::of(4, 15).unwrap(),
         }],
     }];
     let result = render_markers(&entries, Some(dir.path())).unwrap();
@@ -80,8 +80,8 @@ fn single_line_partial_selection() {
     let entries = vec![FileEntry {
         path,
         selections: vec![Selection {
-            start: Position { line: 3, col: 9 },
-            end: Position { line: 3, col: 15 },
+            start: Position::of(3, 9).unwrap(),
+            end: Position::of(3, 15).unwrap(),
         }],
     }];
     let result = render_markers(&entries, Some(dir.path())).unwrap();
@@ -99,12 +99,12 @@ fn multiple_selections_one_file() {
         path,
         selections: vec![
             Selection {
-                start: Position { line: 1, col: 1 },
-                end: Position { line: 1, col: 1 },
+                start: Position::of(1, 1).unwrap(),
+                end: Position::of(1, 1).unwrap(),
             },
             Selection {
-                start: Position { line: 3, col: 5 },
-                end: Position { line: 3, col: 8 },
+                start: Position::of(3, 5).unwrap(),
+                end: Position::of(3, 8).unwrap(),
             },
         ],
     }];
@@ -129,15 +129,15 @@ fn multiple_files() {
         FileEntry {
             path: p1,
             selections: vec![Selection {
-                start: Position { line: 1, col: 5 },
-                end: Position { line: 1, col: 5 },
+                start: Position::of(1, 5).unwrap(),
+                end: Position::of(1, 5).unwrap(),
             }],
         },
         FileEntry {
             path: p2,
             selections: vec![Selection {
-                start: Position { line: 2, col: 1 },
-                end: Position { line: 3, col: 6 },
+                start: Position::of(2, 1).unwrap(),
+                end: Position::of(3, 6).unwrap(),
             }],
         },
     ];
@@ -160,8 +160,8 @@ fn selection_at_line_start() {
     let entries = vec![FileEntry {
         path,
         selections: vec![Selection {
-            start: Position { line: 1, col: 1 },
-            end: Position { line: 2, col: 5 },
+            start: Position::of(1, 1).unwrap(),
+            end: Position::of(2, 5).unwrap(),
         }],
     }];
     let result = render_markers(&entries, Some(dir.path())).unwrap();
@@ -179,8 +179,8 @@ fn selection_at_line_end() {
     let entries = vec![FileEntry {
         path,
         selections: vec![Selection {
-            start: Position { line: 1, col: 12 },
-            end: Position { line: 1, col: 12 },
+            start: Position::of(1, 12).unwrap(),
+            end: Position::of(1, 12).unwrap(),
         }],
     }];
     let result = render_markers(&entries, Some(dir.path())).unwrap();
@@ -197,8 +197,8 @@ fn color_mode_cursor() {
     let entries = vec![FileEntry {
         path,
         selections: vec![Selection {
-            start: Position { line: 1, col: 3 },
-            end: Position { line: 1, col: 3 },
+            start: Position::of(1, 3).unwrap(),
+            end: Position::of(1, 3).unwrap(),
         }],
     }];
     let result = render_with_mode(&entries, Some(dir.path()), Mode::Color, Extent::Exact).unwrap();
@@ -216,8 +216,8 @@ fn color_mode_selection() {
     let entries = vec![FileEntry {
         path,
         selections: vec![Selection {
-            start: Position { line: 1, col: 3 },
-            end: Position { line: 1, col: 8 },
+            start: Position::of(1, 3).unwrap(),
+            end: Position::of(1, 8).unwrap(),
         }],
     }];
     let result = render_with_mode(&entries, Some(dir.path()), Mode::Color, Extent::Exact).unwrap();
@@ -227,34 +227,34 @@ fn color_mode_selection() {
 
 #[test]
 fn parse_display_cursor() {
-    let sel = Selection::parse_display("5:12").unwrap();
-    assert_eq!(sel.start, Position { line: 5, col: 12 });
-    assert_eq!(sel.end, Position { line: 5, col: 12 });
+    let sel: Selection = "5:12".parse().unwrap();
+    assert_eq!(sel.start, Position::of(5, 12).unwrap());
+    assert_eq!(sel.end, Position::of(5, 12).unwrap());
 }
 
 #[test]
 fn parse_display_range() {
-    let sel = Selection::parse_display("19:40-24:6").unwrap();
-    assert_eq!(sel.start, Position { line: 19, col: 40 });
-    assert_eq!(sel.end, Position { line: 24, col: 6 });
+    let sel: Selection = "19:40-24:6".parse().unwrap();
+    assert_eq!(sel.start, Position::of(19, 40).unwrap());
+    assert_eq!(sel.end, Position::of(24, 6).unwrap());
 }
 
 #[test]
 fn parse_display_roundtrip() {
     let original = Selection {
-        start: Position { line: 10, col: 5 },
-        end: Position { line: 20, col: 15 },
+        start: Position::of(10, 5).unwrap(),
+        end: Position::of(20, 15).unwrap(),
     };
     let display = original.to_string();
-    let parsed = Selection::parse_display(&display).unwrap();
+    let parsed: Selection = display.parse().unwrap();
     assert_eq!(parsed, original);
 
     let cursor = Selection {
-        start: Position { line: 3, col: 7 },
-        end: Position { line: 3, col: 7 },
+        start: Position::of(3, 7).unwrap(),
+        end: Position::of(3, 7).unwrap(),
     };
     let display = cursor.to_string();
-    let parsed = Selection::parse_display(&display).unwrap();
+    let parsed: Selection = display.parse().unwrap();
     assert_eq!(parsed, cursor);
 }
 
@@ -298,8 +298,8 @@ fn render_with_cwd() {
     let entries = vec![FileEntry {
         path,
         selections: vec![Selection {
-            start: Position { line: 1, col: 3 },
-            end: Position { line: 1, col: 3 },
+            start: Position::of(1, 3).unwrap(),
+            end: Position::of(1, 3).unwrap(),
         }],
     }];
     let result = render_markers(&entries, Some(dir.path())).unwrap();
@@ -316,8 +316,8 @@ fn context_before_after() {
     let entries = vec![FileEntry {
         path,
         selections: vec![Selection {
-            start: Position { line: 3, col: 9 },
-            end: Position { line: 3, col: 9 },
+            start: Position::of(3, 9).unwrap(),
+            end: Position::of(3, 9).unwrap(),
         }],
     }];
     let ctx = Extent::Lines {
@@ -340,8 +340,8 @@ fn context_clamps_to_file_bounds() {
     let entries = vec![FileEntry {
         path,
         selections: vec![Selection {
-            start: Position { line: 1, col: 1 },
-            end: Position { line: 1, col: 1 },
+            start: Position::of(1, 1).unwrap(),
+            end: Position::of(1, 1).unwrap(),
         }],
     }];
     let ctx = Extent::Lines {
@@ -363,8 +363,8 @@ fn context_around_selection() {
     let entries = vec![FileEntry {
         path,
         selections: vec![Selection {
-            start: Position { line: 3, col: 5 },
-            end: Position { line: 4, col: 9 },
+            start: Position::of(3, 5).unwrap(),
+            end: Position::of(4, 9).unwrap(),
         }],
     }];
     let ctx = Extent::Lines {
@@ -389,12 +389,12 @@ fn merged_overlapping_contexts() {
         path,
         selections: vec![
             Selection {
-                start: Position { line: 2, col: 5 },
-                end: Position { line: 2, col: 5 },
+                start: Position::of(2, 5).unwrap(),
+                end: Position::of(2, 5).unwrap(),
             },
             Selection {
-                start: Position { line: 4, col: 9 },
-                end: Position { line: 4, col: 9 },
+                start: Position::of(4, 9).unwrap(),
+                end: Position::of(4, 9).unwrap(),
             },
         ],
     }];
@@ -423,12 +423,12 @@ fn separate_non_overlapping_contexts() {
         path,
         selections: vec![
             Selection {
-                start: Position { line: 1, col: 1 },
-                end: Position { line: 1, col: 1 },
+                start: Position::of(1, 1).unwrap(),
+                end: Position::of(1, 1).unwrap(),
             },
             Selection {
-                start: Position { line: 6, col: 1 },
-                end: Position { line: 6, col: 1 },
+                start: Position::of(6, 1).unwrap(),
+                end: Position::of(6, 1).unwrap(),
             },
         ],
     }];
@@ -449,8 +449,8 @@ fn cursor_like_display() {
     let entries = vec![FileEntry {
         path,
         selections: vec![Selection {
-            start: Position { line: 3, col: 9 },
-            end: Position { line: 3, col: 10 },
+            start: Position::of(3, 9).unwrap(),
+            end: Position::of(3, 10).unwrap(),
         }],
     }];
     let result = render_markers(&entries, Some(dir.path())).unwrap();
@@ -468,8 +468,8 @@ fn full_file_cursor() {
     let entries = vec![FileEntry {
         path,
         selections: vec![Selection {
-            start: Position { line: 2, col: 2 },
-            end: Position { line: 2, col: 2 },
+            start: Position::of(2, 2).unwrap(),
+            end: Position::of(2, 2).unwrap(),
         }],
     }];
     let result = render_ctx(&entries, Some(dir.path()), Extent::Full).unwrap();
@@ -487,8 +487,8 @@ fn full_file_selection() {
     let entries = vec![FileEntry {
         path,
         selections: vec![Selection {
-            start: Position { line: 2, col: 2 },
-            end: Position { line: 3, col: 3 },
+            start: Position::of(2, 2).unwrap(),
+            end: Position::of(3, 3).unwrap(),
         }],
     }];
     let result = render_ctx(&entries, Some(dir.path()), Extent::Full).unwrap();
@@ -553,33 +553,25 @@ fn setup_entry(
 // ---------------------------------------------------------------------------
 
 fn arb_position() -> impl Strategy<Value = Position> {
-    (1usize..20, 1usize..50).prop_map(|(line, col)| Position { line, col })
-}
-
-fn arb_wild_position() -> impl Strategy<Value = Position> {
-    (0usize..30, 0usize..80).prop_map(|(line, col)| Position { line, col })
+    (1usize..20, 1usize..50).prop_map(|(line, col)| Position::of(line, col).unwrap())
 }
 
 fn arb_selection() -> impl Strategy<Value = Selection> {
     (arb_position(), arb_position()).prop_map(|(start, end)| Selection { start, end })
 }
 
-fn arb_wild_selection() -> impl Strategy<Value = Selection> {
-    (arb_wild_position(), arb_wild_position()).prop_map(|(start, end)| Selection { start, end })
-}
-
 fn arb_cursor_like() -> impl Strategy<Value = Selection> {
     prop_oneof![
-        arb_position().prop_map(|p| Selection { start: p.clone(), end: p }),
+        arb_position().prop_map(|p| Selection { start: p, end: p }),
         arb_position().prop_map(|p| {
-            let end = Position { line: p.line, col: p.col + 1 };
+            let end = Position::of(p.line.get(), p.col.get() + 1).unwrap();
             Selection { start: p, end }
         }),
     ]
 }
 
 fn arb_range_selection() -> impl Strategy<Value = Selection> {
-    arb_selection().prop_filter("must not be cursor-like", |s| !is_cursor_like(s))
+    arb_selection().prop_filter("must not be cursor-like", |s| !s.is_cursor_like())
 }
 
 fn arb_extent() -> impl Strategy<Value = Extent> {
@@ -600,17 +592,11 @@ fn arb_file_with_selections() -> impl Strategy<Value = (String, Vec<Selection>)>
     arb_file_content().prop_flat_map(|content| {
         let line_count = content.lines().count().max(1);
         let longest = content.lines().map(|l| l.len()).max().unwrap_or(1).max(1);
-        let in_bounds = (1..=line_count, 1..=longest + 1).prop_map(|(l, c)| Position {
-            line: l,
-            col: c,
-        });
+        let in_bounds = (1..=line_count, 1..=longest + 1)
+            .prop_map(|(l, c)| Position::of(l, c).unwrap());
         let in_bounds_sel = (in_bounds.clone(), in_bounds)
             .prop_map(|(start, end)| Selection { start, end });
-        let mixed_sel = prop_oneof![
-            3 => in_bounds_sel,
-            1 => arb_wild_selection(),
-        ];
-        let sels = proptest::collection::vec(mixed_sel, 1..6);
+        let sels = proptest::collection::vec(in_bounds_sel, 1..6);
         (Just(content), sels)
     })
 }
@@ -702,9 +688,9 @@ proptest! {
         extra_lines in 0usize..30,
         extent in arb_extent(),
     ) {
-        let max_line = sels.iter().flat_map(|s| [s.start.line, s.end.line]).max().unwrap_or(1);
+        let max_line = sels.iter().flat_map(|s| [s.start.line.get(), s.end.line.get()]).max().unwrap_or(1);
         let total_lines = max_line + extra_lines;
-        let groups = compute_groups(&sels, total_lines, extent);
+        let groups = Group::compute(&sels, total_lines, extent);
         let mut seen: Vec<*const Selection> = Vec::new();
         for g in &groups {
             for &s in &g.sels {
@@ -725,9 +711,9 @@ proptest! {
         extra_lines in 0usize..30,
         extent in arb_extent(),
     ) {
-        let max_line = sels.iter().flat_map(|s| [s.start.line, s.end.line]).max().unwrap_or(1);
+        let max_line = sels.iter().flat_map(|s| [s.start.line.get(), s.end.line.get()]).max().unwrap_or(1);
         let total_lines = max_line + extra_lines;
-        let groups = compute_groups(&sels, total_lines, extent);
+        let groups = Group::compute(&sels, total_lines, extent);
         for w in groups.windows(2) {
             prop_assert!(
                 w[0].first_line <= w[1].first_line,
@@ -744,12 +730,12 @@ proptest! {
         extra_lines in 0usize..30,
         extent in arb_extent(),
     ) {
-        let max_line = sels.iter().flat_map(|s| [s.start.line, s.end.line]).max().unwrap_or(1);
+        let max_line = sels.iter().flat_map(|s| [s.start.line.get(), s.end.line.get()]).max().unwrap_or(1);
         let total_lines = max_line + extra_lines;
-        let groups = compute_groups(&sels, total_lines, extent);
+        let groups = Group::compute(&sels, total_lines, extent);
         for w in groups.windows(2) {
             prop_assert!(
-                w[1].first_line > w[0].last_line + 1,
+                w[1].first_line > w[0].last_line.saturating_add(1),
                 "consecutive groups should have gap >= 2 lines, got {} and {}",
                 w[0].last_line,
                 w[1].first_line
@@ -763,11 +749,10 @@ proptest! {
         extra_lines in 0usize..30,
         extent in arb_extent(),
     ) {
-        let max_line = sels.iter().flat_map(|s| [s.start.line, s.end.line]).max().unwrap_or(1);
+        let max_line = sels.iter().flat_map(|s| [s.start.line.get(), s.end.line.get()]).max().unwrap_or(1);
         let total_lines = max_line + extra_lines;
-        let groups = compute_groups(&sels, total_lines, extent);
+        let groups = Group::compute(&sels, total_lines, extent);
         for g in &groups {
-            prop_assert!(g.first_line >= 1, "first_line < 1: {}", g.first_line);
             prop_assert!(
                 g.first_line <= g.last_line,
                 "first > last: {} > {}",
@@ -783,23 +768,24 @@ proptest! {
         extra_lines in 0usize..30,
         extent in arb_extent(),
     ) {
-        let max_line = sels.iter().flat_map(|s| [s.start.line, s.end.line]).max().unwrap_or(1);
+        let max_line = sels.iter().flat_map(|s| [s.start.line.get(), s.end.line.get()]).max().unwrap_or(1);
         let total_lines = max_line + extra_lines;
+        let total = Line::new(total_lines).unwrap();
         let (ctx_b, ctx_a) = match extent {
             Extent::Exact => (0, 0),
             Extent::Lines { before, after } => (before, after),
             Extent::Full => (total_lines, total_lines),
         };
-        let groups = compute_groups(&sels, total_lines, extent);
+        let groups = Group::compute(&sels, total_lines, extent);
         for g in &groups {
             for sel in &g.sels {
-                let (first, last) = if is_cursor_like(sel) {
+                let (first, last) = if sel.is_cursor_like() {
                     (sel.start.line, sel.start.line)
                 } else {
                     (sel.start.line.min(sel.end.line), sel.start.line.max(sel.end.line))
                 };
-                let vis_first = first.saturating_sub(ctx_b).max(1);
-                let vis_last = (last + ctx_a).min(total_lines);
+                let vis_first = first.saturating_sub(ctx_b);
+                let vis_last = last.saturating_add(ctx_a).min(total);
                 // The visible range must overlap with the group range.
                 prop_assert!(
                     vis_first <= g.last_line && vis_last >= g.first_line,
@@ -819,9 +805,9 @@ proptest! {
         sels in proptest::collection::vec(arb_selection(), 1..10),
         extra_lines in 0usize..30,
     ) {
-        let max_line = sels.iter().flat_map(|s| [s.start.line, s.end.line]).max().unwrap_or(1);
+        let max_line = sels.iter().flat_map(|s| [s.start.line.get(), s.end.line.get()]).max().unwrap_or(1);
         let total_lines = max_line + extra_lines;
-        let groups = compute_groups(&sels, total_lines, Extent::Full);
+        let groups = Group::compute(&sels, total_lines, Extent::Full);
         prop_assert_eq!(groups.len(), 1, "Full extent should yield exactly 1 group");
     }
 
@@ -831,7 +817,7 @@ proptest! {
         extent in arb_extent(),
     ) {
         let sels: Vec<Selection> = vec![];
-        let groups = compute_groups(&sels, total_lines, extent);
+        let groups = Group::compute(&sels, total_lines, extent);
         prop_assert!(groups.is_empty());
     }
 }
@@ -845,32 +831,32 @@ proptest! {
 
     #[test]
     fn display_sel_cursor_like_no_dash(sel in arb_cursor_like()) {
-        let d = display_sel(&sel);
+        let d = sel.display_header();
         prop_assert!(!d.contains('-'), "cursor-like display should not contain dash: {}", d);
     }
 
     #[test]
     fn display_sel_range_has_dash(sel in arb_range_selection()) {
-        let d = display_sel(&sel);
+        let d = sel.display_header();
         prop_assert!(d.contains('-'), "range display should contain dash: {}", d);
     }
 
     #[test]
     fn cursor_is_cursor_like(pos in arb_position()) {
-        let sel = Selection { start: pos.clone(), end: pos };
-        prop_assert!(is_cursor_like(&sel));
+        let sel = Selection { start: pos, end: pos };
+        prop_assert!(sel.is_cursor_like());
     }
 
     #[test]
     fn single_char_is_cursor_like(pos in arb_position()) {
-        let end = Position { line: pos.line, col: pos.col + 1 };
+        let end = Position::of(pos.line.get(), pos.col.get() + 1).unwrap();
         let sel = Selection { start: pos, end };
-        prop_assert!(is_cursor_like(&sel));
+        prop_assert!(sel.is_cursor_like());
     }
 
     #[test]
     fn range_not_cursor_like(sel in arb_range_selection()) {
-        prop_assert!(!is_cursor_like(&sel));
+        prop_assert!(!sel.is_cursor_like());
     }
 }
 
@@ -884,18 +870,6 @@ proptest! {
     #[test]
     fn render_never_panics(
         (content, sels) in arb_file_with_selections(),
-        mode in prop_oneof![Just(Mode::Markers), Just(Mode::Color)],
-        extent in arb_extent(),
-    ) {
-        let dir = tempfile::tempdir().unwrap();
-        let (_path, entries) = setup_entry(&dir, &content, sels);
-        let _ = render_with_mode(&entries, Some(dir.path()), mode, extent);
-    }
-
-    #[test]
-    fn render_wild_selections_no_panic(
-        content in arb_file_content(),
-        sels in proptest::collection::vec(arb_wild_selection(), 1..6),
         mode in prop_oneof![Just(Mode::Markers), Just(Mode::Color)],
         extent in arb_extent(),
     ) {
@@ -1070,8 +1044,8 @@ proptest! {
         let col = col.min(line.len());
 
         let sel = Selection {
-            start: Position { line: line_num, col },
-            end: Position { line: line_num, col },
+            start: Position::of(line_num, col).unwrap(),
+            end: Position::of(line_num, col).unwrap(),
         };
         let dir = tempfile::tempdir().unwrap();
         let (_path, entries) = setup_entry(&dir, &content, vec![sel]);
@@ -1122,8 +1096,8 @@ proptest! {
         }
 
         let sel = Selection {
-            start: Position { line: line_num, col: c1 },
-            end: Position { line: line_num, col: c2 },
+            start: Position::of(line_num, c1).unwrap(),
+            end: Position::of(line_num, c2).unwrap(),
         };
         let dir = tempfile::tempdir().unwrap();
         let (_path, entries) = setup_entry(&dir, &content, vec![sel]);
@@ -1199,7 +1173,7 @@ proptest! {
         line_num in 1usize..20,
     ) {
         let sel_refs: Vec<&Selection> = sels.iter().collect();
-        let (events, _) = line_events(&sel_refs, line_num);
+        let (events, _) = line_events(&sel_refs, Line::new(line_num).unwrap());
         for w in events.windows(2) {
             prop_assert!(w[0] <= w[1], "events not sorted: {:?}", events);
         }
@@ -1210,15 +1184,15 @@ proptest! {
         sels in proptest::collection::vec(
             (1usize..5, 1usize..50, 1usize..5, 1usize..50).prop_map(
                 |(l1, c1, l2, c2)| Selection {
-                    start: Position { line: l1, col: c1 },
-                    end: Position { line: l2, col: c2 },
+                    start: Position::of(l1, c1).unwrap(),
+                    end: Position::of(l2, c2).unwrap(),
                 }
             ),
             1..6,
         ),
     ) {
         let sel_refs: Vec<&Selection> = sels.iter().collect();
-        let (events, in_sel) = line_events(&sel_refs, 100);
+        let (events, in_sel) = line_events(&sel_refs, Line::new(100).unwrap());
         prop_assert!(events.is_empty(), "should have no events for distant line");
         prop_assert!(!in_sel, "should not be in selection at distant line");
     }
@@ -1242,7 +1216,7 @@ proptest! {
 
         let expected_cursors = sels
             .iter()
-            .filter(|s| is_cursor_like(s) && s.start.line >= 1 && s.start.line <= file_lines.len())
+            .filter(|s| s.is_cursor_like() && s.start.line.get() <= file_lines.len())
             .count();
         let actual_cursors = result.chars().filter(|&c| c == CURSOR).count();
         prop_assert_eq!(
@@ -1264,16 +1238,13 @@ proptest! {
         let expected_brackets = sels
             .iter()
             .filter(|s| {
-                if is_cursor_like(s) {
+                if s.is_cursor_like() {
                     return false;
                 }
-                // A bracket pair appears only if at least one endpoint
-                // (start or end line) falls within the rendered range [1, total].
-                // If both are out of bounds, no ⟦ or ⟧ is emitted.
                 let first = s.start.line.min(s.end.line);
                 let last = s.start.line.max(s.end.line);
                 let total = file_lines.len();
-                (first >= 1 && first <= total) || (last >= 1 && last <= total)
+                first.get() <= total || last.get() <= total
             })
             .count();
         let actual_open = result.chars().filter(|&c| c == SEL_OPEN).count();

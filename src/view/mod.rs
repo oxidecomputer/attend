@@ -9,9 +9,9 @@ use crate::state::FileEntry;
 #[cfg(test)]
 use crate::state::Selection;
 
-use annotate::{compute_groups, display_sel, render_line_range};
+use annotate::{render_line_range, Group};
 #[cfg(test)]
-use annotate::{is_cursor_like, line_events};
+use annotate::line_events;
 
 pub use parse::parse_compact;
 
@@ -119,7 +119,7 @@ fn render_with_mode(
             out.push_str(&format!("{display_path}\n"));
         }
 
-        let groups = compute_groups(&entry.selections, lines.len(), extent);
+        let groups = Group::compute(&entry.selections, lines.len(), extent);
         let show_headers = extent != Extent::Full;
 
         for group in &groups {
@@ -127,7 +127,7 @@ fn render_with_mode(
                 let header: String = group
                     .sels
                     .iter()
-                    .map(|s| display_sel(s))
+                    .map(|s| s.display_header())
                     .collect::<Vec<_>>()
                     .join(", ");
                 if mode == Mode::Color {

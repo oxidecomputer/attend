@@ -1,9 +1,10 @@
 # `attend` to your editor
 
-Connects editors to AI coding agents, regardless of whether they're natively
-integrated. Reads the editor's current state (visible open files, cursor
-positions, selections) and delivers it as context
-that the agent can use to understand what the user is looking at.
+For when you just want to point at some code and say, "fix this!"
+
+This tool reads your editor's current state (visible open files, cursor
+positions, selections) and delivers it as context that a coding agent can use to
+understand what you are looking at.
 
 Currently supports Zed (editor) and Claude Code (agent). The architecture is
 intended to support other editors and agents; see [EXTENDING.md](EXTENDING.md)
@@ -15,8 +16,10 @@ The tool queries the editor (using different strategies depending on the editor)
 for selection and cursor locations in visible panes, resolves byte offsets to
 line:column positions by scanning files on disk, and orders output by recency so
 visible files with recently moved cursors or selections appear first, with their
-cursors and selections ordered by recency. A per-session cache suppresses output
-when nothing has changed.
+cursors and selections ordered by recency.
+
+A per-session cache suppresses output when nothing has changed, to preserve
+context.
 
 ## Usage
 
@@ -24,8 +27,10 @@ when nothing has changed.
 attend [-d <PATH>] [-f human|json]
 ```
 
+`--dir`/`-d` resolves paths relative to that directory and shows relative paths.
+Available globally (applies to both the default output and `view`).
+
 With no subcommand, prints the current editor state to stdout and exits.
-`--dir`/`-d` filters to files under that directory and makes paths relative.
 
 ### Output format
 
@@ -71,6 +76,10 @@ before each prompt — but only when the editor state has actually changed
 since the last prompt. This keeps the agent aware of what the user is looking
 at without repeating stale information.
 
+Installing the hook in your agent also adds instructions teaching the agent how
+to use `attend view` so it can more effectively see precisely what you've
+selected (rather than "mentally" calculating column offsets).
+
 ### Install
 
 ```
@@ -84,9 +93,12 @@ This writes two hook entries into the agent's settings file:
 - **UserPromptSubmit** — queries the editor, compares against the cache, and
   emits an `<editor-context>` block only if something changed.
 
-`--project <PATH>` installs to a project-local settings file instead of
-global. `--dev` embeds the absolute binary path rather than relying on
-`$PATH`.
+Add `--project <PATH>` installs to a project-local settings file instead of
+global.
+
+Using `--dev` embeds the absolute binary path rather than relying on `$PATH`, so
+you can install the hooks globally but point them at a local development build
+of this tool.
 
 ### Uninstall
 
@@ -94,7 +106,7 @@ global. `--dev` embeds the absolute binary path rather than relying on
 attend hook uninstall --agent claude
 ```
 
-`--project <PATH>` to target a project-local settings file.
+Add `--project <PATH>` to target a project-local settings file.
 
 ## Building
 
@@ -102,15 +114,8 @@ attend hook uninstall --agent claude
 cargo build --release
 ```
 
-Requires Rust 2024 edition (1.85+). The SQLite driver is bundled via
-`rusqlite`; no system library needed.
-
 ## Testing
 
 ```
 cargo test
 ```
-
-The test suite includes property-based tests (proptest) for offset resolution
-and reorder invariants, plus integration tests that simulate multi-invocation
-hook sessions with real files on disk.

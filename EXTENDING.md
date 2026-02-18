@@ -99,7 +99,7 @@ pub struct Name;
 
 impl Agent for Name {
     fn name(&self) -> &'static str { "<name>" }
-    fn about(&self) -> &'static str { "<Name> hooks" }
+    fn full_name(&self) -> &'static str { "<Name>" }
 
     fn run_hook(&self, event: HookEvent, cwd: Option<PathBuf>) -> anyhow::Result<()> {
         match event {
