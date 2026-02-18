@@ -42,8 +42,6 @@ pub enum Event {
 pub struct RenderedFile {
     /// Display path (relative).
     pub path: String,
-    /// File extension for language inference.
-    pub extension: String,
     /// Rendered content with selection markers.
     pub content: String,
     /// First visible line number.
@@ -58,40 +56,6 @@ impl Event {
             | Event::EditorSnapshot { offset_secs, .. }
             | Event::FileDiff { offset_secs, .. } => *offset_secs,
         }
-    }
-}
-
-/// Infer a markdown language identifier from a file extension.
-fn lang_from_ext(ext: &str) -> &str {
-    match ext {
-        "rs" => "rust",
-        "py" => "python",
-        "js" => "javascript",
-        "ts" => "typescript",
-        "tsx" => "tsx",
-        "jsx" => "jsx",
-        "rb" => "ruby",
-        "go" => "go",
-        "c" | "h" => "c",
-        "cpp" | "cc" | "cxx" | "hpp" => "cpp",
-        "java" => "java",
-        "kt" => "kotlin",
-        "swift" => "swift",
-        "sh" | "bash" | "zsh" | "fish" => "bash",
-        "toml" => "toml",
-        "yaml" | "yml" => "yaml",
-        "json" => "json",
-        "md" => "markdown",
-        "html" => "html",
-        "css" => "css",
-        "sql" => "sql",
-        "lua" => "lua",
-        "zig" => "zig",
-        "nix" => "nix",
-        "ex" | "exs" => "elixir",
-        "hs" => "haskell",
-        "ml" | "mli" => "ocaml",
-        _ => ext,
     }
 }
 
@@ -209,8 +173,7 @@ pub fn format_markdown(events: &mut [Event]) -> String {
                         out.push('\n');
                     }
                     out.push('\n');
-                    let lang = lang_from_ext(&file.extension);
-                    out.push_str(&format!("```{lang}\n"));
+                    out.push_str("```\n");
                     out.push_str(&format!("// {}:{}\n", file.path, file.first_line));
                     out.push_str(&file.content);
                     if !file.content.ends_with('\n') {
@@ -278,7 +241,6 @@ mod tests {
                 files: vec![],
                 rendered: vec![RenderedFile {
                     path: "src/main.rs".to_string(),
-                    extension: "rs".to_string(),
                     content: "fn main() {\n    println!(\"hello\");\n}\n".to_string(),
                     first_line: 1,
                 }],
@@ -292,7 +254,7 @@ mod tests {
         let expected = "\
 Look at this function
 
-```rust
+```
 // src/main.rs:1
 fn main() {
     println!(\"hello\");
@@ -371,14 +333,13 @@ I just changed this
             files: vec![],
             rendered: vec![RenderedFile {
                 path: "src/lib.rs".to_string(),
-                extension: "rs".to_string(),
                 content: "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n".to_string(),
                 first_line: 42,
             }],
         }];
         let md = format_markdown(&mut events);
         let expected =
-            "\n```rust\n// src/lib.rs:42\npub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n```\n";
+            "\n```\n// src/lib.rs:42\npub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n```\n";
         assert_eq!(md, expected);
     }
 
@@ -390,31 +351,19 @@ I just changed this
             rendered: vec![
                 RenderedFile {
                     path: "src/a.py".to_string(),
-                    extension: "py".to_string(),
                     content: "def foo():\n    pass\n".to_string(),
                     first_line: 1,
                 },
                 RenderedFile {
                     path: "src/b.js".to_string(),
-                    extension: "js".to_string(),
                     content: "const x = 1;\n".to_string(),
                     first_line: 10,
                 },
             ],
         }];
         let md = format_markdown(&mut events);
-        assert!(md.contains("```python\n// src/a.py:1"));
-        assert!(md.contains("```javascript\n// src/b.js:10"));
-    }
-
-    #[test]
-    fn lang_inference() {
-        assert_eq!(lang_from_ext("rs"), "rust");
-        assert_eq!(lang_from_ext("py"), "python");
-        assert_eq!(lang_from_ext("ts"), "typescript");
-        assert_eq!(lang_from_ext("tsx"), "tsx");
-        assert_eq!(lang_from_ext("go"), "go");
-        assert_eq!(lang_from_ext("unknown"), "unknown");
+        assert!(md.contains("```\n// src/a.py:1"));
+        assert!(md.contains("```\n// src/b.js:10"));
     }
 
     #[test]
@@ -429,7 +378,6 @@ I just changed this
                 files: vec![],
                 rendered: vec![RenderedFile {
                     path: "src/main.rs".to_string(),
-                    extension: "rs".to_string(),
                     content: "fn parse_config(path: &Path) -> Result<Config> {\n    let raw = std::fs::read_to_string(path)?;\n    toml::from_str(&raw)\n}\n".to_string(),
                     first_line: 42,
                 }],
@@ -443,7 +391,6 @@ I just changed this
                 files: vec![],
                 rendered: vec![RenderedFile {
                     path: "src/lib.rs".to_string(),
-                    extension: "rs".to_string(),
                     content: "pub struct Config {\n    pub name: String,\n    pub timeout: Duration,\n}\n".to_string(),
                     first_line: 8,
                 }],
@@ -491,7 +438,6 @@ I just changed this
             files: vec![],
             rendered: vec![RenderedFile {
                 path: "f.rs".to_string(),
-                extension: "rs".to_string(),
                 content: "no trailing newline".to_string(),
                 first_line: 1,
             }],

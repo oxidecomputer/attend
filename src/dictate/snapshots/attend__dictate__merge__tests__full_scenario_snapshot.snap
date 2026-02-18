@@ -4,7 +4,7 @@ expression: md
 ---
 Please look at this function
 
-```rust
+```
 // src/main.rs:42
 fn parse_config(path: &Path) -> Result<Config> {
     let raw = std::fs::read_to_string(path)?;
@@ -14,7 +14,7 @@ fn parse_config(path: &Path) -> Result<Config> {
 
 and refactor it to use this struct
 
-```rust
+```
 // src/lib.rs:8
 pub struct Config {
     pub name: String,

@@ -389,15 +389,8 @@ fn render_snapshot_files(files: &[state::FileEntry], cwd: Option<&Path>) -> Vec<
 
         for vf in payload.files {
             for group in &vf.groups {
-                let ext = Path::new(&vf.path)
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("")
-                    .to_string();
-
                 rendered.push(RenderedFile {
                     path: vf.path.clone(),
-                    extension: ext,
                     content: group.content.clone(),
                     first_line: group.first_line.get() as u32,
                 });
