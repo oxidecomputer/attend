@@ -124,10 +124,28 @@ pub fn unified_diff(_old: &str, _new: &str) -> String {
     String::new()
 }
 
-/// Clean up Whisper transcription artifacts.
+/// Returns true if `text` starts with a character that should attach to
+/// the preceding word without a space (punctuation, contractions).
+fn starts_with_punctuation(text: &str) -> bool {
+    text.as_bytes().first().is_some_and(|&b| {
+        matches!(
+            b,
+            b'.' | b',' | b';' | b':' | b'!' | b'?' | b'\'' | b'"' | b')' | b']' | b'}' | b'%'
+        )
+    })
+}
+
+/// Returns true if a Whisper segment is a noise/hallucination marker
+/// like `[typing sounds]`, `[music]`, `(buzzing)`, etc.
+fn is_noise_marker(text: &str) -> bool {
+    let t = text.trim();
+    (t.starts_with('[') && t.ends_with(']')) || (t.starts_with('(') && t.ends_with(')'))
+}
+
+/// Clean up Whisper transcription artifacts within a single segment.
 ///
-/// Whisper often inserts spaces before punctuation (`I 'm`, `test .`).
-/// This collapses those into natural text.
+/// Handles intra-segment spacing (`I 'm` → `I'm`) and strips
+/// bracketed noise markers (`[typing sounds]`).
 fn clean_whisper_text(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut chars = raw.chars().peekable();
@@ -167,13 +185,18 @@ pub fn format_markdown(events: &mut [Event]) -> String {
     for event in events.iter() {
         match event {
             Event::Words { text, .. } => {
+                let cleaned = clean_whisper_text(text);
+                if cleaned.is_empty() || is_noise_marker(&cleaned) {
+                    continue;
+                }
                 if !in_prose && !out.is_empty() {
                     out.push('\n');
                 }
-                if in_prose {
+                // Skip the space before punctuation that attaches to previous word
+                if in_prose && !starts_with_punctuation(&cleaned) {
                     out.push(' ');
                 }
-                out.push_str(&clean_whisper_text(text));
+                out.push_str(&cleaned);
                 in_prose = true;
             }
             Event::EditorSnapshot { rendered, .. } => {
@@ -512,12 +535,71 @@ I just changed this
     }
 
     #[test]
-    fn whisper_cleanup_in_format() {
+    fn whisper_cleanup_intra_segment() {
+        // Within a single segment, spaces before punctuation are cleaned
         let mut events = vec![Event::Words {
             offset_secs: 0.0,
             text: "I 'm going to fix this .".to_string(),
         }];
         let md = format_markdown(&mut events);
         assert_eq!(md, "I'm going to fix this.\n");
+    }
+
+    #[test]
+    fn whisper_cleanup_cross_segment() {
+        // Punctuation as separate segments (max_len=1 mode)
+        let mut events = vec![
+            Event::Words {
+                offset_secs: 0.0,
+                text: "function".to_string(),
+            },
+            Event::Words {
+                offset_secs: 0.1,
+                text: ".".to_string(),
+            },
+            Event::Words {
+                offset_secs: 0.2,
+                text: "I".to_string(),
+            },
+            Event::Words {
+                offset_secs: 0.3,
+                text: "'m".to_string(),
+            },
+            Event::Words {
+                offset_secs: 0.4,
+                text: "wondering".to_string(),
+            },
+        ];
+        let md = format_markdown(&mut events);
+        assert_eq!(md, "function. I'm wondering\n");
+    }
+
+    #[test]
+    fn noise_markers_filtered() {
+        let mut events = vec![
+            Event::Words {
+                offset_secs: 0.0,
+                text: "hello".to_string(),
+            },
+            Event::Words {
+                offset_secs: 0.5,
+                text: "[typing sounds]".to_string(),
+            },
+            Event::Words {
+                offset_secs: 1.0,
+                text: "world".to_string(),
+            },
+        ];
+        let md = format_markdown(&mut events);
+        assert_eq!(md, "hello world\n");
+    }
+
+    #[test]
+    fn noise_marker_parenthesized() {
+        assert!(is_noise_marker("[music]"));
+        assert!(is_noise_marker("(buzzing)"));
+        assert!(is_noise_marker("  [typing sounds]  "));
+        assert!(!is_noise_marker("hello"));
+        assert!(!is_noise_marker("[not closed"));
     }
 }
