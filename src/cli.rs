@@ -65,7 +65,7 @@ pub struct Watch {
     #[arg(long, short = 'A')]
     pub after: Option<usize>,
 
-    /// Output format (compact mode only).
+    /// Output format (compact and view modes only).
     #[arg(long, short, default_value = "human")]
     pub format: Format,
 }
@@ -88,6 +88,10 @@ pub enum Command {
         /// Resolve paths relative to this directory and show relative paths.
         #[arg(long, short)]
         dir: Option<PathBuf>,
+
+        /// Output format.
+        #[arg(long, short, default_value = "human")]
+        format: Format,
 
         /// Show entire file contents with highlights inline.
         #[arg(long, conflicts_with_all = ["before", "after"])]
@@ -207,7 +211,7 @@ impl Cli {
         match self.command {
             Some(command) => {
                 if !matches!(self.format, Format::Human) {
-                    anyhow::bail!("--format is only valid without a subcommand");
+                    anyhow::bail!("--format is only valid without a subcommand (use subcommand's own --format)");
                 }
                 command.run(self.dir)?;
             }
@@ -215,10 +219,14 @@ impl Cli {
                 if let Some(state) = crate::state::EditorState::current(self.dir.as_deref())? {
                     match self.format {
                         Format::Human => println!("{state}"),
-                        Format::Json => println!(
-                            "{}",
-                            serde_json::to_string_pretty(&state).unwrap_or_default()
-                        ),
+                        Format::Json => {
+                            let payload = crate::json::CompactPayload::from_state(&state);
+                            let wrapped = crate::json::Timestamped::now(payload);
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&wrapped).unwrap_or_default()
+                            );
+                        }
                     }
                 }
             }
@@ -241,6 +249,7 @@ impl Command {
             }
             Command::View {
                 dir,
+                format,
                 full,
                 before,
                 after,
@@ -259,7 +268,7 @@ impl Command {
                 } else {
                     crate::view::parse_compact(&args.join(" "))?
                 };
-                let context = if full {
+                let extent = if full {
                     crate::view::Extent::Full
                 } else if before.is_some() || after.is_some() {
                     crate::view::Extent::Lines {
@@ -269,10 +278,23 @@ impl Command {
                 } else {
                     crate::view::Extent::Exact
                 };
-                print!(
-                    "{}",
-                    crate::view::render(&entries, cwd.as_deref(), context)?
-                );
+                match format {
+                    Format::Human => {
+                        print!(
+                            "{}",
+                            crate::view::render(&entries, cwd.as_deref(), extent)?
+                        );
+                    }
+                    Format::Json => {
+                        let payload =
+                            crate::view::render_json(&entries, cwd.as_deref(), extent)?;
+                        let wrapped = crate::json::Timestamped::now(payload);
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&wrapped).unwrap_or_default()
+                        );
+                    }
+                }
                 Ok(())
             }
         }

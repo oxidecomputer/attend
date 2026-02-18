@@ -4,6 +4,7 @@ mod agent;
 mod cli;
 mod editor;
 mod hook;
+mod json;
 mod state;
 mod view;
 mod watch;

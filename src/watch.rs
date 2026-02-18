@@ -42,8 +42,8 @@ fn validate_options(watch: &Watch) -> anyhow::Result<()> {
     {
         anyhow::bail!("--full, -B, and -A are only valid in view mode");
     }
-    if watch.mode != WatchMode::Compact && !matches!(watch.format, Format::Human) {
-        anyhow::bail!("--format is only valid in compact mode");
+    if watch.mode == WatchMode::Silent && !matches!(watch.format, Format::Human) {
+        anyhow::bail!("--format is not valid in silent mode");
     }
     Ok(())
 }
@@ -158,10 +158,12 @@ fn refresh(
                 let output = match watch.format {
                     Format::Human => format!("{s}"),
                     Format::Json => {
+                        let payload = crate::json::CompactPayload::from_state(s);
+                        let wrapped = crate::json::Timestamped::now(payload);
                         if is_tty {
-                            serde_json::to_string_pretty(s).unwrap_or_default()
+                            serde_json::to_string_pretty(&wrapped).unwrap_or_default()
                         } else {
-                            serde_json::to_string(s).unwrap_or_default()
+                            serde_json::to_string(&wrapped).unwrap_or_default()
                         }
                     }
                 };
@@ -181,16 +183,39 @@ fn refresh(
         WatchMode::View => {
             if let Some(ref s) = state {
                 let extent = compute_extent(watch);
-                match crate::view::render(&s.files, dir, extent) {
-                    Ok(output) => {
-                        if is_tty {
-                            clear_screen();
-                            print!("{}", fit_to_terminal(&output));
-                        } else {
-                            print!("{output}\n\n");
+                match watch.format {
+                    Format::Human => {
+                        match crate::view::render(&s.files, dir, extent) {
+                            Ok(output) => {
+                                if is_tty {
+                                    clear_screen();
+                                    print!("{}", fit_to_terminal(&output));
+                                } else {
+                                    print!("{output}\n\n");
+                                }
+                            }
+                            Err(e) => eprintln!("attend: {e}"),
                         }
                     }
-                    Err(e) => eprintln!("attend: {e}"),
+                    Format::Json => {
+                        match crate::view::render_json(&s.files, dir, extent) {
+                            Ok(payload) => {
+                                let wrapped = crate::json::Timestamped::now(payload);
+                                let output = if is_tty {
+                                    serde_json::to_string_pretty(&wrapped).unwrap_or_default()
+                                } else {
+                                    serde_json::to_string(&wrapped).unwrap_or_default()
+                                };
+                                if is_tty {
+                                    clear_screen();
+                                    print!("{}", fit_to_terminal(&output));
+                                } else {
+                                    println!("{output}");
+                                }
+                            }
+                            Err(e) => eprintln!("attend: {e}"),
+                        }
+                    }
                 }
             } else if is_tty {
                 clear_screen();

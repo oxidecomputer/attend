@@ -4,6 +4,7 @@ mod parse;
 use std::io::IsTerminal;
 use std::path::Path;
 
+use crate::json::{self, ViewFile, ViewGroup, ViewPayload};
 use crate::state::resolve::relativize;
 use crate::state::FileEntry;
 #[cfg(test)]
@@ -151,6 +152,81 @@ fn render_with_mode(
     }
 
     Ok(out)
+}
+
+/// Build a structured JSON payload for view output.
+pub fn render_json(
+    entries: &[FileEntry],
+    cwd: Option<&Path>,
+    extent: Extent,
+) -> anyhow::Result<ViewPayload> {
+    let mut files = Vec::new();
+
+    for entry in entries {
+        let abs_path = if entry.path.is_absolute() {
+            entry.path.clone()
+        } else {
+            let base = match cwd {
+                Some(c) => c.to_path_buf(),
+                None => std::env::current_dir()?,
+            };
+            base.join(&entry.path)
+        };
+
+        let display_path = relativize(&abs_path, cwd).into_owned();
+
+        let content = match std::fs::read_to_string(&abs_path) {
+            Ok(c) => c,
+            Err(_) => {
+                files.push(ViewFile {
+                    path: display_path,
+                    groups: Vec::new(),
+                });
+                continue;
+            }
+        };
+        let lines: Vec<&str> = content.lines().collect();
+
+        let computed = Group::compute(&entry.selections, lines.len(), extent);
+        let mut groups = Vec::new();
+
+        for group in &computed {
+            let mut rendered = String::new();
+            render_line_range(
+                &mut rendered,
+                &lines,
+                group.first_line,
+                group.last_line,
+                &group.sels,
+                Mode::Markers,
+            );
+            let all_sels: Vec<_> = group.sels.iter().map(|s| **s).collect();
+            let (cursors, selections) = json::split_selections(&all_sels);
+            groups.push(ViewGroup {
+                cursors,
+                selections,
+                first_line: group.first_line,
+                last_line: group.last_line,
+                content: strip_indent(&rendered),
+            });
+        }
+
+        files.push(ViewFile {
+            path: display_path,
+            groups,
+        });
+    }
+
+    Ok(ViewPayload { files })
+}
+
+/// Strip the 4-space indent that `render_line_range` prepends to every line.
+fn strip_indent(s: &str) -> String {
+    s.lines()
+        .map(|line| line.strip_prefix("    ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + if s.ends_with('\n') { "\n" } else { "" }
 }
 
 #[cfg(test)]
