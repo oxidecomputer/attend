@@ -34,7 +34,7 @@ pub enum Format {
 
 /// Value parser that validates agent names against registered backends.
 fn agent_value_parser() -> clap::builder::PossibleValuesParser {
-    clap::builder::PossibleValuesParser::new(crate::agent::backends().iter().map(|a| a.name()))
+    clap::builder::PossibleValuesParser::new(crate::agent::AGENTS.iter().map(|a| a.name()))
 }
 
 /// Top-level subcommands.
@@ -140,7 +140,7 @@ impl clap::FromArgMatches for RunHook {
 impl clap::Subcommand for RunHook {
     fn augment_subcommands(cmd: clap::Command) -> clap::Command {
         let mut cmd = cmd;
-        for agent in crate::agent::backends() {
+        for agent in crate::agent::AGENTS {
             cmd = cmd.subcommand(crate::agent::clap_command(*agent));
         }
         cmd.subcommand_required(true)

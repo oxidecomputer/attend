@@ -62,16 +62,14 @@ pub fn clap_command(agent: &dyn Agent) -> clap::Command {
 }
 
 /// All registered agent backends.
-pub fn backends() -> &'static [&'static dyn Agent] {
-    &[
-        &claude::Claude,
-        // <-- Add new agents here
-    ]
-}
+pub const AGENTS: &'static [&'static dyn Agent] = &[
+    &claude::Claude,
+    // <-- Add new agents here
+];
 
 /// Look up an agent by CLI name.
 pub fn backend_by_name(name: &str) -> Option<&'static dyn Agent> {
-    backends().iter().find(|a| a.name() == name).copied()
+    AGENTS.iter().find(|a| a.name() == name).copied()
 }
 
 /// Determine the binary command string for hook installation.

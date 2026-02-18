@@ -26,18 +26,16 @@ pub trait Editor {
 }
 
 /// All registered editor backends.
-fn backends() -> &'static [&'static dyn Editor] {
-    &[
-        &zed::Zed,
-        // <-- Add new editors here
-    ]
-}
+const EDITORS: &'static [&'static dyn Editor] = &[
+    &zed::Zed,
+    // <-- Add new editors here
+];
 
 /// Query all active editors for current state, merging results.
 pub fn query() -> anyhow::Result<Option<QueryResult>> {
     let mut editors = Vec::new();
 
-    for backend in backends() {
+    for backend in EDITORS {
         if let Some(result) = backend.query()? {
             editors.extend(result.editors);
         }
@@ -46,5 +44,6 @@ pub fn query() -> anyhow::Result<Option<QueryResult>> {
     if editors.is_empty() {
         return Ok(None);
     }
+
     Ok(Some(QueryResult { editors }))
 }
