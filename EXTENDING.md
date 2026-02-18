@@ -56,7 +56,7 @@ The `QueryResult` contains:
 
 ### 2. Register the backend — `src/editor/mod.rs`
 
-Add the module and register it in the `backends()` array:
+Add the module and register it in the `EDITORS` slice:
 
 ```rust
 mod zed;
@@ -64,9 +64,10 @@ mod <name>;
 ```
 
 ```rust
-fn backends() -> &'static [&'static dyn Editor] {
-    &[&zed::Zed, &<name>::Name]
-}
+const EDITORS: &'static [&'static dyn Editor] = &[
+    &zed::Zed,
+    &<name>::Name,
+];
 ```
 
 That's it. Everything downstream (offset resolution, reordering, caching,
@@ -76,7 +77,7 @@ display) works automatically since it operates on the shared `QueryResult` type.
 
 - [ ] `src/editor/<name>.rs` — `pub struct Name` + `impl Editor for Name`
 - [ ] `src/editor/mod.rs` — `mod <name>;` declaration
-- [ ] `src/editor/mod.rs` — add `&<name>::Name` to `backends()`
+- [ ] `src/editor/mod.rs` — add `&<name>::Name` to `EDITORS`
 
 ## Adding a new agent
 
@@ -122,7 +123,7 @@ If the agent's hook protocol differs from the default (JSON on stdin with
 
 ### 2. Register the backend — `src/agent/mod.rs`
 
-Add the module and register it in the `backends()` array:
+Add the module and register it in the `AGENTS` slice:
 
 ```rust
 mod claude;
@@ -130,9 +131,10 @@ mod <name>;
 ```
 
 ```rust
-pub fn backends() -> &'static [&'static dyn Agent] {
-    &[&claude::Claude, &<name>::Name]
-}
+pub const AGENTS: &'static [&'static dyn Agent] = &[
+    &claude::Claude,
+    &<name>::Name,
+];
 ```
 
 That's it. The CLI (`hook run <name> ...`, `hook install --agent <name>`, etc.)
@@ -142,4 +144,4 @@ is built automatically from the registered backends.
 
 - [ ] `src/agent/<name>.rs` — `pub struct Name` + `impl Agent for Name`
 - [ ] `src/agent/mod.rs` — `mod <name>;` declaration
-- [ ] `src/agent/mod.rs` — add `&<name>::Name` to `backends()`
+- [ ] `src/agent/mod.rs` — add `&<name>::Name` to `AGENTS`

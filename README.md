@@ -6,7 +6,8 @@ positions, selections) and delivers it as context
 that the agent can use to understand what the user is looking at.
 
 Currently supports Zed (editor) and Claude Code (agent). The architecture is
-intended to support other editors and agents; contributions are welcome.
+intended to support other editors and agents; see [EXTENDING.md](EXTENDING.md)
+for how to add new backends.
 
 ## How it works
 
@@ -36,6 +37,32 @@ src/db.rs 1:1
 Each line is a file path followed by comma-separated positions. A position is
 `line:col` (cursor) or `line:col-line:col` (selection). `--format json` emits
 a JSON object with a `files` array.
+
+### `view` — show file content at positions
+
+```
+attend view [--full] [-B <N>] [-A <N>] <path> <pos>... [<path> <pos>...]
+```
+
+Reads files from disk and prints the content at the given cursor/selection
+positions. Accepts the same compact `path line:col...` format that the default
+output produces, so you can pipe one into the other.
+
+```
+attend view src/foo.rs 5:12 19:40-24:6 src/bar.rs 10:1
+```
+
+Cursors are marked with `❘` and selections with `⟦⟧` (or ANSI inverse
+video on a TTY). By default only the lines spanned by each position are shown.
+`-B`/`-A` add context lines before/after, and `--full` shows the entire file
+with highlights inline. Overlapping context ranges are merged into a single
+group.
+
+Input can also be piped on stdin with `-`:
+
+```
+attend | attend view -
+```
 
 ## Agent integration
 
