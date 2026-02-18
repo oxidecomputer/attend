@@ -111,8 +111,8 @@ pub enum DictateCommand {
         editor: EditorChoice,
     },
     /// Internal: run the recording daemon (not user-facing).
-    #[command(hide = true)]
-    _RecordDaemon {
+    #[command(name = "_record-daemon", hide = true)]
+    RecordDaemon {
         /// Path to GGML Whisper model.
         #[arg(long)]
         model: Option<PathBuf>,
@@ -149,7 +149,7 @@ pub fn run(cmd: DictateCommand) -> anyhow::Result<()> {
         DictateCommand::Receive { wait, session } => receive::run(wait, session),
         DictateCommand::Activate => activate(),
         DictateCommand::Install { editor } => install(editor),
-        DictateCommand::_RecordDaemon { model, session } => record::daemon(model, session),
+        DictateCommand::RecordDaemon { model, session } => record::daemon(model, session),
     }
 }
 
