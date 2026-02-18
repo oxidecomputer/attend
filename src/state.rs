@@ -17,7 +17,7 @@ fn shared_cache_path() -> Option<PathBuf> {
     Some(cache_dir()?.join("latest.json"))
 }
 
-mod resolve;
+pub(crate) mod resolve;
 pub use resolve::{Position, Selection};
 
 #[cfg(test)]
@@ -52,7 +52,12 @@ pub struct FileEntry {
 
 impl fmt::Display for FileEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.path.display())?;
+        let path = self.path.display().to_string();
+        if path.contains(' ') {
+            write!(f, "\"{path}\"")?;
+        } else {
+            write!(f, "{path}")?;
+        }
         for (i, sel) in self.selections.iter().enumerate() {
             if i == 0 {
                 write!(f, " ")?;
@@ -73,7 +78,11 @@ impl fmt::Display for EditorState {
                 writeln!(f)?;
             }
             let path = resolve::relativize(&file.path, self.cwd.as_deref());
-            write!(f, "{path}")?;
+            if path.contains(' ') {
+                write!(f, "\"{path}\"")?;
+            } else {
+                write!(f, "{path}")?;
+            }
             for (i, sel) in file.selections.iter().enumerate() {
                 if i == 0 {
                     write!(f, " ")?;
@@ -82,14 +91,6 @@ impl fmt::Display for EditorState {
                 }
                 write!(f, "{sel}")?;
             }
-            first = false;
-        }
-        for terminal in &self.terminals {
-            if !first {
-                writeln!(f)?;
-            }
-            let path = resolve::relativize(terminal, self.cwd.as_deref());
-            write!(f, "{path} $")?;
             first = false;
         }
         Ok(())

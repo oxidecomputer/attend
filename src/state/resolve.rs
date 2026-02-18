@@ -112,6 +112,40 @@ impl Position {
 }
 
 impl Selection {
+    /// Parse "line:col" or "line:col-line:col" back into a Selection.
+    pub fn parse_display(s: &str) -> anyhow::Result<Self> {
+        // Find the separator `-` between two line:col groups.
+        // We need to distinguish `1:5-2:10` from just `1:5`.
+        // Split on `-` but only where both sides contain `:`.
+        if let Some(dash) = s.find('-') {
+            let left = &s[..dash];
+            let right = &s[dash + 1..];
+            if left.contains(':') && right.contains(':') {
+                let start = Self::parse_position(left)?;
+                let end = Self::parse_position(right)?;
+                return Ok(Selection { start, end });
+            }
+        }
+        // Cursor: single line:col
+        let pos = Self::parse_position(s)?;
+        Ok(Selection {
+            start: pos.clone(),
+            end: pos,
+        })
+    }
+
+    fn parse_position(s: &str) -> anyhow::Result<Position> {
+        let (line_s, col_s) = s
+            .split_once(':')
+            .with_context(|| format!("expected line:col, got {s:?}"))?;
+        Ok(Position {
+            line: line_s
+                .parse()
+                .with_context(|| format!("bad line in {s:?}"))?,
+            col: col_s.parse().with_context(|| format!("bad col in {s:?}"))?,
+        })
+    }
+
     /// Resolve raw byte-offset pairs to line:col selections from a reader.
     ///
     /// Deduplicates pairs, collects unique offsets for a single forward scan,
@@ -159,7 +193,7 @@ impl Selection {
 }
 
 /// Make `path` relative to `cwd`, or return it unchanged if outside cwd.
-pub(super) fn relativize<'a>(path: &'a Path, cwd: Option<&Path>) -> Cow<'a, str> {
+pub(crate) fn relativize<'a>(path: &'a Path, cwd: Option<&Path>) -> Cow<'a, str> {
     let Some(cwd) = cwd else {
         return path.to_string_lossy();
     };

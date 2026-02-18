@@ -14,6 +14,7 @@ which = "7"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+insta = "1"
 proptest = "1"
 tempfile = "3"
 

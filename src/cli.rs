@@ -43,6 +43,25 @@ pub enum Command {
     /// Hook mode for agent integration.
     #[command(subcommand)]
     Hook(Hook),
+    /// Show file content at editor selections.
+    View {
+        /// Show entire file contents with highlights inline.
+        #[arg(long, conflicts_with_all = ["before", "after"])]
+        full: bool,
+
+        /// Context lines before each excerpt.
+        #[arg(long, short = 'B')]
+        before: Option<usize>,
+
+        /// Context lines after each excerpt.
+        #[arg(long, short = 'A')]
+        after: Option<usize>,
+
+        /// File paths and positions in compact format (same as default output).
+        /// E.g.: src/foo.rs 5:12 19:40-24:6 src/bar.rs 10:1
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
 }
 
 /// Hook subcommands: run hooks, or manage hook installation.
@@ -141,9 +160,7 @@ impl Cli {
         match self.command {
             Some(command) => command.run(self.dir)?,
             None => {
-                if let Some(state) =
-                    crate::state::EditorState::current(self.dir.as_deref())?
-                {
+                if let Some(state) = crate::state::EditorState::current(self.dir.as_deref())? {
                     match self.format {
                         Format::Human => println!("{state}"),
                         Format::Json => println!(
@@ -163,6 +180,40 @@ impl Command {
     pub fn run(self, cwd: Option<PathBuf>) -> anyhow::Result<()> {
         match self {
             Command::Hook(hook) => hook.run(cwd),
+            Command::View {
+                full,
+                before,
+                after,
+                args,
+            } => {
+                let entries = if args.is_empty() {
+                    match crate::state::EditorState::current(cwd.as_deref())? {
+                        Some(state) => state.files,
+                        None => return Ok(()),
+                    }
+                } else if args.len() == 1 && args[0] == "-" {
+                    let mut input = String::new();
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
+                    crate::view::parse_compact(&input)?
+                } else {
+                    crate::view::parse_compact(&args.join(" "))?
+                };
+                let context = if full {
+                    crate::view::Extent::Full
+                } else if before.is_some() || after.is_some() {
+                    crate::view::Extent::Lines {
+                        before: before.unwrap_or(0),
+                        after: after.unwrap_or(0),
+                    }
+                } else {
+                    crate::view::Extent::Exact
+                };
+                print!(
+                    "{}",
+                    crate::view::render(&entries, cwd.as_deref(), context)?
+                );
+                Ok(())
+            }
         }
     }
 }

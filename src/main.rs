@@ -5,6 +5,7 @@ mod cli;
 mod editor;
 mod hook;
 mod state;
+mod view;
 
 use clap::Parser;
 

@@ -102,5 +102,10 @@ fn bench_default_json(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_user_prompt, bench_default_human, bench_default_json);
+criterion_group!(
+    benches,
+    bench_user_prompt,
+    bench_default_human,
+    bench_default_json
+);
 criterion_main!(benches);
