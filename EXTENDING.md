@@ -9,16 +9,17 @@ editor/        Reads state from editor backends (Zed, etc.)
   mod.rs         Merges results from all backends into QueryResult
   zed.rs         Zed-specific queries (SQLite)
 
-state.rs       Resolves raw byte offsets to line:col, reorders by recency
-state/
-  resolve.rs   Offset-to-position conversion, path relativization
-
-hook.rs        Hook runner: caching, change detection, output formatting
 agent/         Hook install/uninstall for each agent
   mod.rs         Dispatches install/uninstall by Agent variant
   claude.rs      Claude Code settings.json manipulation
 
 cli.rs         CLI definition (clap): flags, subcommands, dispatch
+
+hook.rs        Hook runner: caching, change detection, output formatting
+
+state.rs       Resolves raw byte offsets to line:col, reorders by recency
+state/
+  resolve.rs   Offset-to-position conversion, path relativization
 ```
 
 Data flows in one direction:
