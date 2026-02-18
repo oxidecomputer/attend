@@ -23,6 +23,14 @@ pub struct QueryResult {
 pub trait Editor {
     /// Returns `Ok(None)` when the editor is not running or has no data.
     fn query(&self) -> anyhow::Result<Option<QueryResult>>;
+
+    /// Filesystem paths to monitor for changes. When any file under these
+    /// paths is modified, the backend should be re-queried. Returns an empty
+    /// vec if filesystem notification is not supported.
+    #[allow(dead_code)]
+    fn watch_paths(&self) -> Vec<PathBuf> {
+        Vec::new()
+    }
 }
 
 /// All registered editor backends.
@@ -30,6 +38,12 @@ const EDITORS: &'static [&'static dyn Editor] = &[
     &zed::Zed,
     // <-- Add new editors here
 ];
+
+/// Collect all filesystem watch paths from every registered backend.
+#[allow(dead_code)]
+pub fn all_watch_paths() -> Vec<PathBuf> {
+    EDITORS.iter().flat_map(|e| e.watch_paths()).collect()
+}
 
 /// Query all active editors for current state, merging results.
 pub fn query() -> anyhow::Result<Option<QueryResult>> {

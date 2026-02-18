@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 /// Top-level CLI definition.
 #[derive(Parser)]
@@ -31,6 +31,45 @@ pub enum Format {
     Json,
 }
 
+/// Display mode for the watch subcommand.
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum WatchMode {
+    /// Daemon: continuously update cache, no output.
+    Silent,
+    /// Live compact output (paths + positions).
+    Compact,
+    /// Live view output (file content with markers).
+    View,
+}
+
+/// Continuously watch editor state.
+#[derive(Args)]
+pub struct Watch {
+    /// Display mode.
+    #[arg(default_value = "silent")]
+    pub mode: WatchMode,
+
+    /// Override polling / debounce interval in seconds.
+    #[arg(long, short = 'i')]
+    pub interval: Option<f64>,
+
+    /// Show entire file contents (view mode only).
+    #[arg(long, conflicts_with_all = ["before", "after"])]
+    pub full: bool,
+
+    /// Context lines before (view mode only).
+    #[arg(long, short = 'B')]
+    pub before: Option<usize>,
+
+    /// Context lines after (view mode only).
+    #[arg(long, short = 'A')]
+    pub after: Option<usize>,
+
+    /// Output format (compact mode only).
+    #[arg(long, short, default_value = "human")]
+    pub format: Format,
+}
+
 /// Value parser that validates agent names against registered backends.
 fn agent_value_parser() -> clap::builder::PossibleValuesParser {
     clap::builder::PossibleValuesParser::new(crate::agent::AGENTS.iter().map(|a| a.name()))
@@ -42,6 +81,8 @@ pub enum Command {
     /// Hook mode for agent integration.
     #[command(subcommand)]
     Hook(Hook),
+    /// Continuously watch editor state.
+    Watch(Watch),
     /// Show file content at editor selections.
     View {
         /// Resolve paths relative to this directory and show relative paths.
@@ -191,6 +232,7 @@ impl Command {
     /// Execute a subcommand.
     pub fn run(self, cwd: Option<PathBuf>) -> anyhow::Result<()> {
         match self {
+            Command::Watch(watch) => crate::watch::run(&watch, cwd.as_deref()),
             Command::Hook(hook) => {
                 if cwd.is_some() {
                     anyhow::bail!("--dir is not valid with the hook subcommand");

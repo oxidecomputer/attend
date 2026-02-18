@@ -11,6 +11,18 @@ impl Editor for Zed {
     fn query(&self) -> anyhow::Result<Option<QueryResult>> {
         query()
     }
+
+    fn watch_paths(&self) -> Vec<std::path::PathBuf> {
+        let Some(data) = dirs::data_dir() else {
+            return Vec::new();
+        };
+        let db_dir = data.join("Zed").join("db");
+        if db_dir.is_dir() {
+            vec![db_dir]
+        } else {
+            Vec::new()
+        }
+    }
 }
 
 fn query() -> anyhow::Result<Option<QueryResult>> {
