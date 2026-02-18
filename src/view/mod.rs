@@ -10,6 +10,8 @@ use crate::state::FileEntry;
 use crate::state::Selection;
 
 use annotate::{compute_groups, display_sel, render_line_range};
+#[cfg(test)]
+use annotate::{is_cursor_like, line_events};
 
 pub use parse::parse_compact;
 
@@ -29,7 +31,7 @@ mod ansi {
 }
 
 /// Whether to use ANSI colors or Unicode markers.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
     Color,
     Markers,
