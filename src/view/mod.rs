@@ -1,0 +1,153 @@
+mod annotate;
+mod parse;
+
+use std::io::IsTerminal;
+use std::path::Path;
+
+use crate::state::resolve::relativize;
+use crate::state::FileEntry;
+#[cfg(test)]
+use crate::state::Selection;
+
+use annotate::{compute_groups, display_sel, render_line_range};
+
+pub use parse::parse_compact;
+
+/// Cursor marker: U+2758 Light Vertical Bar (non-TTY).
+const CURSOR: char = '❘';
+/// Selection start marker: U+27E6 Mathematical Left White Square Bracket (non-TTY).
+const SEL_OPEN: char = '⟦';
+/// Selection end marker: U+27E7 Mathematical Right White Square Bracket (non-TTY).
+const SEL_CLOSE: char = '⟧';
+
+/// ANSI escape sequences for TTY color mode.
+mod ansi {
+    pub const BOLD: &str = "\x1b[1m";
+    pub const DIM: &str = "\x1b[2m";
+    pub const INVERSE: &str = "\x1b[7m";
+    pub const RESET: &str = "\x1b[0m";
+}
+
+/// Whether to use ANSI colors or Unicode markers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Color,
+    Markers,
+}
+
+impl Mode {
+    fn detect() -> Self {
+        if std::env::var_os("NO_COLOR").is_some() {
+            return Mode::Markers;
+        }
+        if std::io::stdout().is_terminal() {
+            Mode::Color
+        } else {
+            Mode::Markers
+        }
+    }
+}
+
+/// How much file content to show around each selection.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Extent {
+    /// Only the lines spanned by the selection/cursor.
+    Exact,
+    /// Additional context lines before/after.
+    Lines { before: usize, after: usize },
+    /// Entire file contents.
+    Full,
+}
+
+/// Render file entries with inline content markers or ANSI colors.
+///
+/// Detects TTY/`NO_COLOR` automatically. Hierarchical output:
+/// ```text
+/// path
+///   selection[, selection...]
+///     content with markers/highlights
+/// ```
+///
+/// Overlapping context ranges are merged into a single group with
+/// comma-separated position headers.
+pub fn render(entries: &[FileEntry], cwd: Option<&Path>, extent: Extent) -> anyhow::Result<String> {
+    render_with_mode(entries, cwd, Mode::detect(), extent)
+}
+
+fn render_with_mode(
+    entries: &[FileEntry],
+    cwd: Option<&Path>,
+    mode: Mode,
+    extent: Extent,
+) -> anyhow::Result<String> {
+    let mut out = String::new();
+
+    for (file_idx, entry) in entries.iter().enumerate() {
+        if file_idx > 0 {
+            out.push('\n');
+        }
+
+        // Resolve path
+        let abs_path = if entry.path.is_absolute() {
+            entry.path.clone()
+        } else {
+            let base = match cwd {
+                Some(c) => c.to_path_buf(),
+                None => std::env::current_dir()?,
+            };
+            base.join(&entry.path)
+        };
+
+        let display_path = relativize(&abs_path, cwd);
+
+        // Read file
+        let content = match std::fs::read_to_string(&abs_path) {
+            Ok(c) => c,
+            Err(e) => {
+                out.push_str(&format!("{display_path}: {e}\n"));
+                continue;
+            }
+        };
+        let lines: Vec<&str> = content.lines().collect();
+
+        // File path header
+        if mode == Mode::Color {
+            out.push_str(&format!("{}{display_path}{}\n", ansi::BOLD, ansi::RESET));
+        } else {
+            out.push_str(&format!("{display_path}\n"));
+        }
+
+        let groups = compute_groups(&entry.selections, lines.len(), extent);
+        let show_headers = extent != Extent::Full;
+
+        for group in &groups {
+            if show_headers {
+                let header: String = group
+                    .sels
+                    .iter()
+                    .map(|s| display_sel(s))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if mode == Mode::Color {
+                    out.push_str(&format!("  {}{header}{}\n", ansi::DIM, ansi::RESET));
+                } else {
+                    out.push_str(&format!("  {header}\n"));
+                }
+            }
+
+            render_line_range(
+                &mut out,
+                &lines,
+                group.first_line,
+                group.last_line,
+                &group.sels,
+                mode,
+            );
+        }
+    }
+
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests;
