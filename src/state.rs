@@ -1,10 +1,21 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::{fs, io};
 
 use serde::{Deserialize, Serialize};
 
 use crate::editor::{self, RawEditor};
+
+/// Return the platform cache directory for attend.
+pub(crate) fn cache_dir() -> Option<PathBuf> {
+    Some(dirs::cache_dir()?.join("attend"))
+}
+
+/// Path to the shared ordering cache.
+fn shared_cache_path() -> Option<PathBuf> {
+    Some(cache_dir()?.join("latest.json"))
+}
 
 mod resolve;
 pub use resolve::{Position, Selection};
@@ -13,7 +24,7 @@ pub use resolve::{Position, Selection};
 mod tests;
 
 /// Resolved editor state: open files with cursor positions and terminal cwds.
-#[derive(Debug, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Eq, Serialize, Deserialize)]
 pub struct EditorState {
     /// Open editor tabs with resolved line:col selections.
     pub files: Vec<FileEntry>,
@@ -86,12 +97,9 @@ impl fmt::Display for EditorState {
 }
 
 impl EditorState {
-    /// Load current editor state from all active editors, optionally reordering
-    /// by recency relative to a cached previous state.
-    pub fn current(
-        cwd: Option<&Path>,
-        previous: Option<&EditorState>,
-    ) -> anyhow::Result<Option<Self>> {
+    /// Load current editor state from all active editors, reordering
+    /// by recency relative to the shared cache, and update the cache.
+    pub fn current(cwd: Option<&Path>) -> anyhow::Result<Option<Self>> {
         let result = match editor::query()? {
             Some(r) => r,
             None => return Ok(None),
@@ -100,10 +108,30 @@ impl EditorState {
         if state.files.is_empty() && state.terminals.is_empty() {
             return Ok(None);
         }
-        if let Some(prev) = previous {
-            state.reorder_relative_to(prev);
-        }
+        let previous = Self::load_cached().unwrap_or_default();
+        state.reorder_relative_to(&previous);
+        state.save_cache();
         Ok(Some(state))
+    }
+
+    /// Load the shared (cross-session) cached editor state for recency ordering.
+    fn load_cached() -> Option<Self> {
+        let cp = shared_cache_path()?;
+        let s = fs::read_to_string(&cp).ok()?;
+        serde_json::from_str(&s).ok()
+    }
+
+    /// Save to the shared cache so all sessions benefit from fresh ordering.
+    fn save_cache(&self) {
+        let Some(cp) = shared_cache_path() else {
+            return;
+        };
+        if let Some(parent) = cp.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Ok(file) = fs::File::create(&cp) {
+            let _ = serde_json::to_writer(io::BufWriter::new(file), self);
+        }
     }
 
     /// Build resolved editor state from raw editor rows: filter, group, resolve.

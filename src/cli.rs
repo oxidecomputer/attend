@@ -103,7 +103,8 @@ impl Cli {
         match self.command {
             Some(command) => command.run(self.dir)?,
             None => {
-                if let Some(state) = crate::state::EditorState::current(self.dir.as_deref(), None)?
+                if let Some(state) =
+                    crate::state::EditorState::current(self.dir.as_deref())?
                 {
                     match self.format {
                         Format::Human => println!("{state}"),
