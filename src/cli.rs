@@ -101,7 +101,9 @@ pub enum Hook {
 
 /// Parsed `hook run <agent> <event>` arguments.
 pub struct RunHook {
+    /// The resolved agent backend.
     pub agent: &'static dyn crate::agent::Agent,
+    /// The hook event to run.
     pub event: crate::agent::HookEvent,
 }
 
@@ -159,6 +161,7 @@ impl clap::Subcommand for RunHook {
 }
 
 impl Cli {
+    /// Run the CLI: dispatch to subcommand or print editor state.
     pub fn run(self) -> anyhow::Result<()> {
         match self.command {
             Some(command) => {
@@ -185,6 +188,7 @@ impl Cli {
 }
 
 impl Command {
+    /// Execute a subcommand.
     pub fn run(self, cwd: Option<PathBuf>) -> anyhow::Result<()> {
         match self {
             Command::Hook(hook) => {
@@ -234,6 +238,7 @@ impl Command {
 }
 
 impl Hook {
+    /// Execute a hook subcommand.
     pub fn run(self) -> anyhow::Result<()> {
         match self {
             Hook::Run(run_hook) => run_hook.agent.run_hook(run_hook.event, None),

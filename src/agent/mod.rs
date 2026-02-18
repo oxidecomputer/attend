@@ -8,13 +8,17 @@ use anyhow::{Context, bail};
 /// Hook events that agents handle.
 #[derive(Clone, Copy)]
 pub enum HookEvent {
+    /// Fired once at the start of an agent session.
     SessionStart,
+    /// Fired before each user prompt is sent.
     UserPrompt,
 }
 
 impl HookEvent {
+    /// All defined hook events.
     pub const ALL: &[HookEvent] = &[HookEvent::SessionStart, HookEvent::UserPrompt];
 
+    /// The kebab-case name used on the CLI (e.g. `"session-start"`).
     pub fn cli_name(self) -> &'static str {
         match self {
             HookEvent::SessionStart => "session-start",
@@ -22,6 +26,7 @@ impl HookEvent {
         }
     }
 
+    /// Short description for `--help` output.
     pub fn about(self) -> &'static str {
         match self {
             HookEvent::SessionStart => "Clear cache and emit instructions for a new session",
@@ -29,6 +34,7 @@ impl HookEvent {
         }
     }
 
+    /// Parse a CLI name back into a `HookEvent`.
     pub fn from_cli_name(name: &str) -> Option<HookEvent> {
         match name {
             "session-start" => Some(HookEvent::SessionStart),

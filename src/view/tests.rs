@@ -47,11 +47,11 @@ fn cursor_on_line() {
         }],
     }];
     let result = render_markers(&entries, Some(dir.path())).unwrap();
-    insta::assert_snapshot!(result, @r"
-        main.rs
-          3:9
-                let ❘x = 42;
-        ");
+    insta::assert_snapshot!(result, @"
+    main.rs
+      3:9
+        let ❘x = 42;
+    ");
 }
 
 #[test]
@@ -65,13 +65,13 @@ fn multi_line_selection() {
         }],
     }];
     let result = render_markers(&entries, Some(dir.path())).unwrap();
-    insta::assert_snapshot!(result, @r"
-        main.rs
-          2:5-4:15
-                ⟦greet(name);
-                let x = 42;
-                let y = x ⟧+ 1;
-        ");
+    insta::assert_snapshot!(result, @"
+    main.rs
+      2:5-4:15
+        ⟦greet(name);
+        let x = 42;
+        let y = x ⟧+ 1;
+    ");
 }
 
 #[test]
@@ -85,11 +85,11 @@ fn single_line_partial_selection() {
         }],
     }];
     let result = render_markers(&entries, Some(dir.path())).unwrap();
-    insta::assert_snapshot!(result, @r"
-        main.rs
-          3:9-3:15
-                let ⟦x = 42⟧;
-        ");
+    insta::assert_snapshot!(result, @"
+    main.rs
+      3:9-3:15
+        let ⟦x = 42⟧;
+    ");
 }
 
 #[test]
@@ -109,13 +109,13 @@ fn multiple_selections_one_file() {
         ],
     }];
     let result = render_markers(&entries, Some(dir.path())).unwrap();
-    insta::assert_snapshot!(result, @r"
-        main.rs
-          1:1
-            ❘fn main() {
-          3:5-3:8
-                ⟦let⟧ x = 42;
-        ");
+    insta::assert_snapshot!(result, @"
+    main.rs
+      1:1
+        ❘fn main() {
+      3:5-3:8
+        ⟦let⟧ x = 42;
+    ");
 }
 
 #[test]
@@ -325,13 +325,13 @@ fn context_before_after() {
         after: 1,
     };
     let result = render_ctx(&entries, Some(dir.path()), ctx).unwrap();
-    insta::assert_snapshot!(result, @r"
-        main.rs
-          3:9
-                greet(name);
-                let ❘x = 42;
-                let y = x + 1;
-        ");
+    insta::assert_snapshot!(result, @"
+    main.rs
+      3:9
+        greet(name);
+        let ❘x = 42;
+        let y = x + 1;
+    ");
 }
 
 #[test]
@@ -372,14 +372,14 @@ fn context_around_selection() {
         after: 1,
     };
     let result = render_ctx(&entries, Some(dir.path()), ctx).unwrap();
-    insta::assert_snapshot!(result, @r"
-        main.rs
-          3:5-4:9
-                greet(name);
-                ⟦let x = 42;
-                let ⟧y = x + 1;
-                log(y);
-        ");
+    insta::assert_snapshot!(result, @"
+    main.rs
+      3:5-4:9
+        greet(name);
+        ⟦let x = 42;
+        let ⟧y = x + 1;
+        log(y);
+    ");
 }
 
 #[test]
@@ -455,11 +455,11 @@ fn cursor_like_display() {
     }];
     let result = render_markers(&entries, Some(dir.path())).unwrap();
     // Header shows "3:9" not "3:9-3:10"
-    insta::assert_snapshot!(result, @r"
-        main.rs
-          3:9
-                let ❘x = 42;
-        ");
+    insta::assert_snapshot!(result, @"
+    main.rs
+      3:9
+        let ❘x = 42;
+    ");
 }
 
 #[test]
@@ -973,6 +973,12 @@ proptest! {
         let (_path, entries) = setup_entry(&dir, &content, sels);
         let result = render_with_mode(&entries, Some(dir.path()), Mode::Markers, Extent::Full).unwrap();
         let file_lines: Vec<&str> = content.lines().collect();
+        // Same dedent the renderer applies.
+        let trim = file_lines.iter()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.len() - l.trim_start().len())
+            .min()
+            .unwrap_or(0);
         let content_lines: Vec<&str> = result
             .lines()
             .filter(|l| l.starts_with("    "))
@@ -986,12 +992,13 @@ proptest! {
         );
         for (i, (rendered, original)) in content_lines.iter().zip(file_lines.iter()).enumerate() {
             let stripped = strip_markers(&rendered[4..]); // remove 4-space indent
+            let trimmed = &original[trim.min(original.len())..];
             // The renderer adds a space on empty lines inside a selection
             // to visually connect the highlighted region.
-            let expected = if original.is_empty() && stripped == " " {
+            let expected = if trimmed.is_empty() && stripped == " " {
                 " "
             } else {
-                *original
+                trimmed
             };
             prop_assert_eq!(
                 stripped.as_str(),
@@ -1051,15 +1058,21 @@ proptest! {
         let (_path, entries) = setup_entry(&dir, &content, vec![sel]);
         let result = render_with_mode(&entries, Some(dir.path()), Mode::Markers, Extent::Exact).unwrap();
 
+        // The renderer dedents by the common leading whitespace of the snippet.
+        // For Exact with a single line, that's this line's leading whitespace.
+        let trim = line.len() - line.trim_start().len();
+        let trimmed = &line[trim..];
+        let adj_col = col.saturating_sub(trim).max(1);
+
         // Find the content line (4-space indent, after header lines)
         let content_line = result.lines().find(|l| l.starts_with("    "));
         prop_assert!(content_line.is_some(), "should have a content line");
         let rendered = &content_line.unwrap()[4..];
         let expected = format!(
             "{}{}{}",
-            &line[..col - 1],
+            &trimmed[..adj_col - 1],
             CURSOR,
-            &line[col - 1..]
+            &trimmed[adj_col - 1..]
         );
         prop_assert_eq!(rendered, expected.as_str(), "cursor oracle mismatch");
     }
@@ -1103,16 +1116,22 @@ proptest! {
         let (_path, entries) = setup_entry(&dir, &content, vec![sel]);
         let result = render_with_mode(&entries, Some(dir.path()), Mode::Markers, Extent::Exact).unwrap();
 
+        // Account for dedent.
+        let trim = line.len() - line.trim_start().len();
+        let trimmed = &line[trim..];
+        let ac1 = c1.saturating_sub(trim).max(1);
+        let ac2 = c2.saturating_sub(trim).max(1);
+
         let content_line = result.lines().find(|l| l.starts_with("    "));
         prop_assert!(content_line.is_some(), "should have a content line");
         let rendered = &content_line.unwrap()[4..];
         let expected = format!(
             "{}{}{}{}{}",
-            &line[..c1 - 1],
+            &trimmed[..ac1 - 1],
             SEL_OPEN,
-            &line[c1 - 1..c2 - 1],
+            &trimmed[ac1 - 1..ac2 - 1],
             SEL_CLOSE,
-            &line[c2 - 1..]
+            &trimmed[ac2 - 1..]
         );
         prop_assert_eq!(rendered, expected.as_str(), "selection oracle mismatch");
     }

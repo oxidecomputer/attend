@@ -4,6 +4,7 @@ use anyhow::Context;
 
 use super::{Editor, QueryResult, RawEditor};
 
+/// Zed editor backend — queries the Zed SQLite database for open tabs.
 pub struct Zed;
 
 impl Editor for Zed {

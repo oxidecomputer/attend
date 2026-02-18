@@ -4,8 +4,11 @@ use super::{ansi, Extent, Mode, CURSOR, SEL_CLOSE, SEL_OPEN};
 
 /// A group of selections with overlapping visible line ranges.
 pub(super) struct Group<'a> {
+    /// Selections belonging to this group.
     pub sels: Vec<&'a Selection>,
+    /// First visible line (1-based).
     pub first_line: Line,
+    /// Last visible line (1-based).
     pub last_line: Line,
 }
 
@@ -71,8 +74,11 @@ impl<'a> Group<'a> {
 /// Column-level events, ordered so SelEnd < Cursor < SelStart at equal column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum EventKind {
+    /// End of a selection range.
     SelEnd,
+    /// A cursor position.
     Cursor,
+    /// Start of a selection range.
     SelStart,
 }
 
@@ -123,6 +129,9 @@ pub(super) fn line_events(
 }
 
 /// Render a range of lines with selection markers applied.
+///
+/// Dedents the snippet by stripping the common leading whitespace shared
+/// by all non-empty lines, so deeply nested code is left-aligned.
 pub(super) fn render_line_range(
     out: &mut String,
     lines: &[&str],
@@ -133,15 +142,32 @@ pub(super) fn render_line_range(
 ) {
     let out_start = out.len();
 
+    // Common leading whitespace across non-empty lines in this range.
+    let trim = (first.get()..=last.get())
+        .map(|i| lines[i - 1])
+        .filter(|l| !l.is_empty())
+        .map(|l| l.len() - l.trim_start().len())
+        .min()
+        .unwrap_or(0);
+
     for line_num in first.get()..=last.get() {
-        let line = lines[line_num - 1];
+        let raw = lines[line_num - 1];
+        let line = &raw[trim.min(raw.len())..];
         let ln = Line::new(line_num).unwrap();
         let (events, in_sel) = line_events(sels, ln);
 
         if events.is_empty() && !in_sel {
             emit_context_line(out, line, mode);
         } else {
-            emit_annotated_line(out, line, &events, in_sel, mode);
+            // Shift column events left by the trim amount.
+            let adjusted: Vec<(Col, EventKind)> = events
+                .into_iter()
+                .map(|(col, kind)| {
+                    let c = col.get().saturating_sub(trim).max(1);
+                    (Col::new(c).unwrap(), kind)
+                })
+                .collect();
+            emit_annotated_line(out, line, &adjusted, in_sel, mode);
         }
     }
 

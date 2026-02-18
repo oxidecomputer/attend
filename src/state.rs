@@ -17,6 +17,7 @@ fn shared_cache_path() -> Option<PathBuf> {
     Some(cache_dir()?.join("latest.json"))
 }
 
+/// Core types (Line, Col, Position, Selection) and byte-offset resolution.
 pub(crate) mod resolve;
 pub use resolve::{Col, Line, Position, Selection};
 

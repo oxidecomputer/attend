@@ -5,6 +5,7 @@ use anyhow::Context;
 
 use super::{Agent, HookEvent};
 
+/// Claude Code agent backend.
 pub struct Claude;
 
 impl Agent for Claude {

@@ -38,6 +38,7 @@ enum Mode {
 }
 
 impl Mode {
+    /// Pick Color or Markers based on TTY and `NO_COLOR`.
     fn detect() -> Self {
         if std::env::var_os("NO_COLOR").is_some() {
             return Mode::Markers;
@@ -76,6 +77,7 @@ pub fn render(entries: &[FileEntry], cwd: Option<&Path>, extent: Extent) -> anyh
     render_with_mode(entries, cwd, Mode::detect(), extent)
 }
 
+/// Inner render with an explicit mode (used by tests to force Markers/Color).
 fn render_with_mode(
     entries: &[FileEntry],
     cwd: Option<&Path>,

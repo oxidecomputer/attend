@@ -20,28 +20,34 @@ pub struct Line(NonZeroUsize);
 pub struct Col(NonZeroUsize);
 
 impl Line {
+    /// Create from a raw value. Returns `None` for 0.
     pub fn new(n: usize) -> Option<Self> {
         NonZeroUsize::new(n).map(Self)
     }
 
+    /// The underlying 1-based value.
     pub fn get(self) -> usize {
         self.0.get()
     }
 
+    /// Subtract, clamping to 1 (not 0) so the invariant is preserved.
     pub fn saturating_sub(self, n: usize) -> Self {
         Self(NonZeroUsize::new(self.get().saturating_sub(n).max(1)).unwrap())
     }
 
+    /// Add, clamping to `usize::MAX`. Result is always ≥ 1.
     pub fn saturating_add(self, n: usize) -> Self {
         Self(NonZeroUsize::new(self.get().saturating_add(n)).unwrap())
     }
 }
 
 impl Col {
+    /// Create from a raw value. Returns `None` for 0.
     pub fn new(n: usize) -> Option<Self> {
         NonZeroUsize::new(n).map(Self)
     }
 
+    /// The underlying 1-based value.
     pub fn get(self) -> usize {
         self.0.get()
     }

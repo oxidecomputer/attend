@@ -67,6 +67,7 @@ fn is_position(s: &str) -> bool {
     }
 }
 
+/// Check if a string matches `\d+:\d+`.
 fn is_line_col(s: &str) -> bool {
     let Some((line, col)) = s.split_once(':') else {
         return false;
