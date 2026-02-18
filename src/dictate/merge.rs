@@ -6,6 +6,54 @@
 
 use crate::state::FileEntry;
 
+/// Controls collapsing of large code snippets and diffs.
+///
+/// When a fenced block exceeds `threshold` lines, only the first `head`
+/// and last `tail` lines are kept, with a `// ... (N lines omitted)` marker
+/// in between.
+#[derive(Debug, Clone, Copy)]
+pub struct SnipConfig {
+    /// Blocks with more lines than this are snipped.
+    pub threshold: usize,
+    /// Lines to keep at the start of a snipped block.
+    pub head: usize,
+    /// Lines to keep at the end of a snipped block.
+    pub tail: usize,
+}
+
+impl Default for SnipConfig {
+    fn default() -> Self {
+        Self {
+            threshold: 20,
+            head: 10,
+            tail: 5,
+        }
+    }
+}
+
+/// Collapse a multi-line string if it exceeds the snip threshold.
+///
+/// Returns the original string unchanged if it fits, otherwise keeps the
+/// first `head` and last `tail` lines with an omission marker.
+fn snip(text: &str, cfg: SnipConfig) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() <= cfg.threshold {
+        return text.to_string();
+    }
+    let omitted = lines.len() - cfg.head - cfg.tail;
+    let mut out = String::new();
+    for line in &lines[..cfg.head] {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str(&format!("// ... ({omitted} lines omitted)\n"));
+    for line in &lines[lines.len() - cfg.tail..] {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 /// A timestamped event from one of the three capture streams.
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -136,7 +184,7 @@ fn clean_whisper_text(raw: &str) -> String {
 /// - Words become flowing prose text
 /// - Editor snapshots become fenced code blocks with `// path:line` headers
 /// - File diffs become fenced diff blocks with `// path` headers
-pub fn format_markdown(events: &mut [Event]) -> String {
+pub fn format_markdown(events: &mut [Event], snip_cfg: SnipConfig) -> String {
     events.sort_by(|a, b| {
         a.offset_secs()
             .partial_cmp(&b.offset_secs())
@@ -173,10 +221,11 @@ pub fn format_markdown(events: &mut [Event]) -> String {
                         out.push('\n');
                     }
                     out.push('\n');
+                    let snipped = snip(&file.content, snip_cfg);
                     out.push_str("```\n");
                     out.push_str(&format!("// {}:{}\n", file.path, file.first_line));
-                    out.push_str(&file.content);
-                    if !file.content.ends_with('\n') {
+                    out.push_str(&snipped);
+                    if !snipped.ends_with('\n') {
                         out.push('\n');
                     }
                     out.push_str("```\n");
@@ -191,10 +240,11 @@ pub fn format_markdown(events: &mut [Event]) -> String {
                     out.push('\n');
                 }
                 out.push('\n');
+                let snipped = snip(diff, snip_cfg);
                 out.push_str("```diff\n");
                 out.push_str(&format!("// {path}\n"));
-                out.push_str(diff);
-                if !diff.ends_with('\n') {
+                out.push_str(&snipped);
+                if !snipped.ends_with('\n') {
                     out.push('\n');
                 }
                 out.push_str("```\n");

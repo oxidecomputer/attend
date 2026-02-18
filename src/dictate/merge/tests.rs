@@ -12,7 +12,7 @@ fn words_only() {
             text: "look at this".to_string(),
         },
     ];
-    let md = format_markdown(&mut events);
+    let md = format_markdown(&mut events, SnipConfig::default());
     assert_eq!(md, "Please look at this\n");
 }
 
@@ -37,7 +37,7 @@ fn words_with_code() {
             text: "and refactor it".to_string(),
         },
     ];
-    let md = format_markdown(&mut events);
+    let md = format_markdown(&mut events, SnipConfig::default());
     let expected = "\
 Look at this function
 
@@ -66,7 +66,7 @@ fn diff_event() {
             diff: "-    pub timeout: u64,\n+    pub timeout: Duration,\n".to_string(),
         },
     ];
-    let md = format_markdown(&mut events);
+    let md = format_markdown(&mut events, SnipConfig::default());
     let expected = "\
 I just changed this
 
@@ -91,7 +91,7 @@ fn chronological_ordering() {
             text: "first".to_string(),
         },
     ];
-    let md = format_markdown(&mut events);
+    let md = format_markdown(&mut events, SnipConfig::default());
     assert_eq!(md, "first second\n");
 }
 
@@ -109,7 +109,7 @@ fn unified_diff_basic() {
 #[test]
 fn empty_events() {
     let mut events: Vec<Event> = vec![];
-    let md = format_markdown(&mut events);
+    let md = format_markdown(&mut events, SnipConfig::default());
     assert_eq!(md, "");
 }
 
@@ -124,7 +124,7 @@ fn code_only_no_prose() {
             first_line: 42,
         }],
     }];
-    let md = format_markdown(&mut events);
+    let md = format_markdown(&mut events, SnipConfig::default());
     let expected =
         "\n```\n// src/lib.rs:42\npub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n```\n";
     assert_eq!(md, expected);
@@ -148,7 +148,7 @@ fn multiple_files_in_snapshot() {
             },
         ],
     }];
-    let md = format_markdown(&mut events);
+    let md = format_markdown(&mut events, SnipConfig::default());
     assert!(md.contains("```\n// src/a.py:1"));
     assert!(md.contains("```\n// src/b.js:10"));
 }
@@ -196,7 +196,7 @@ fn full_scenario_snapshot() {
                 text: "to use Duration instead".to_string(),
             },
         ];
-    let md = format_markdown(&mut events);
+    let md = format_markdown(&mut events, SnipConfig::default());
     insta::assert_snapshot!(md);
 }
 
@@ -213,7 +213,7 @@ fn prose_after_diff() {
             text: "that was the change".to_string(),
         },
     ];
-    let md = format_markdown(&mut events);
+    let md = format_markdown(&mut events, SnipConfig::default());
     assert!(md.contains("```diff\n// foo.rs\n+new line\n```\n"));
     assert!(md.contains("\nthat was the change\n"));
 }
@@ -229,7 +229,7 @@ fn content_without_trailing_newline() {
             first_line: 1,
         }],
     }];
-    let md = format_markdown(&mut events);
+    let md = format_markdown(&mut events, SnipConfig::default());
     // Should still end with closing fence + newline
     assert!(md.ends_with("no trailing newline\n```\n"));
 }
@@ -274,7 +274,7 @@ fn whisper_cleanup_intra_segment() {
         offset_secs: 0.0,
         text: "I 'm going to fix this .".to_string(),
     }];
-    let md = format_markdown(&mut events);
+    let md = format_markdown(&mut events, SnipConfig::default());
     assert_eq!(md, "I'm going to fix this.\n");
 }
 
@@ -303,7 +303,7 @@ fn whisper_cleanup_cross_segment() {
             text: "wondering".to_string(),
         },
     ];
-    let md = format_markdown(&mut events);
+    let md = format_markdown(&mut events, SnipConfig::default());
     assert_eq!(md, "function. I'm wondering\n");
 }
 
@@ -323,7 +323,7 @@ fn noise_markers_filtered() {
             text: "world".to_string(),
         },
     ];
-    let md = format_markdown(&mut events);
+    let md = format_markdown(&mut events, SnipConfig::default());
     assert_eq!(md, "hello world\n");
 }
 
@@ -334,4 +334,98 @@ fn noise_marker_parenthesized() {
     assert!(is_noise_marker("  [typing sounds]  "));
     assert!(!is_noise_marker("hello"));
     assert!(!is_noise_marker("[not closed"));
+}
+
+#[test]
+fn snip_below_threshold_unchanged() {
+    let text = "line1\nline2\nline3\n";
+    let cfg = SnipConfig {
+        threshold: 5,
+        head: 2,
+        tail: 1,
+    };
+    assert_eq!(snip(text, cfg), text);
+}
+
+#[test]
+fn snip_above_threshold_collapses() {
+    // 6 lines, threshold 5 → snip with head=2, tail=1
+    let text = "a\nb\nc\nd\ne\nf\n";
+    let cfg = SnipConfig {
+        threshold: 5,
+        head: 2,
+        tail: 1,
+    };
+    let result = snip(text, cfg);
+    assert_eq!(result, "a\nb\n// ... (3 lines omitted)\nf\n");
+}
+
+#[test]
+fn snip_at_exact_threshold_unchanged() {
+    let text = (1..=5).map(|i| format!("line{i}")).collect::<Vec<_>>().join("\n") + "\n";
+    let cfg = SnipConfig {
+        threshold: 5,
+        head: 2,
+        tail: 1,
+    };
+    assert_eq!(snip(&text, cfg), text);
+}
+
+#[test]
+fn snip_applied_to_code_block() {
+    // 25 lines of content → should be snipped with default config (threshold=20)
+    let content: String = (1..=25).map(|i| format!("line {i}\n")).collect();
+    let mut events = vec![Event::EditorSnapshot {
+        offset_secs: 0.0,
+        files: vec![],
+        rendered: vec![RenderedFile {
+            path: "big.rs".to_string(),
+            content,
+            first_line: 1,
+        }],
+    }];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    assert!(md.contains("// ... (10 lines omitted)"));
+    assert!(md.contains("line 1\n"));
+    assert!(md.contains("line 10\n"));
+    assert!(md.contains("line 25\n"));
+    assert!(!md.contains("line 11\n"));
+}
+
+#[test]
+fn snip_applied_to_diff_block() {
+    let diff: String = (1..=25).map(|i| format!("+line {i}\n")).collect();
+    let mut events = vec![Event::FileDiff {
+        offset_secs: 0.0,
+        path: "big.rs".to_string(),
+        diff,
+    }];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    assert!(md.contains("// ... (10 lines omitted)"));
+    assert!(md.contains("+line 1\n"));
+    assert!(md.contains("+line 10\n"));
+    assert!(md.contains("+line 25\n"));
+    assert!(!md.contains("+line 11\n"));
+}
+
+#[test]
+fn snip_disabled_with_large_threshold() {
+    let content: String = (1..=100).map(|i| format!("line {i}\n")).collect();
+    let cfg = SnipConfig {
+        threshold: 1000,
+        head: 10,
+        tail: 5,
+    };
+    let mut events = vec![Event::EditorSnapshot {
+        offset_secs: 0.0,
+        files: vec![],
+        rendered: vec![RenderedFile {
+            path: "big.rs".to_string(),
+            content: content.clone(),
+            first_line: 1,
+        }],
+    }];
+    let md = format_markdown(&mut events, cfg);
+    assert!(!md.contains("omitted"));
+    assert!(md.contains("line 50\n"));
 }

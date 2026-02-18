@@ -23,18 +23,26 @@ use crate::state::{self, EditorState};
 use crate::view;
 
 /// Toggle recording: start if not recording, stop if recording.
-pub fn toggle(model: Option<PathBuf>, session: Option<String>) -> anyhow::Result<()> {
+pub fn toggle(
+    model: Option<PathBuf>,
+    session: Option<String>,
+    snip_cfg: merge::SnipConfig,
+) -> anyhow::Result<()> {
     if record_lock_path().exists() {
         stop()
     } else {
-        start(model, session)
+        start(model, session, snip_cfg)
     }
 }
 
 /// Start recording by spawning a detached daemon process.
 ///
 /// If already recording (lock exists), this is a no-op.
-pub fn start(model: Option<PathBuf>, session: Option<String>) -> anyhow::Result<()> {
+pub fn start(
+    model: Option<PathBuf>,
+    session: Option<String>,
+    snip_cfg: merge::SnipConfig,
+) -> anyhow::Result<()> {
     if record_lock_path().exists() {
         eprintln!("Already recording.");
         return Ok(());
@@ -49,6 +57,18 @@ pub fn start(model: Option<PathBuf>, session: Option<String>) -> anyhow::Result<
     }
     if let Some(ref s) = session {
         cmd.arg("--session").arg(s);
+    }
+
+    let defaults = merge::SnipConfig::default();
+    if snip_cfg.threshold != defaults.threshold {
+        cmd.arg("--snip-threshold")
+            .arg(snip_cfg.threshold.to_string());
+    }
+    if snip_cfg.head != defaults.head {
+        cmd.arg("--snip-head").arg(snip_cfg.head.to_string());
+    }
+    if snip_cfg.tail != defaults.tail {
+        cmd.arg("--snip-tail").arg(snip_cfg.tail.to_string());
     }
 
     // Detach: redirect stdio to /dev/null
@@ -95,7 +115,11 @@ pub fn stop() -> anyhow::Result<()> {
 ///
 /// Acquires the record lock, captures audio + editor state + file diffs,
 /// waits for the stop sentinel, transcribes, merges, and writes output.
-pub fn daemon(model: Option<PathBuf>, session: Option<String>) -> anyhow::Result<()> {
+pub fn daemon(
+    model: Option<PathBuf>,
+    session: Option<String>,
+    snip_cfg: merge::SnipConfig,
+) -> anyhow::Result<()> {
     let model_path = model.unwrap_or_else(default_model_path);
     let session_id = resolve_session(session);
 
@@ -182,7 +206,7 @@ pub fn daemon(model: Option<PathBuf>, session: Option<String>) -> anyhow::Result
     events.extend(file_diffs);
 
     // Format as markdown
-    let markdown = merge::format_markdown(&mut events);
+    let markdown = merge::format_markdown(&mut events, snip_cfg);
 
     if markdown.trim().is_empty() {
         eprintln!("No content captured, discarding.");

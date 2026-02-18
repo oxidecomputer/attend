@@ -81,6 +81,15 @@ pub enum DictateCommand {
         /// Session ID (defaults to listening file).
         #[arg(long)]
         session: Option<String>,
+        /// Snip code/diff blocks longer than this many lines.
+        #[arg(long, default_value_t = 20)]
+        snip_threshold: usize,
+        /// Lines to keep at the start of a snipped block.
+        #[arg(long, default_value_t = 10)]
+        snip_head: usize,
+        /// Lines to keep at the end of a snipped block.
+        #[arg(long, default_value_t = 5)]
+        snip_tail: usize,
     },
     /// Spawn detached recorder (idempotent).
     Start {
@@ -90,6 +99,15 @@ pub enum DictateCommand {
         /// Session ID (defaults to listening file).
         #[arg(long)]
         session: Option<String>,
+        /// Snip code/diff blocks longer than this many lines.
+        #[arg(long, default_value_t = 20)]
+        snip_threshold: usize,
+        /// Lines to keep at the start of a snipped block.
+        #[arg(long, default_value_t = 10)]
+        snip_head: usize,
+        /// Lines to keep at the end of a snipped block.
+        #[arg(long, default_value_t = 5)]
+        snip_tail: usize,
     },
     /// Signal recorder to stop (idempotent).
     Stop,
@@ -119,6 +137,12 @@ pub enum DictateCommand {
         /// Session ID.
         #[arg(long)]
         session: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        snip_threshold: usize,
+        #[arg(long, default_value_t = 10)]
+        snip_head: usize,
+        #[arg(long, default_value_t = 5)]
+        snip_tail: usize,
     },
 }
 
@@ -143,13 +167,52 @@ fn read_stdin_json() -> Option<serde_json::Value> {
 /// Run a dictate subcommand.
 pub fn run(cmd: DictateCommand) -> anyhow::Result<()> {
     match cmd {
-        DictateCommand::Toggle { model, session } => record::toggle(model, session),
-        DictateCommand::Start { model, session } => record::start(model, session),
+        DictateCommand::Toggle {
+            model,
+            session,
+            snip_threshold,
+            snip_head,
+            snip_tail,
+        } => {
+            let snip_cfg = merge::SnipConfig {
+                threshold: snip_threshold,
+                head: snip_head,
+                tail: snip_tail,
+            };
+            record::toggle(model, session, snip_cfg)
+        }
+        DictateCommand::Start {
+            model,
+            session,
+            snip_threshold,
+            snip_head,
+            snip_tail,
+        } => {
+            let snip_cfg = merge::SnipConfig {
+                threshold: snip_threshold,
+                head: snip_head,
+                tail: snip_tail,
+            };
+            record::start(model, session, snip_cfg)
+        }
         DictateCommand::Stop => record::stop(),
         DictateCommand::Receive { wait, session } => receive::run(wait, session),
         DictateCommand::Activate => activate(),
         DictateCommand::Install { editor } => install(editor),
-        DictateCommand::RecordDaemon { model, session } => record::daemon(model, session),
+        DictateCommand::RecordDaemon {
+            model,
+            session,
+            snip_threshold,
+            snip_head,
+            snip_tail,
+        } => {
+            let snip_cfg = merge::SnipConfig {
+                threshold: snip_threshold,
+                head: snip_head,
+                tail: snip_tail,
+            };
+            record::daemon(model, session, snip_cfg)
+        }
     }
 }
 
