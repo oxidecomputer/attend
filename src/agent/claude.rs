@@ -3,6 +3,35 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 
+use super::{Agent, HookEvent};
+
+pub struct Claude;
+
+impl Agent for Claude {
+    fn name(&self) -> &'static str {
+        "claude"
+    }
+
+    fn about(&self) -> &'static str {
+        "Claude Code hooks"
+    }
+
+    fn run_hook(&self, event: HookEvent, cwd: Option<PathBuf>) -> anyhow::Result<()> {
+        match event {
+            HookEvent::UserPrompt => crate::hook::run(cwd),
+            HookEvent::SessionStart => crate::hook::session_start(),
+        }
+    }
+
+    fn install(&self, bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
+        install(bin_cmd, project)
+    }
+
+    fn uninstall(&self, project: Option<PathBuf>) -> anyhow::Result<()> {
+        uninstall(project)
+    }
+}
+
 /// Check whether a hook entry's commands reference `attend` or the given binary command.
 fn entry_has_attend_cmd(entry: &serde_json::Value, bin_cmd: Option<&str>) -> bool {
     entry
@@ -25,7 +54,7 @@ fn settings_path(project: Option<&Path>) -> anyhow::Result<PathBuf> {
 }
 
 /// Install hooks into Claude Code settings.
-pub fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
+fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
     let settings_path = settings_path(project.as_deref())?;
 
     // Read existing settings or start fresh
@@ -113,7 +142,7 @@ pub fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
 }
 
 /// Remove hooks from Claude Code settings.
-pub fn uninstall(project: Option<PathBuf>) -> anyhow::Result<()> {
+fn uninstall(project: Option<PathBuf>) -> anyhow::Result<()> {
     let settings_path = settings_path(project.as_deref())?;
 
     if !settings_path.exists() {
