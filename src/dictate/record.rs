@@ -119,8 +119,11 @@ pub fn daemon(model: Option<PathBuf>, session: Option<String>) -> anyhow::Result
     // Start audio capture
     let capture = audio::start_capture()?;
 
+    // Use current working directory for relative path display
+    let cwd = std::env::current_dir().ok();
+
     // Start editor polling and file diff tracking on background threads
-    let editor_events = poll_editor_and_diffs()?;
+    let editor_events = poll_editor_and_diffs(cwd)?;
 
     // Wait for stop sentinel
     let sentinel = stop_sentinel_path();
@@ -237,7 +240,7 @@ impl EditorPollHandle {
 }
 
 /// Start background threads for editor polling and file diff tracking.
-fn poll_editor_and_diffs() -> anyhow::Result<EditorPollHandle> {
+fn poll_editor_and_diffs(cwd: Option<PathBuf>) -> anyhow::Result<EditorPollHandle> {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -246,14 +249,16 @@ fn poll_editor_and_diffs() -> anyhow::Result<EditorPollHandle> {
 
     // Editor state polling thread
     let stop_ed = Arc::clone(&stop_flag);
+    let ed_cwd = cwd.clone();
     let editor_thread = thread::spawn(move || {
         let mut events = Vec::new();
         let mut prev_files: Option<Vec<state::FileEntry>> = None;
+        let mut is_first = true;
 
         while !stop_ed.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(100));
 
-            let state = match EditorState::current(None) {
+            let state = match EditorState::current(ed_cwd.as_deref()) {
                 Ok(Some(s)) => s,
                 _ => continue,
             };
@@ -263,10 +268,17 @@ fn poll_editor_and_diffs() -> anyhow::Result<EditorPollHandle> {
                 continue;
             }
 
-            let offset_secs = start.elapsed().as_secs_f64();
-            let rendered = render_snapshot(&state);
             let files = state.files;
             prev_files = Some(files.clone());
+
+            // Suppress the initial snapshot (cursor position before user navigates)
+            if is_first {
+                is_first = false;
+                continue;
+            }
+
+            let offset_secs = start.elapsed().as_secs_f64();
+            let rendered = render_snapshot_files(&files, state.cwd.as_deref());
 
             events.push(Event::EditorSnapshot {
                 offset_secs,
@@ -280,13 +292,14 @@ fn poll_editor_and_diffs() -> anyhow::Result<EditorPollHandle> {
 
     // File diff tracking thread
     let stop_diff = Arc::clone(&stop_flag);
+    let diff_cwd = cwd;
     let diff_thread = thread::spawn(move || {
         let mut events = Vec::new();
         let mut file_contents: HashMap<PathBuf, String> = HashMap::new();
         let mut file_mtimes: HashMap<PathBuf, std::time::SystemTime> = HashMap::new();
 
         // Snapshot initial state of recently active files
-        if let Ok(Some(state)) = EditorState::current(None) {
+        if let Ok(Some(state)) = EditorState::current(diff_cwd.as_deref()) {
             for file in &state.files {
                 if let Ok(content) = fs::read_to_string(&file.path) {
                     if let Ok(meta) = fs::metadata(&file.path)
@@ -303,7 +316,7 @@ fn poll_editor_and_diffs() -> anyhow::Result<EditorPollHandle> {
             thread::sleep(Duration::from_secs(1));
 
             // Check current editor files for changes
-            let state = match EditorState::current(None) {
+            let state = match EditorState::current(diff_cwd.as_deref()) {
                 Ok(Some(s)) => s,
                 _ => continue,
             };
@@ -337,12 +350,7 @@ fn poll_editor_and_diffs() -> anyhow::Result<EditorPollHandle> {
                     let offset_secs = start.elapsed().as_secs_f64();
                     let diff = merge::unified_diff(old_content, &new_content);
                     if !diff.trim().is_empty() {
-                        let display_path = file
-                            .path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string();
+                        let display_path = relativize_path(&file.path, diff_cwd.as_deref());
                         events.push(Event::FileDiff {
                             offset_secs,
                             path: display_path,
@@ -365,20 +373,17 @@ fn poll_editor_and_diffs() -> anyhow::Result<EditorPollHandle> {
     })
 }
 
-/// Render an editor state snapshot into `RenderedFile` entries.
-fn render_snapshot(state: &EditorState) -> Vec<RenderedFile> {
+/// Render file entries into `RenderedFile` entries with relative paths.
+fn render_snapshot_files(files: &[state::FileEntry], cwd: Option<&Path>) -> Vec<RenderedFile> {
     let mut rendered = Vec::new();
 
-    for file in &state.files {
+    for file in files {
         if file.selections.is_empty() {
             continue;
         }
 
-        let Ok(payload) = view::render_json(
-            std::slice::from_ref(file),
-            state.cwd.as_deref(),
-            view::Extent::Exact,
-        ) else {
+        let Ok(payload) = view::render_json(std::slice::from_ref(file), cwd, view::Extent::Exact)
+        else {
             continue;
         };
 
@@ -401,4 +406,14 @@ fn render_snapshot(state: &EditorState) -> Vec<RenderedFile> {
     }
 
     rendered
+}
+
+/// Relativize a path against a working directory for display.
+fn relativize_path(path: &Path, cwd: Option<&Path>) -> String {
+    if let Some(base) = cwd
+        && let Ok(rel) = path.strip_prefix(base)
+    {
+        return rel.to_string_lossy().to_string();
+    }
+    path.to_string_lossy().to_string()
 }

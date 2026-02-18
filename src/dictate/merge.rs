@@ -124,6 +124,30 @@ pub fn unified_diff(_old: &str, _new: &str) -> String {
     String::new()
 }
 
+/// Clean up Whisper transcription artifacts.
+///
+/// Whisper often inserts spaces before punctuation (`I 'm`, `test .`).
+/// This collapses those into natural text.
+fn clean_whisper_text(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == ' '
+            && let Some(&next) = chars.peek()
+            && matches!(
+                next,
+                '.' | ',' | ';' | ':' | '!' | '?' | '\'' | '"' | ')' | ']' | '}' | '%'
+            )
+        {
+            continue;
+        }
+        out.push(ch);
+    }
+
+    out
+}
+
 /// Merge all events chronologically and format as markdown.
 ///
 /// The output interleaves prose text with fenced code/diff blocks:
@@ -149,7 +173,7 @@ pub fn format_markdown(events: &mut [Event]) -> String {
                 if in_prose {
                     out.push(' ');
                 }
-                out.push_str(text);
+                out.push_str(&clean_whisper_text(text));
                 in_prose = true;
             }
             Event::EditorSnapshot { rendered, .. } => {
@@ -452,5 +476,48 @@ I just changed this
         let md = format_markdown(&mut events);
         // Should still end with closing fence + newline
         assert!(md.ends_with("no trailing newline\n```\n"));
+    }
+
+    #[test]
+    fn clean_whisper_space_before_period() {
+        assert_eq!(clean_whisper_text("test ."), "test.");
+    }
+
+    #[test]
+    fn clean_whisper_contraction() {
+        assert_eq!(clean_whisper_text("I 'm going"), "I'm going");
+    }
+
+    #[test]
+    fn clean_whisper_comma() {
+        assert_eq!(clean_whisper_text("Now , let"), "Now, let");
+    }
+
+    #[test]
+    fn clean_whisper_multiple() {
+        assert_eq!(
+            clean_whisper_text("Hello , I 'm here . Great !"),
+            "Hello, I'm here. Great!"
+        );
+    }
+
+    #[test]
+    fn clean_whisper_no_change() {
+        assert_eq!(clean_whisper_text("no changes here"), "no changes here");
+    }
+
+    #[test]
+    fn clean_whisper_preserves_spaces() {
+        assert_eq!(clean_whisper_text("a b c"), "a b c");
+    }
+
+    #[test]
+    fn whisper_cleanup_in_format() {
+        let mut events = vec![Event::Words {
+            offset_secs: 0.0,
+            text: "I 'm going to fix this .".to_string(),
+        }];
+        let md = format_markdown(&mut events);
+        assert_eq!(md, "I'm going to fix this.\n");
     }
 }
