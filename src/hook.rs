@@ -4,13 +4,18 @@ use std::path::PathBuf;
 
 use crate::state;
 
-/// Return the platform cache directory for session deduplication files.
+/// Return the platform cache directory.
 fn cache_dir() -> Option<PathBuf> {
     Some(dirs::cache_dir()?.join("attend"))
 }
 
-/// Return the cache file path for a given session ID.
-fn cache_path(session_id: &str) -> Option<PathBuf> {
+/// Shared cache: tracks latest editor state across all sessions for recency ordering.
+fn shared_cache_path() -> Option<PathBuf> {
+    Some(cache_dir()?.join("latest.json"))
+}
+
+/// Per-session cache: tracks what was last emitted to a given session for deduplication.
+fn session_cache_path(session_id: &str) -> Option<PathBuf> {
     Some(cache_dir()?.join(format!("cache-{session_id}.json")))
 }
 
@@ -29,9 +34,9 @@ pub fn session_start() -> anyhow::Result<()> {
         .and_then(|v| v.get("session_id"))
         .and_then(|v| v.as_str());
 
-    // Delete cache file
+    // Delete session cache file
     if let Some(sid) = session_id
-        && let Some(cp) = cache_path(sid)
+        && let Some(cp) = session_cache_path(sid)
     {
         let _ = fs::remove_file(cp);
     }
@@ -58,31 +63,43 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
         .or(stdin_cwd)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-    let previous = session_id
-        .and_then(cache_path)
+    // Shared cache: latest state across all sessions, used for recency ordering.
+    let shared_previous = shared_cache_path()
         .and_then(|cp| fs::read_to_string(&cp).ok())
         .and_then(|s| serde_json::from_str::<state::EditorState>(&s).ok());
 
-    let state = match state::EditorState::current(Some(&cwd), previous.as_ref())? {
+    // Per-session cache: what this session last saw, used for deduplication.
+    let session_previous = session_id
+        .and_then(session_cache_path)
+        .and_then(|cp| fs::read_to_string(&cp).ok())
+        .and_then(|s| serde_json::from_str::<state::EditorState>(&s).ok());
+
+    let state = match state::EditorState::current(Some(&cwd), shared_previous.as_ref())? {
         Some(s) => s,
         None => return Ok(()),
     };
 
-    // If unchanged from cache, suppress output
-    if previous.as_ref() == Some(&state) {
-        return Ok(());
-    }
-
-    // Write cache and emit
-    if let Some(sid) = session_id
-        && let Some(cp) = cache_path(sid)
-    {
+    // Always update shared cache so other sessions benefit from fresh ordering.
+    if let Some(cp) = shared_cache_path() {
         if let Some(parent) = cp.parent() {
             let _ = fs::create_dir_all(parent);
         }
         if let Ok(file) = fs::File::create(&cp) {
             let _ = serde_json::to_writer(io::BufWriter::new(file), &state);
         }
+    }
+
+    // If this session already saw this exact state, suppress output.
+    if session_previous.as_ref() == Some(&state) {
+        return Ok(());
+    }
+
+    // Update session cache and emit.
+    if let Some(sid) = session_id
+        && let Some(cp) = session_cache_path(sid)
+        && let Ok(file) = fs::File::create(&cp)
+    {
+        let _ = serde_json::to_writer(io::BufWriter::new(file), &state);
     }
 
     println!("<editor-context>\n{state}\n</editor-context>");
