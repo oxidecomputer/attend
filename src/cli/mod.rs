@@ -6,7 +6,7 @@ pub use hook::Hook;
 
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 
 /// Top-level CLI definition.
 #[derive(Parser)]
@@ -87,6 +87,11 @@ pub enum Command {
     /// Voice-driven prompt composition.
     #[command(subcommand)]
     Dictate(DictateCommand),
+    /// Generate shell completions and print to stdout.
+    Completions {
+        /// Shell to generate completions for.
+        shell: clap_complete::Shell,
+    },
     /// Show file content at editor selections.
     View {
         /// Resolve paths relative to this directory and show relative paths.
@@ -154,6 +159,15 @@ impl Command {
     /// Execute a subcommand.
     pub fn run(self, cwd: Option<PathBuf>) -> anyhow::Result<()> {
         match self {
+            Command::Completions { shell } => {
+                clap_complete::generate(
+                    shell,
+                    &mut Cli::command(),
+                    "attend",
+                    &mut std::io::stdout(),
+                );
+                Ok(())
+            }
             Command::Watch(watch) => crate::watch::run(&watch, cwd.as_deref()),
             Command::Dictate(cmd) => cmd.run(),
             Command::Hook(hook) => {
