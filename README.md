@@ -2,31 +2,31 @@
 
 Attention is all you need, after all.
 
-When you're working with an AI coding agent in your terminal, there's a gap: the
-agent can see your files, but it can't see what *you're* doing: which file
-you're reading, where your cursor is, what you've selected. You end up
-copy-pasting code snippets, typing out line numbers, or vaguely describing
-context the agent would already have if it could see what you do.
+When you're "pair programming" with an AI coding agent in your terminal, there's
+a gap: the agent can see your files, but it can't see what *you're* doing. Instead,
+you have to tell it! You end up copy-pasting code snippets, typing out line numbers,
+or vaguely describing context the agent would already have if it could see what you
+do and hear you chat about it.
 
-You can stop doing all that with `attend`.
+Using `attend` lets your coding agent hear your voice and see what you're doing,
+almost as if you were screen-sharing on a voice call with a human collaborator.
 
-## The experience
+Speak your thoughts while navigating code, and `attend` transcribes and delivers
+them as prompts. You can highlight code, flip between files, and narrate what you
+want done, without leaving your editor or switching to a chat window. The agent
+receives your words interleaved with what you were looking at, highlighting,
+or typing (though, caveat, it can only see your changes once you save a file).
 
-The star feature of `attend` is **interleaved voice narration**: speak your
-thoughts while navigating code, and `attend` transcribes and delivers them as
-prompts. You can highlight code, flip between files, and narrate what you want
-done — all without leaving your editor or switching to a chat window. The agent
-receives your words interleaved with what you were looking at and what you
-changed, giving it the full picture.
+Even when you're not actively narrating, `attend` queries your editor for changes
+in visible files, cursor positions, and selections, then injects that context into
+the conversation, so your coding agent knows what's in front of you.
 
-Even when you're not narrating, `attend` queries your editor for changes in
-visible files, cursor positions, and selections, then injects that context into
-the conversation, so your coding agent knows where you're at.
+Personally, I've found "pair programming" using `attend`'s voice narration is
+a rather different experience from typing my thoughts to a coding agent. There's
+something very specific about *saying what I mean out loud* that forces me to
+slow down and consider more deeply.
 
-Personally, I've found "pair programming" using `attend` is a rather different
-experience from typing my thoughts to a coding agent. There's something very
-specific about *saying what you mean out loud* that forces me to slow down and
-consider more deeply. I invite you to see if you feel the same way.
+I invite you to see if you feel the same way.
 
 ## Supported editors and agents
 
@@ -54,8 +54,8 @@ Claude Code, plus keybindings to toggle voice narration from within Zed.
 
 ### Editor hotkeys
 
-By default, this installs two keybindings in Zed (if those aren't already
-bound), as well as two named tasks they trigger:
+By default, `attend install --editor zed` installs two keybindings in Zed (if
+those aren't already bound), as well as two named tasks they trigger:
 
 - `⌘ :` starts narration. Pressing it again sends narration to the agent and
   keeps recording.
@@ -67,22 +67,28 @@ hooks from `attend` will respect your preferences. To manually assign key
 bindings, bind the tasks "attend: toggle narration" and "attend: start
 narration".
 
-### Agent commands
+Alternatively, if you use a hotkey manager that can assgn commands to keys, you
+can bind *global* hotkeys to `attend narrate start` and `attend narrate toggle`.
 
-In order for the agent to receive narration, you need to manually start it
-listening. In Claude Code, this is done with the `/attend` slash-command. If you
-use multiple Claude Code sessions, you can move narration from one session to
-another by invoking `/attend` in whichever session you'd like to switch to.
+### Agent integration
+
+In order for the agent to receive your narration, you need to manually start it
+listening.
+
+In Claude Code, this is done with the `/attend` slash-command. If you use multiple
+Claude Code sessions, you can move narration from one session to another by invoking
+`/attend` in whichever session you'd like to switch to.
 
 Insofar as the agent doesn't ask for keyboard input (i.e. by presenting a plan,
 asking a multiple choice question, or requesting permission to do an action),
 you need never leave your focused editor, because you can narrate your responses
 while you're in the codebase.
 
-Note that the agent only sees editor context (cursors, selections, file contents,
-diffs) from within its own working directory. If you navigate to files elsewhere
-in your editor, the agent won't be able to follow along. You can expand this
-with `include_dirs` in the config file (see [Configuration](#configuration)).
+As a security precaution, the agent only sees editor context (cursors, selections,
+file contents, diffs) from within its own working directory. If you navigate to
+files elsewhere in your editor, the agent won't be able to follow along. You can
+expand this with `include_dirs` in the config file
+(see [Configuration](#configuration)).
 
 ### Troubleshooting
 
@@ -92,9 +98,9 @@ whether the editor integration is healthy, and whether any narration is pending.
 
 ### Transcription model
 
-Narration uses a local speech-to-text model: no audio leaves your machine. The
-first time you start recording, the model is automatically downloaded from
-Hugging Face and cached in `~/.cache/attend/models/`.
+Narration uses a local speech-to-text model: no audio leaves your machine. By
+default, the first time you start recording, the model is automatically downloaded
+from [Hugging Face](https://huggingface.co/models) and cached locally.
 
 Two engines are available:
 
@@ -140,7 +146,9 @@ uninstall only the integrations for that.
 These let you inspect your editor state directly from the terminal. Useful for
 debugging, demos, and understanding what attend sees.
 
-**`attend glance`**: print the current editor state (paths + positions):
+#### `attend glance`
+
+Print the current editor state (visible files + positions):
 
 ```bash
 $ attend glance
@@ -152,10 +160,18 @@ Each line is a file path followed by comma-separated positions. A position is
 `line:col` (cursor) or `line:col-line:col` (selection). Add `--watch` for a
 live-updating view, or `--format json` for structured output.
 
-**`attend look`**: show file content at cursor/selection positions:
+#### `attend look`
+
+Show file content with given cursors/selections applied:
 
 ```bash
 $ attend look src/foo.rs 5:12 19:40-24:6 src/bar.rs 10:1
+```
+
+Or show file content currently selected:
+
+```bash
+attend look
 ```
 
 Reads files from disk and prints content at the given positions. When writing to
@@ -172,24 +188,55 @@ Input can also come from stdin with `-`:
 attend glance | attend look -
 ```
 
-**`attend meditate`**: run as a background daemon that continuously updates the
-editor state cache without producing output. If you are not using narration,
-running this in the background mildly improves the accuracy of the editor
-context provided to your agent at every turn, because it keeps a more precise
-tally of which cursor or selection was most recently used by you.
+**Caveat**: Because `attend look` reads the live editor selection state, but
+shows file contents from disk, results from unsaved files may not be accurate.
 
-### Agent integration
 
-These are the commands that make the pair programming experience work. You
-typically don't run them directly — they're invoked by hooks or keybindings.
+#### `attend meditate`
+
+Run as a background daemon that continuously updates the editor state cache
+without producing output.
+
+If you are not using narration, running this in the background mildly improves 
+the accuracy of the editor context provided to your agent at every turn, because
+it maintains a more precise ordering of which cursors or selections you most
+recently touched. This is only relevant in the case of multiple editor panes,
+selections, or cursors.
+
+### Janitorial commands
+
+#### `attend narrate status`
+
+Show narration system status, including a report of any problems that are detected.
+
+#### `attend narrate clean`
+
+In case of problems in the agent harness, you don't want to lose your narration and
+have to say it all over again! That's why `attend` maintains an archive of all your
+narrations. Until cleaned, they persist indefinitely.
+
+You can remove old archived narration files using this command, which defaults to
+cleaning everything older than 7 days.
+
+### Editor integration
+
+You'll have the best experience if you bind some of these to hotkeys, either
+accessible through your editor, or globally. Manually running them in your
+terminal is possible, but takes you out of the flow.
 
 | Command | Purpose |
 |---------|---------|
 | `attend narrate start` | Start narration, or send current narration and keep recording |
-| `attend narrate stop` | Stop narration |
 | `attend narrate toggle` | Start or stop narration |
-| `attend narrate status` | Show recording and system status |
-| `attend narrate clean` | Remove old archived narration files |
+| `attend narrate stop` | Stop narration |
+
+### Agent integration
+
+These are the commands that make the pair programming experience work. You
+typically don't run them directly: your coding agent does.
+
+| Command | Purpose |
+|---------|---------|
 | `attend hook --agent claude <event>` | Run a hook event (session-start, user-prompt, stop) |
 | `attend listen` | Wait for narration and deliver it to the agent |
 | `attend listen --check` | Check for pending narration without waiting |
