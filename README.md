@@ -15,12 +15,12 @@ Once installed, `attend` runs as a hook inside your coding agent. Before each
 prompt, it queries your editor for changes in visible files, cursor positions,
 and selections, then injects that context into the conversation.
 
-On top of that, `attend` supports **voice narration**: speak your thoughts while
-navigating code, and `attend` transcribes and delivers them as prompts. You can
-highlight code, flip between files, and narrate what you want done — all without
-leaving your editor or switching to a chat window. The agent receives your words
-interleaved with what you were looking at and what you changed, giving it the
-full picture.
+The star feature of `attend` is **interleaved voice narration**: speak your
+thoughts while navigating code, and `attend` transcribes and delivers them as
+prompts. You can highlight code, flip between files, and narrate what you want
+done — all without leaving your editor or switching to a chat window. The agent
+receives your words interleaved with what you were looking at and what you
+changed, giving it the full picture.
 
 Personally, I've found "pair programming" using `attend` is a rather different
 experience from typing my thoughts to a coding agent. There's something very
