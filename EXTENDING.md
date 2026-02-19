@@ -5,30 +5,58 @@ This document explains how to add support for a new editor or a new AI agent.
 ## Architecture overview
 
 ```
-editor/        Reads state from editor backends (Zed, etc.)
-  mod.rs         Merges results from all backends into QueryResult
-  zed.rs         Zed-specific queries (SQLite)
+cli/             CLI definition (clap): verb-based subcommands
+  mod.rs           Command enum, dispatch
+  hook.rs          HookEvent subcommands with --agent flag
+  narrate.rs       NarrateCommand subcommands
 
-agent/         Hook install/uninstall for each agent
-  mod.rs         Agent trait, HookEvent enum, backend registry
-  claude.rs      Claude Code settings.json manipulation
+editor/          Reads state from editor backends (Zed, etc.)
+  mod.rs           Editor trait, merges results from all backends into QueryResult
+  zed.rs           Zed-specific queries (SQLite), narration task/keybinding install
 
-cli/           CLI definition (clap): verb-based subcommands
-  mod.rs         Command enum, dispatch
-  hook.rs        HookEvent subcommands with --agent flag
-  narrate.rs     NarrateCommand subcommands
+agent/           Hook install/uninstall for each agent
+  mod.rs           Agent trait, HookEvent enum, backend registry
+  claude.rs        Claude Code settings.json manipulation
 
-hook.rs        Hook runner: caching, change detection, output formatting
+hook.rs          Hook runner: session lifecycle, caching, change detection, output
+hook/
+  tests.rs         Tests for hook decision logic
 
-state.rs       Resolves raw byte offsets to line:col, reorders by recency
+state.rs         Cache directory management, atomic writes, listening-session tracking
 state/
-  resolve.rs   Offset-to-position conversion, path relativization
+  resolve.rs       Offset-to-position conversion, EditorState / FileEntry types
+
+narrate/         Voice narration: recording, transcription, merge, delivery
+  mod.rs           Shared paths, process utilities, bench harness
+  record.rs        Recording daemon (audio + editor snapshots + file diffs)
+  audio.rs         Microphone capture and resampling (cpal, rubato)
+  merge.rs         Chronological interleave of speech, code, and diffs → Markdown
+  receive.rs       Collect pending narration files and deliver to agent
+  transcribe/
+    mod.rs           Transcriber trait, Engine enum (Whisper, Parakeet)
+    whisper.rs       Whisper backend (GGML)
+    parakeet.rs      Parakeet TDT backend (ONNX)
+
+view/            Renders file content with inline cursor/selection markers
+  mod.rs           Extent enum, ANSI/Unicode rendering, TTY detection
+  annotate.rs      Groups overlapping selections, inserts ❘ and ⟦⟧ markers
+  parse.rs         Parses compact "path line:col" format into FileEntry list
+
+config.rs        Hierarchical TOML config (global + per-project), engine/model selection
+json.rs          Timestamped<T> wrapper, CompactFile serialization, UTC helpers
+watch.rs         Continuous polling loop with signal handling (SIGINT, SIGWINCH)
 ```
 
-Data flows in one direction:
+Data flows in one direction for editor context:
 
 ```
 editor backend  →  editor::query()  →  EditorState::build()  →  hook / CLI output
+```
+
+Narration has its own pipeline:
+
+```
+audio + editor + diffs  →  record daemon  →  transcribe  →  merge  →  receive / deliver
 ```
 
 ## Adding a new editor
