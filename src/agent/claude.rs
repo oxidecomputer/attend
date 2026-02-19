@@ -246,25 +246,7 @@ fn install_skill_file(bin_cmd: &str, project: Option<&Path>) -> anyhow::Result<(
     let skill_dir = base.join(".claude/skills/attend");
     fs::create_dir_all(&skill_dir)?;
 
-    let skill_content = format!(
-        "\
----
-name: attend
-description: Activate dictation mode for this session
-allowedTools:
-  - Bash({bin_cmd} dictate receive:*)
----
-Activate dictation mode: run `{bin_cmd} dictate receive --wait` in the
-background (Bash with `run_in_background: true`). Do nothing else.
-
-Dictation input arrives through two paths:
-- **Stop hook** (non-blocking): delivers pending dictation when you stop.
-  No action needed — the hook handles this automatically.
-- **Background receiver** (blocking): polls until dictation arrives, then
-  prints it and exits. When this background task completes, immediately
-  start a new one so you are always listening for the next dictation.
-"
-    );
+    let skill_content = format!(include_str!("claude_skill.md"), bin_cmd = bin_cmd);
 
     fs::write(skill_dir.join("SKILL.md"), skill_content)?;
     Ok(())
