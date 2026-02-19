@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use super::*;
-use crate::dictate::merge::{Event, RenderedFile};
+use crate::narrate::merge::{Event, RenderedFile};
 
 #[test]
 fn collect_pending_empty_dir() {
@@ -28,8 +28,8 @@ fn read_pending_single_json() {
     let cwd = Path::new("/project");
     let result = read_pending(&[path], cwd, &[]).unwrap();
     assert!(result.contains("hello world"));
-    assert!(result.starts_with("<dictation>"));
-    assert!(result.ends_with("</dictation>"));
+    assert!(result.starts_with("<narration>"));
+    assert!(result.ends_with("</narration>"));
 }
 
 #[test]
@@ -157,7 +157,7 @@ fn relativize_events_strips_prefix() {
 }
 
 #[test]
-fn dictation_tags_wrapping() {
+fn narration_tags_wrapping() {
     let dir = tempfile::tempdir().unwrap();
     let events = vec![Event::Words {
         offset_secs: 0.0,
@@ -168,8 +168,8 @@ fn dictation_tags_wrapping() {
 
     let cwd = Path::new("/project");
     let result = read_pending(&[path], cwd, &[]).unwrap();
-    assert!(result.starts_with("<dictation>\n"));
-    assert!(result.ends_with("\n</dictation>"));
+    assert!(result.starts_with("<narration>\n"));
+    assert!(result.ends_with("\n</narration>"));
     assert!(result.contains("test message"));
 }
 
@@ -197,7 +197,7 @@ fn collect_read_archive_round_trip() {
     let base = tempfile::tempdir().unwrap();
     let session_id = "int-test-session";
 
-    // Set up a pending directory with two dictation files.
+    // Set up a pending directory with two narration files.
     let pending = base.path().join("pending").join(session_id);
     fs::create_dir_all(&pending).unwrap();
 
@@ -219,7 +219,7 @@ fn collect_read_archive_round_trip() {
     let files = collect_pending_from(&pending);
     assert_eq!(files.len(), 2);
 
-    // Read should merge into a single dictation block.
+    // Read should merge into a single narration block.
     let cwd = Path::new("/project");
     let content = read_pending(&files, cwd, &[]).unwrap();
     assert!(content.contains("first dictation"));

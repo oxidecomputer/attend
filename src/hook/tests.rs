@@ -38,11 +38,11 @@ fn stop_session_moved_says_no_restart() {
 }
 
 #[test]
-fn stop_active_with_pending_dictation() {
+fn stop_active_with_pending_narration() {
     let d = stop_decision(
         Some("abc"),
         Some("abc"),
-        Some("<dictation>hello</dictation>".into()),
+        Some("<narration>hello</narration>".into()),
         false,
         false,
     );
@@ -54,7 +54,7 @@ fn stop_active_pending_takes_priority_over_receiver() {
     let d = stop_decision(
         Some("abc"),
         Some("abc"),
-        Some("<dictation>hello</dictation>".into()),
+        Some("<narration>hello</narration>".into()),
         true,
         false,
     );
@@ -63,11 +63,11 @@ fn stop_active_pending_takes_priority_over_receiver() {
 
 #[test]
 fn stop_active_pending_takes_priority_over_reentry() {
-    // Even on re-invocation, pending dictation must be delivered.
+    // Even on re-invocation, pending narration must be delivered.
     let d = stop_decision(
         Some("abc"),
         Some("abc"),
-        Some("<dictation>hello</dictation>".into()),
+        Some("<narration>hello</narration>".into()),
         false,
         true,
     );
@@ -83,7 +83,7 @@ fn stop_active_receiver_alive_no_pending() {
 #[test]
 fn stop_active_no_receiver_no_pending() {
     let d = stop_decision(Some("abc"), Some("abc"), None, false, false);
-    assert!(matches!(d, StopDecision::Block { reason } if reason.contains("receive --wait")));
+    assert!(matches!(d, StopDecision::Block { reason } if reason.contains("listen")));
 }
 
 #[test]

@@ -80,8 +80,8 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
         .context("settings is not an object")?;
 
     // Build hook commands
-    let session_start_cmd = format!("{bin_cmd} hook run claude session-start");
-    let prompt_cmd = format!("{bin_cmd} hook run claude user-prompt");
+    let session_start_cmd = format!("{bin_cmd} hook --agent claude session-start");
+    let prompt_cmd = format!("{bin_cmd} hook --agent claude user-prompt");
 
     // Build the hooks structure
     let hooks = obj.entry("hooks").or_insert_with(|| serde_json::json!({}));
@@ -134,9 +134,9 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
     existing = existing || before > ups_vec.len();
     ups_vec.push(prompt_hook);
 
-    // Stop hook (dictation delivery)
+    // Stop hook (narration delivery)
     {
-        let stop_cmd = format!("{bin_cmd} hook run claude stop");
+        let stop_cmd = format!("{bin_cmd} hook --agent claude stop");
         let stop_hook = serde_json::json!({
             "hooks": [
                 {
@@ -158,7 +158,7 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
         stop_vec.push(stop_hook);
     }
 
-    // Pre-authorize `attend view` so Claude doesn't prompt for every view call.
+    // Pre-authorize `attend look` so Claude doesn't prompt for every look call.
     {
         let permissions = obj
             .entry("permissions")
@@ -173,14 +173,14 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
             .as_array_mut()
             .context("permissions.allow is not an array")?;
 
-        let view_pattern = format!("Bash({bin_cmd} view:*)");
-        // Remove stale attend view entries, then add current
+        let look_pattern = format!("Bash({bin_cmd} look:*)");
+        // Remove stale attend look/view entries, then add current
         allow_vec.retain(|v| {
             v.as_str()
-                .map(|s| !s.contains("attend") || !s.contains("view"))
+                .map(|s| !s.contains("attend") || (!s.contains("look") && !s.contains("view")))
                 .unwrap_or(true)
         });
-        allow_vec.push(serde_json::Value::String(view_pattern));
+        allow_vec.push(serde_json::Value::String(look_pattern));
     }
 
     // Write back
@@ -237,7 +237,7 @@ fn uninstall(project: Option<PathBuf>) -> anyhow::Result<()> {
         }
     }
 
-    // Remove attend view permission
+    // Remove attend look/view permission
     if let Some(perms) = settings
         .get_mut("permissions")
         .and_then(|p| p.as_object_mut())
@@ -246,7 +246,7 @@ fn uninstall(project: Option<PathBuf>) -> anyhow::Result<()> {
         let before = allow.len();
         allow.retain(|v| {
             v.as_str()
-                .map(|s| !s.contains("attend") || !s.contains("view"))
+                .map(|s| !s.contains("attend") || (!s.contains("look") && !s.contains("view")))
                 .unwrap_or(true)
         });
         if allow.len() < before {

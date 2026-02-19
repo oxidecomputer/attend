@@ -18,8 +18,8 @@ fn read_stdin_json() -> Option<serde_json::Value> {
 
 /// Handle the `SessionStart` hook: clear cache and emit format instructions.
 ///
-/// On compact/clear, if this session is actively listening for dictation,
-/// re-emit the dictation skill instructions so the agent knows to restart
+/// On compact/clear, if this session is actively listening for narration,
+/// re-emit the narration skill instructions so the agent knows to restart
 /// its background receiver.
 ///
 /// Also checks whether the running binary version matches the version that
@@ -49,13 +49,13 @@ pub fn session_start() -> anyhow::Result<()> {
     // Emit instructions (templated with the binary path)
     print!(include_str!("instructions.txt"), bin_cmd = bin);
 
-    // If this session is actively listening for dictation, re-emit the
-    // dictation skill instructions so the agent restarts its background
+    // If this session is actively listening for narration, re-emit the
+    // narration skill instructions so the agent restarts its background
     // receiver after context compaction or clear.
     if let Some(sid) = session_id
         && state::listening_session().as_deref() == Some(sid)
     {
-        print!("{}", dictation_instructions(&bin));
+        print!("{}", narration_instructions(&bin));
     }
 
     Ok(())
@@ -63,7 +63,7 @@ pub fn session_start() -> anyhow::Result<()> {
 
 /// Handle the `UserPromptSubmit` hook: emit editor context if changed.
 ///
-/// When the prompt is `/attend`, activates dictation mode instead of
+/// When the prompt is `/attend`, activates narration mode instead of
 /// emitting editor context.
 pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
     let stdin_json = read_stdin_json();
@@ -128,7 +128,7 @@ enum StopDecision {
     Silent,
     /// Approve with informational reason (e.g. session moved).
     Approve { reason: String },
-    /// Block the stop with a reason (dictation content or guidance).
+    /// Block the stop with a reason (narration content or guidance).
     Block { reason: String },
 }
 
@@ -148,14 +148,14 @@ fn stop_decision(
     stop_hook_active: bool,
 ) -> StopDecision {
     match (listening_session, hook_session_id) {
-        // We are the active listening session — check for dictation.
+        // We are the active listening session — check for narration.
         (Some(listening_sid), Some(hook_sid)) if listening_sid == hook_sid => {}
-        // Dictation is active in a different session — inform Claude.
+        // Narration is active in a different session — inform Claude.
         (Some(_), Some(_)) => {
             return StopDecision::Approve {
-                reason: "Dictation has moved to a session with another agent. \
+                reason: "Narration has moved to a session with another agent. \
                     Do not restart the background receiver. \
-                    If the user wants dictation in this session, they will type /attend."
+                    If the user wants narration in this session, they will type /attend."
                     .to_string(),
             };
         }
@@ -163,13 +163,13 @@ fn stop_decision(
         _ => return StopDecision::Silent,
     }
 
-    // We are the active session. Pending dictation always takes priority —
+    // We are the active session. Pending narration always takes priority —
     // deliver it regardless of stop_hook_active.
     if let Some(content) = pending_content {
         return StopDecision::Block { reason: content };
     }
 
-    // No dictation. If a receiver is running, it will handle future delivery.
+    // No narration. If a receiver is running, it will handle future delivery.
     if receiver_alive {
         return StopDecision::Silent;
     }
@@ -182,13 +182,11 @@ fn stop_decision(
 
     // First attempt, no receiver — ask the agent to start one.
     StopDecision::Block {
-        reason:
-            "Run `attend dictate receive --wait` in the background to wait for the next dictation."
-                .to_string(),
+        reason: "Run `attend listen` in the background to wait for the next narration.".to_string(),
     }
 }
 
-/// Handle the `Stop` hook: deliver pending dictation when the session stops.
+/// Handle the `Stop` hook: deliver pending narration when the session stops.
 pub fn stop() -> anyhow::Result<()> {
     let stdin_json = read_stdin_json();
 
@@ -200,7 +198,7 @@ pub fn stop() -> anyhow::Result<()> {
 
     let listening = state::listening_session();
 
-    // Resolve pending dictation content (only if we're the active session).
+    // Resolve pending narration content (only if we're the active session).
     let is_active = matches!(
         (&listening, &hook_session_id),
         (Some(l), Some(h)) if l == h
@@ -215,8 +213,8 @@ pub fn stop() -> anyhow::Result<()> {
             .map(PathBuf::from)
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         let config = crate::config::Config::load(&cwd);
-        let files = crate::dictate::receive::collect_pending(session_id);
-        let content = crate::dictate::receive::read_pending(&files, &cwd, &config.include_dirs);
+        let files = crate::narrate::receive::collect_pending(session_id);
+        let content = crate::narrate::receive::read_pending(&files, &cwd, &config.include_dirs);
         (content, files)
     } else {
         (None, Vec::new())
@@ -242,11 +240,11 @@ pub fn stop() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string(&response)?);
         }
         StopDecision::Block { reason } => {
-            // Archive pending files if we blocked with dictation content.
+            // Archive pending files if we blocked with narration content.
             if !pending_files.is_empty()
                 && let Some(sid) = listening.as_deref()
             {
-                crate::dictate::receive::archive_pending(&pending_files, sid);
+                crate::narrate::receive::archive_pending(&pending_files, sid);
             }
             let response = serde_json::json!({ "decision": "block", "reason": reason });
             println!("{}", serde_json::to_string(&response)?);
@@ -258,26 +256,26 @@ pub fn stop() -> anyhow::Result<()> {
 
 /// Check whether a background `receive --wait` process is alive.
 fn receiver_alive() -> bool {
-    let lock_path = crate::dictate::receive_lock_path();
+    let lock_path = crate::narrate::receive_lock_path();
     let Ok(content) = fs::read_to_string(&lock_path) else {
         return false;
     };
     let Ok(pid) = content.trim().parse::<i32>() else {
         return false;
     };
-    crate::dictate::process_alive(pid)
+    crate::narrate::process_alive(pid)
 }
 
-/// Build dictation skill instructions for re-emission after context compaction.
+/// Build narration skill instructions for re-emission after context compaction.
 ///
 /// Uses `claude_skill_body.md` — the same body as the installed SKILL.md,
 /// so the instructions stay consistent with the skill template.
-fn dictation_instructions(bin_cmd: &str) -> String {
+fn narration_instructions(bin_cmd: &str) -> String {
     let body = format!(
         include_str!("agent/claude_skill_body.md"),
         bin_cmd = bin_cmd
     );
-    format!("\n<dictation-instructions>\n{body}</dictation-instructions>\n")
+    format!("\n<narration-instructions>\n{body}</narration-instructions>\n")
 }
 
 /// Check if the user prompt is `/attend`.
@@ -287,7 +285,7 @@ fn is_attend_prompt(json: &serde_json::Value) -> bool {
         .is_some_and(|p| p.trim() == "/attend")
 }
 
-/// Activate dictation mode for this session.
+/// Activate narration mode for this session.
 fn handle_attend_activate(json: &serde_json::Value) -> anyhow::Result<()> {
     let session_id = json
         .get("session_id")
@@ -306,9 +304,9 @@ fn handle_attend_activate(json: &serde_json::Value) -> anyhow::Result<()> {
     })?;
 
     let response = serde_json::json!({
-        "additionalContext": "Dictation mode activated for this session. \
+        "additionalContext": "Narration mode activated for this session. \
             Listening for voice input.\n\n\
-            Run `attend dictate receive --wait` in the background to wait for dictation."
+            Run `attend listen` in the background to wait for narration."
     });
     println!("{}", serde_json::to_string(&response)?);
     Ok(())
@@ -346,7 +344,7 @@ fn auto_upgrade_hooks() {
     }
     for name in &meta.editors {
         if let Some(ed) = crate::editor::editor_by_name(name)
-            && let Err(e) = ed.install_dictation(&bin_cmd)
+            && let Err(e) = ed.install_narration(&bin_cmd)
         {
             tracing::warn!(editor = name, "Auto-upgrade failed for editor: {e}");
         }

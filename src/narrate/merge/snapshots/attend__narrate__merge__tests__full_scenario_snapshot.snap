@@ -1,5 +1,5 @@
 ---
-source: src/dictate/merge/tests.rs
+source: src/narrate/merge/tests.rs
 expression: md
 ---
 Please look at this function

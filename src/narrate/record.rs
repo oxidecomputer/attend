@@ -3,7 +3,7 @@
 //! The recorder spawns as a detached child process via `_record-daemon`.
 //! The parent (toggle/start) exits immediately so the hotkey returns fast.
 //! The daemon records until a stop sentinel file appears, then transcribes,
-//! merges all streams, and writes the result as a pending dictation file.
+//! merges all streams, and writes the result as a pending narration file.
 
 use std::collections::HashMap;
 use std::fs;
@@ -67,14 +67,14 @@ pub fn start(
 ) -> anyhow::Result<()> {
     if record_lock_path().exists() {
         eprintln!(
-            "Already recording. Run `attend dictate stop` first, or `attend dictate toggle` to stop and restart."
+            "Already recording. Run `attend narrate stop` first, or `attend narrate toggle` to stop and restart."
         );
         return Ok(());
     }
 
     let exe = std::env::current_exe()?;
     let mut cmd = std::process::Command::new(exe);
-    cmd.arg("dictate").arg("_record-daemon");
+    cmd.arg("narrate").arg("_record-daemon");
 
     // Forward engine selection to daemon
     let engine_str = match engine {
@@ -122,7 +122,7 @@ pub fn start(
 /// If not recording (no lock), this is a no-op.
 pub fn stop() -> anyhow::Result<()> {
     if !record_lock_path().exists() {
-        eprintln!("Not recording. Run `attend dictate toggle` or `attend dictate start` to begin.");
+        eprintln!("Not recording. Run `attend narrate toggle` or `attend narrate start` to begin.");
         return Ok(());
     }
 
@@ -144,7 +144,7 @@ pub fn stop() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Flush: submit current dictation and keep recording.
+/// Flush: submit current narration and keep recording.
 ///
 /// If not recording (no lock), starts recording (like toggle).
 /// If recording, creates the flush sentinel and waits for the daemon to
@@ -336,11 +336,11 @@ fn transcribe_and_write(
         fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{ts}.json"));
         fs::write(&path, &json)?;
-        tracing::info!(path = %path.display(), "Dictation written");
+        tracing::info!(path = %path.display(), "Narration written");
     } else {
-        let path = cache_dir().join("dictation.json");
+        let path = cache_dir().join("narration.json");
         fs::write(&path, &json)?;
-        tracing::info!(path = %path.display(), "Dictation written");
+        tracing::info!(path = %path.display(), "Narration written");
     }
 
     Ok(())

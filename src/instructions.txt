@@ -18,12 +18,12 @@ Files, cursors, and selections are ordered by recency: recently changed items
 appear first. You can use this to guess which file/cursor/selection a user is
 verbally referring to, if ambiguous.
 
-To see file content at cursor/selection positions, run `{bin_cmd} view [path
+To see file content at cursor/selection positions, run `{bin_cmd} look [path
 positions... ...]`. Do not guess content from line:col numbers alone — always
 use this command when you need to know what the user is looking at. It outputs
 each position as a header (path and selections) followed by the file content
 with ❘ marking cursors and ⟦⟧ bracketing selections. Pass multiple files and
-positions in one call: `{bin_cmd} view src/foo.rs 5:12 19:40-24:6 src/bar.rs 10:1`.
+positions in one call: `{bin_cmd} look src/foo.rs 5:12 19:40-24:6 src/bar.rs 10:1`.
 Ask for additional context using -B and -A to specify lines before or after.
 
 Editor context only includes files within the current project directory (and any

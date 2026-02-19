@@ -3,10 +3,10 @@
 mod agent;
 mod cli;
 mod config;
-mod dictate;
 mod editor;
 mod hook;
 mod json;
+mod narrate;
 mod state;
 mod view;
 mod watch;

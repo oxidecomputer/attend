@@ -39,24 +39,24 @@ impl Editor for Zed {
         }
     }
 
-    fn install_dictation(&self, bin_cmd: &str) -> anyhow::Result<()> {
-        install_task(bin_cmd, "Toggle Dictation", &["dictate", "toggle"])?;
-        install_task(bin_cmd, "Flush Dictation", &["dictate", "flush"])?;
-        install_keybinding("cmd-;", "Toggle Dictation")?;
-        install_keybinding("cmd-:", "Flush Dictation")?;
-        println!("Installed Zed dictation tasks and keybindings.");
+    fn install_narration(&self, bin_cmd: &str) -> anyhow::Result<()> {
+        install_task(bin_cmd, "Toggle Narration", &["narrate", "toggle"])?;
+        install_task(bin_cmd, "Flush Narration", &["narrate", "flush"])?;
+        install_keybinding("cmd-;", "Toggle Narration")?;
+        install_keybinding("cmd-:", "Flush Narration")?;
+        println!("Installed Zed narration tasks and keybindings.");
         Ok(())
     }
 
-    fn uninstall_dictation(&self) -> anyhow::Result<()> {
+    fn uninstall_narration(&self) -> anyhow::Result<()> {
         uninstall_task()?;
         uninstall_keybinding()?;
-        println!("Removed Zed dictation task and keybinding.");
+        println!("Removed Zed narration task and keybinding.");
         Ok(())
     }
 
-    fn check_dictation(&self) -> anyhow::Result<Vec<String>> {
-        check_dictation_health()
+    fn check_narration(&self) -> anyhow::Result<Vec<String>> {
+        check_narration_health()
     }
 }
 
@@ -108,14 +108,17 @@ fn find_db() -> Option<std::path::PathBuf> {
     with_mtime.into_iter().next().map(|(p, _)| p)
 }
 
-/// Known dictation keybindings (current + legacy).
-const DICTATION_KEYS: &[&str] = &[
+/// Known narration keybindings (current + legacy).
+const NARRATION_KEYS: &[&str] = &[
     "cmd-:", // flush (current)
     "cmd-;", // toggle (current)
 ];
 
-/// Dictation task labels.
-const DICTATION_TASK_LABELS: &[&str] = &["Toggle Dictation", "Flush Dictation"];
+/// Narration task labels.
+const NARRATION_TASK_LABELS: &[&str] = &["Toggle Narration", "Flush Narration"];
+
+/// Legacy task labels from previous versions.
+const LEGACY_TASK_LABELS: &[&str] = &["Toggle Dictation", "Flush Dictation"];
 
 /// Read a Zed JSONC config file as a JSON array, or empty vec if missing/invalid.
 fn read_jsonc_array(path: &std::path::Path) -> Vec<serde_json::Value> {
@@ -143,7 +146,7 @@ fn write_json_array(path: &std::path::Path, items: &[serde_json::Value]) -> anyh
     Ok(())
 }
 
-/// Install a Zed task definition for dictation.
+/// Install a Zed task definition for narration.
 fn install_task(bin_cmd: &str, label: &str, args: &[&str]) -> anyhow::Result<()> {
     let tasks_path = zed_config_dir()?.join("tasks.json");
     let mut tasks = read_jsonc_array(&tasks_path);
@@ -172,12 +175,16 @@ fn install_task(bin_cmd: &str, label: &str, args: &[&str]) -> anyhow::Result<()>
         tracing::warn!("Replacing stale command path: {cmd}");
     }
 
-    tasks.retain(|t| t.get("label").and_then(|l| l.as_str()) != Some(label));
+    // Remove both current and legacy labels
+    tasks.retain(|t| {
+        let l = t.get("label").and_then(|l| l.as_str());
+        l != Some(label) && !l.is_some_and(|l| LEGACY_TASK_LABELS.contains(&l))
+    });
     tasks.push(task_entry);
     write_json_array(&tasks_path, &tasks)
 }
 
-/// Remove the Zed task definitions for dictation.
+/// Remove the Zed task definitions for narration (current + legacy).
 fn uninstall_task() -> anyhow::Result<()> {
     let tasks_path = zed_config_dir()?.join("tasks.json");
     let mut tasks = read_jsonc_array(&tasks_path);
@@ -185,7 +192,8 @@ fn uninstall_task() -> anyhow::Result<()> {
     let before = tasks.len();
     tasks.retain(|t| {
         let label = t.get("label").and_then(|l| l.as_str());
-        !label.is_some_and(|l| DICTATION_TASK_LABELS.contains(&l))
+        !label
+            .is_some_and(|l| NARRATION_TASK_LABELS.contains(&l) || LEGACY_TASK_LABELS.contains(&l))
     });
 
     if tasks.len() < before {
@@ -194,13 +202,13 @@ fn uninstall_task() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Remove the Zed keybindings for dictation.
+/// Remove the Zed keybindings for narration.
 fn uninstall_keybinding() -> anyhow::Result<()> {
     let keymap_path = zed_config_dir()?.join("keymap.json");
     let mut keymap = read_jsonc_array(&keymap_path);
 
     let before = keymap.len();
-    keymap.retain(|entry| !is_dictation_keybinding(entry));
+    keymap.retain(|entry| !is_narration_keybinding(entry));
 
     if keymap.len() < before {
         write_json_array(&keymap_path, &keymap)?;
@@ -208,7 +216,7 @@ fn uninstall_keybinding() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Install a Zed keybinding for a dictation task.
+/// Install a Zed keybinding for a narration task.
 fn install_keybinding(key: &str, task_name: &str) -> anyhow::Result<()> {
     let keymap_path = zed_config_dir()?.join("keymap.json");
     let mut keymap = read_jsonc_array(&keymap_path);
@@ -231,15 +239,15 @@ fn install_keybinding(key: &str, task_name: &str) -> anyhow::Result<()> {
     write_json_array(&keymap_path, &keymap)
 }
 
-/// Check whether a keymap entry is solely our dictation keybinding.
-fn is_dictation_keybinding(entry: &serde_json::Value) -> bool {
+/// Check whether a keymap entry is solely our narration keybinding.
+fn is_narration_keybinding(entry: &serde_json::Value) -> bool {
     let Some(bindings) = entry.get("bindings").and_then(|b| b.as_object()) else {
         return false;
     };
     if bindings.len() != 1 {
         return false;
     }
-    DICTATION_KEYS.iter().any(|key| {
+    NARRATION_KEYS.iter().any(|key| {
         bindings
             .get(*key)
             .and_then(|v| v.as_array())
@@ -335,9 +343,9 @@ fn find_line_comment(line: &str) -> Option<usize> {
     None
 }
 
-/// Check health of installed Zed dictation integration.
-fn check_dictation_health() -> anyhow::Result<Vec<String>> {
-    let reinstall = "run `attend hook install --editor zed`";
+/// Check health of installed Zed narration integration.
+fn check_narration_health() -> anyhow::Result<Vec<String>> {
+    let reinstall = "run `attend install --editor zed`";
     let mut warnings = Vec::new();
 
     // Check tasks
@@ -347,7 +355,7 @@ fn check_dictation_health() -> anyhow::Result<Vec<String>> {
     if tasks.is_empty() && !tasks_path.exists() {
         warnings.push(format!("tasks.json not found — {reinstall}"));
     } else {
-        for label in DICTATION_TASK_LABELS {
+        for label in NARRATION_TASK_LABELS {
             let task = tasks
                 .iter()
                 .find(|t| t.get("label").and_then(|l| l.as_str()) == Some(label));
@@ -372,8 +380,8 @@ fn check_dictation_health() -> anyhow::Result<Vec<String>> {
 
     if keymap.is_empty() && !keymap_path.exists() {
         warnings.push(format!("keymap.json not found — {reinstall}"));
-    } else if !keymap.iter().any(is_dictation_keybinding) {
-        warnings.push(format!("dictation keybinding not found — {reinstall}"));
+    } else if !keymap.iter().any(is_narration_keybinding) {
+        warnings.push(format!("narration keybinding not found — {reinstall}"));
     }
 
     Ok(warnings)

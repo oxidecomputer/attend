@@ -16,43 +16,6 @@ pub enum HookEvent {
     Stop,
 }
 
-impl HookEvent {
-    /// All defined hook events.
-    pub const ALL: &[HookEvent] = &[
-        HookEvent::SessionStart,
-        HookEvent::UserPrompt,
-        HookEvent::Stop,
-    ];
-
-    /// The kebab-case name used on the CLI (e.g. `"session-start"`).
-    pub fn cli_name(self) -> &'static str {
-        match self {
-            HookEvent::SessionStart => "session-start",
-            HookEvent::UserPrompt => "user-prompt",
-            HookEvent::Stop => "stop",
-        }
-    }
-
-    /// Short description for `--help` output.
-    pub fn about(self) -> &'static str {
-        match self {
-            HookEvent::SessionStart => "Clear cache and emit instructions for a new session",
-            HookEvent::UserPrompt => "Emit editor context for a user prompt",
-            HookEvent::Stop => "Deliver pending dictation when the session stops",
-        }
-    }
-
-    /// Parse a CLI name back into a `HookEvent`.
-    pub fn from_cli_name(name: &str) -> Option<HookEvent> {
-        match name {
-            "session-start" => Some(HookEvent::SessionStart),
-            "user-prompt" => Some(HookEvent::UserPrompt),
-            "stop" => Some(HookEvent::Stop),
-            _ => None,
-        }
-    }
-}
-
 /// A backend that can install/uninstall hooks and run hook events for an agent.
 pub trait Agent: Sync {
     /// CLI name (e.g., "claude").
@@ -65,16 +28,6 @@ pub trait Agent: Sync {
     fn install(&self, bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()>;
     /// Remove hooks from agent settings.
     fn uninstall(&self, project: Option<PathBuf>) -> anyhow::Result<()>;
-}
-
-/// Build the clap subcommand for an agent (agent name + HookEvent sub-subcommands).
-pub fn clap_command(agent: &dyn Agent) -> clap::Command {
-    let mut cmd =
-        clap::Command::new(agent.name()).about(format!("Hooks for {}", agent.full_name()));
-    for event in HookEvent::ALL {
-        cmd = cmd.subcommand(clap::Command::new(event.cli_name()).about(event.about()));
-    }
-    cmd.subcommand_required(true)
 }
 
 /// All registered agent backends.

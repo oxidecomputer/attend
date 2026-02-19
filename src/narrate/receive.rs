@@ -1,11 +1,11 @@
-//! Check for and deliver pending dictation files to Claude Code.
+//! Check for and deliver pending narration files to Claude Code.
 //!
-//! Dictation files are stored as individual timestamped JSON files in
+//! Narration files are stored as individual timestamped JSON files in
 //! `~/.cache/attend/pending/<session_id>/`. Each file contains a
 //! `Vec<Event>` with absolute paths. On receive, events are filtered to
 //! the current project directory (and any configured `include_dirs`),
 //! paths are relativized, and the result is rendered as markdown wrapped
-//! in `<dictation>` tags.
+//! in `<narration>` tags.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,11 +16,11 @@ use super::merge::{self, Event, SnipConfig};
 use super::{archive_dir, cache_dir, pending_dir, receive_lock_path, resolve_session};
 use crate::config::Config;
 
-/// Re-dispatch instruction appended to output when running with `--wait`.
+/// Re-dispatch instruction appended to output when listening.
 const REDISPATCH_MSG: &str =
-    "\n[Run `attend dictate receive --wait` in the background to wait for the next dictation.]";
+    "\n[Run `attend listen` in the background to wait for the next narration.]";
 
-/// Collect all pending dictation files for a session, sorted by filename (timestamp).
+/// Collect all pending narration files for a session, sorted by filename (timestamp).
 pub(crate) fn collect_pending(session_id: &str) -> Vec<PathBuf> {
     let dir = pending_dir(session_id);
     let Ok(entries) = fs::read_dir(&dir) else {
@@ -70,7 +70,7 @@ pub(crate) fn read_pending(
         return None;
     }
 
-    Some(format!("<dictation>\n{trimmed}\n</dictation>"))
+    Some(format!("<narration>\n{trimmed}\n</narration>"))
 }
 
 /// Filter events to only include files under `cwd` or any `include_dirs`.
@@ -123,7 +123,7 @@ fn relativize_str(path: &str, cwd: &Path) -> String {
     path.to_string()
 }
 
-/// Archive pending dictation files by moving them to the archive directory.
+/// Archive pending narration files by moving them to the archive directory.
 pub(crate) fn archive_pending(files: &[PathBuf], session_id: &str) {
     let archive = archive_dir(session_id);
     let _ = fs::create_dir_all(&archive);
@@ -187,7 +187,7 @@ impl Drop for LockGuard {
 /// Run the receive subcommand.
 ///
 /// Without `--wait`: check once, print if found, exit.
-/// With `--wait`: poll until dictation arrives or session is stolen.
+/// With `--wait`: poll until narration arrives or session is stolen.
 pub fn run(wait: bool, session_flag: Option<String>) -> anyhow::Result<()> {
     let session_id = resolve_session(session_flag);
 
@@ -198,7 +198,7 @@ pub fn run(wait: bool, session_flag: Option<String>) -> anyhow::Result<()> {
     }
 }
 
-/// One-shot check: print pending dictations if any exist, then exit.
+/// One-shot check: print pending narrations if any exist, then exit.
 fn run_once(session_id: Option<String>) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
     let config = Config::load(&cwd);
@@ -207,7 +207,7 @@ fn run_once(session_id: Option<String>) -> anyhow::Result<()> {
         Some(s) => s,
         None => {
             // No session — try unsuffixed fallback
-            let fallback = cache_dir().join("dictation.json");
+            let fallback = cache_dir().join("narration.json");
             if fallback.exists()
                 && let Ok(content) = fs::read_to_string(&fallback)
             {
@@ -217,7 +217,7 @@ fn run_once(session_id: Option<String>) -> anyhow::Result<()> {
                     let markdown = merge::render_markdown(&events, SnipConfig::default());
                     let trimmed = markdown.trim();
                     if !trimmed.is_empty() {
-                        print!("<dictation>\n{trimmed}\n</dictation>");
+                        print!("<narration>\n{trimmed}\n</narration>");
                         let _ = fs::remove_file(&fallback);
                         return Ok(());
                     }
@@ -239,7 +239,7 @@ fn run_once(session_id: Option<String>) -> anyhow::Result<()> {
     }
 }
 
-/// Polling wait: hold a lock, poll for dictation, detect session steal.
+/// Polling wait: hold a lock, poll for narration, detect session steal.
 fn run_wait(session_id: Option<String>) -> anyhow::Result<()> {
     let session_id = match session_id {
         Some(s) => s,
@@ -257,7 +257,7 @@ fn run_wait(session_id: Option<String>) -> anyhow::Result<()> {
         Some(guard) => guard,
         None => {
             // Another listener is already running
-            eprintln!("Listener already running. Use `attend dictate status` to check.");
+            eprintln!("Listener already running. Use `attend narrate status` to check.");
             std::process::exit(0);
         }
     };
@@ -270,15 +270,15 @@ fn run_wait(session_id: Option<String>) -> anyhow::Result<()> {
             Some(current) if current == session_id => {}
             _ => {
                 println!(
-                    "Dictation was transferred to a session with another agent. \
+                    "Narration was transferred to a session with another agent. \
                      Do not restart the background receiver. \
-                     If the user wants dictation in this session, they will type /attend."
+                     If the user wants narration in this session, they will type /attend."
                 );
                 return Ok(());
             }
         }
 
-        // Check for pending dictation
+        // Check for pending narration
         let files = collect_pending(&session_id);
         if let Some(content) = read_pending(&files, &cwd, &config.include_dirs) {
             print!("{content}");

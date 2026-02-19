@@ -13,7 +13,10 @@ agent/         Hook install/uninstall for each agent
   mod.rs         Agent trait, HookEvent enum, backend registry
   claude.rs      Claude Code settings.json manipulation
 
-cli.rs         CLI definition (clap): flags, subcommands, dynamic RunHook dispatch
+cli/           CLI definition (clap): verb-based subcommands
+  mod.rs         Command enum, dispatch
+  hook.rs        HookEvent subcommands with --agent flag
+  narrate.rs     NarrateCommand subcommands
 
 hook.rs        Hook runner: caching, change detection, output formatting
 
@@ -63,17 +66,17 @@ when the editor doesn't expose selection data.
 
 ### `Editor` trait methods
 
-| Method               | Required | Purpose                                          |
-|----------------------|----------|--------------------------------------------------|
-| `name()`             | yes      | CLI name, e.g. `"zed"`                           |
-| `query()`            | yes      | Return open tabs with byte-offset selections     |
-| `watch_paths()`      | no       | Filesystem paths to monitor for re-query         |
-| `install_dictation()`| no       | Install dictation hotkey/task integration        |
-| `uninstall_dictation()` | no    | Remove dictation integration                     |
-| `check_dictation()`  | no       | Return diagnostic warnings (empty = healthy)     |
+| Method                  | Required | Purpose                                          |
+|-------------------------|----------|--------------------------------------------------|
+| `name()`                | yes      | CLI name, e.g. `"zed"`                           |
+| `query()`               | yes      | Return open tabs with byte-offset selections     |
+| `watch_paths()`         | no       | Filesystem paths to monitor for re-query         |
+| `install_narration()`   | no       | Install narration hotkey/task integration        |
+| `uninstall_narration()` | no       | Remove narration integration                     |
+| `check_narration()`     | no       | Return diagnostic warnings (empty = healthy)     |
 
-The dictation methods are optional — return the default error/empty if the
-editor doesn't support voice dictation. See `src/editor/zed.rs` for a
+The narration methods are optional — return the default error/empty if the
+editor doesn't support voice narration. See `src/editor/zed.rs` for a
 complete implementation that installs Zed tasks and keybindings.
 
 ### 2. Register the backend — `src/editor/mod.rs`
@@ -110,17 +113,15 @@ database. A VS Code backend would likely:
    (file paths, byte-offset selections) to a known file or Unix socket.
 2. Implement `query()` by reading that state file / connecting to the socket.
 3. Implement `watch_paths()` to return the state file path for live updates.
-4. For dictation, register a keybinding in the extension's `package.json`
-   that shells out to `attend dictate toggle`.
+4. For narration, register a keybinding in the extension's `package.json`
+   that shells out to `attend narrate toggle`.
 
 ## Adding a new agent
 
 An agent integration has two sides: **hook installation** (writing config into
 the agent's settings) and **hook running** (the commands the agent invokes).
 
-The `Agent` trait in `src/agent/mod.rs` covers both. CLI subcommands and
-dispatch are built dynamically from registered backends — no `cli.rs` changes
-needed.
+The `Agent` trait in `src/agent/mod.rs` covers both.
 
 ### 1. Create the agent module — `src/agent/<name>.rs`
 
@@ -139,6 +140,7 @@ impl Agent for Name {
         match event {
             HookEvent::UserPrompt => crate::hook::run(cwd),
             HookEvent::SessionStart => crate::hook::session_start(),
+            HookEvent::Stop => crate::hook::stop(),
         }
     }
 
@@ -147,7 +149,7 @@ impl Agent for Name {
 }
 ```
 
-`install()` writes hook commands (`{bin_cmd} hook run <name> user-prompt`, etc.)
+`install()` writes hook commands (`{bin_cmd} hook --agent <name> user-prompt`, etc.)
 into the agent's settings file. `uninstall()` removes them. See
 `src/agent/claude.rs` for a complete example using JSON settings.
 
@@ -171,7 +173,7 @@ pub const AGENTS: &'static [&'static dyn Agent] = &[
 ];
 ```
 
-That's it. The CLI (`hook run <name> ...`, `hook install --agent <name>`, etc.)
+That's it. The CLI (`hook --agent <name> ...`, `install --agent <name>`, etc.)
 is built automatically from the registered backends.
 
 ### Checklist

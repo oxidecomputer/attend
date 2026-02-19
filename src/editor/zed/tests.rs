@@ -197,22 +197,22 @@ fn parse_jsonc_with_comments_and_trailing_commas() {
 }
 
 #[test]
-fn is_dictation_keybinding_current_keys() {
+fn is_narration_keybinding_current_keys() {
     let flush = serde_json::json!({"bindings": {"cmd-:": ["task::Spawn", {"task_name": "Flush"}]}});
     let toggle =
         serde_json::json!({"bindings": {"cmd-;": ["task::Spawn", {"task_name": "Toggle"}]}});
-    assert!(is_dictation_keybinding(&flush));
-    assert!(is_dictation_keybinding(&toggle));
+    assert!(is_narration_keybinding(&flush));
+    assert!(is_narration_keybinding(&toggle));
 }
 
 #[test]
-fn is_dictation_keybinding_rejects_multi_binding() {
+fn is_narration_keybinding_rejects_multi_binding() {
     let multi = serde_json::json!({"bindings": {"cmd-:": ["task::Spawn"], "cmd-k": ["other"]}});
-    assert!(!is_dictation_keybinding(&multi));
+    assert!(!is_narration_keybinding(&multi));
 }
 
 #[test]
-fn is_dictation_keybinding_rejects_unrelated() {
+fn is_narration_keybinding_rejects_unrelated() {
     let other = serde_json::json!({"bindings": {"cmd-s": ["editor::Save"]}});
-    assert!(!is_dictation_keybinding(&other));
+    assert!(!is_narration_keybinding(&other));
 }

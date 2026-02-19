@@ -1,12 +1,12 @@
-mod dictate;
 mod hook;
+mod narrate;
 
-pub use dictate::DictateCommand;
-pub use hook::Hook;
+pub use hook::HookEvent;
+pub use narrate::NarrateCommand;
 
 use std::path::PathBuf;
 
-use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 
 /// Top-level CLI definition.
 #[derive(Parser)]
@@ -17,18 +17,10 @@ use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 )]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Option<Command>,
-
-    /// Resolve paths relative to this directory and show relative paths.
-    #[arg(long, short)]
-    pub dir: Option<PathBuf>,
-
-    /// Output format (only valid without a subcommand).
-    #[arg(long, short, default_value = "human")]
-    pub format: Format,
+    pub command: Command,
 }
 
-/// Output format for the default command.
+/// Output format.
 #[derive(Clone, ValueEnum)]
 pub enum Format {
     /// Human-readable text.
@@ -37,63 +29,29 @@ pub enum Format {
     Json,
 }
 
-/// Display mode for the watch subcommand.
-#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum WatchMode {
-    /// Daemon: continuously update cache, no output.
-    Silent,
-    /// Live compact output (paths + positions).
-    Compact,
-    /// Live view output (file content with markers).
-    View,
-}
-
-/// Continuously watch editor state.
-#[derive(Args)]
-pub struct Watch {
-    /// Display mode.
-    #[arg(default_value = "silent")]
-    pub mode: WatchMode,
-
-    /// Override polling / debounce interval in seconds.
-    #[arg(long, short = 'i')]
-    pub interval: Option<f64>,
-
-    /// Show entire file contents (view mode only).
-    #[arg(long, conflicts_with_all = ["before", "after"])]
-    pub full: bool,
-
-    /// Context lines before (view mode only).
-    #[arg(long, short = 'B')]
-    pub before: Option<usize>,
-
-    /// Context lines after (view mode only).
-    #[arg(long, short = 'A')]
-    pub after: Option<usize>,
-
-    /// Output format (compact and view modes only).
-    #[arg(long, short, default_value = "human")]
-    pub format: Format,
-}
-
 /// Top-level subcommands.
 #[derive(Subcommand)]
 pub enum Command {
-    /// Hook mode for agent integration.
-    #[command(subcommand)]
-    Hook(Hook),
-    /// Continuously watch editor state.
-    Watch(Watch),
-    /// Voice-driven prompt composition.
-    #[command(subcommand)]
-    Dictate(DictateCommand),
-    /// Generate shell completions and print to stdout.
-    Completions {
-        /// Shell to generate completions for.
-        shell: clap_complete::Shell,
+    /// Quick glance at editor state (paths + positions).
+    Glance {
+        /// Resolve paths relative to this directory and show relative paths.
+        #[arg(long, short)]
+        dir: Option<PathBuf>,
+
+        /// Output format.
+        #[arg(long, short, default_value = "human")]
+        format: Format,
+
+        /// Continuously watch editor state.
+        #[arg(long, short)]
+        watch: bool,
+
+        /// Override polling / debounce interval in seconds.
+        #[arg(long, short = 'i')]
+        interval: Option<f64>,
     },
-    /// Show file content at editor selections.
-    View {
+    /// Show file content at editor cursor/selection positions.
+    Look {
         /// Resolve paths relative to this directory and show relative paths.
         #[arg(long, short)]
         dir: Option<PathBuf>,
@@ -114,50 +72,90 @@ pub enum Command {
         #[arg(long, short = 'A')]
         after: Option<usize>,
 
+        /// Continuously watch editor state in view mode.
+        #[arg(long, short)]
+        watch: bool,
+
+        /// Override polling / debounce interval in seconds.
+        #[arg(long, short = 'i')]
+        interval: Option<f64>,
+
         /// File paths and positions in compact format (same as default output).
         /// E.g.: src/foo.rs 5:12 19:40-24:6 src/bar.rs 10:1
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
+    /// Quietly watch editor state in the background (daemon).
+    Meditate {
+        /// Override polling / debounce interval in seconds.
+        #[arg(long, short = 'i')]
+        interval: Option<f64>,
+    },
+    /// Listen for narration (wait for voice input).
+    Listen {
+        /// Check once and exit instead of waiting.
+        #[arg(long)]
+        check: bool,
+
+        /// Session ID (defaults to listening file).
+        #[arg(long)]
+        session: Option<String>,
+    },
+    /// Voice-driven prompt composition.
+    #[command(subcommand)]
+    Narrate(NarrateCommand),
+    /// Run an agent hook event.
+    #[command(subcommand)]
+    Hook(HookEvent),
+    /// Install hooks and editor integration.
+    Install {
+        /// Agent to install hooks for (repeatable).
+        #[arg(long, short, value_parser = hook::agent_value_parser())]
+        agent: Vec<String>,
+
+        /// Editor to install narration keybindings for (repeatable).
+        #[arg(long, short, value_parser = hook::editor_value_parser())]
+        editor: Vec<String>,
+
+        /// Install to a project-local settings file instead of global.
+        #[arg(long, short)]
+        project: Option<PathBuf>,
+
+        /// Use absolute path to current binary instead of $PATH lookup.
+        #[arg(long)]
+        dev: bool,
+    },
+    /// Remove hooks and editor integration.
+    Uninstall {
+        /// Agent to uninstall hooks for (repeatable).
+        #[arg(long, short, value_parser = hook::agent_value_parser())]
+        agent: Vec<String>,
+
+        /// Editor to uninstall narration keybindings for (repeatable).
+        #[arg(long, value_parser = hook::editor_value_parser())]
+        editor: Vec<String>,
+
+        /// Remove from a project-local settings file instead of global.
+        #[arg(long, short)]
+        project: Option<PathBuf>,
+    },
+    /// Generate shell completions and print to stdout.
+    Completions {
+        /// Shell to generate completions for.
+        shell: clap_complete::Shell,
+    },
 }
 
 impl Cli {
-    /// Run the CLI: dispatch to subcommand or print editor state.
+    /// Run the CLI: dispatch to subcommand.
     pub fn run(self) -> anyhow::Result<()> {
-        match self.command {
-            Some(command) => {
-                if !matches!(self.format, Format::Human) {
-                    anyhow::bail!(
-                        "--format is only valid without a subcommand (use subcommand's own --format)"
-                    );
-                }
-                command.run(self.dir)?;
-            }
-            None => {
-                if let Some(state) = crate::state::EditorState::current(self.dir.as_deref(), &[])? {
-                    match self.format {
-                        Format::Human => println!("{state}"),
-                        Format::Json => {
-                            let payload = crate::json::CompactPayload::from_state(&state);
-                            let wrapped = crate::json::Timestamped::now(payload);
-                            println!(
-                                "{}",
-                                serde_json::to_string_pretty(&wrapped)
-                                    .expect("serialization of known type")
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
+        self.command.run()
     }
 }
 
 impl Command {
     /// Execute a subcommand.
-    pub fn run(self, cwd: Option<PathBuf>) -> anyhow::Result<()> {
+    pub fn run(self) -> anyhow::Result<()> {
         match self {
             Command::Completions { shell } => {
                 clap_complete::generate(
@@ -168,58 +166,182 @@ impl Command {
                 );
                 Ok(())
             }
-            Command::Watch(watch) => crate::watch::run(&watch, cwd.as_deref()),
-            Command::Dictate(cmd) => cmd.run(),
-            Command::Hook(hook) => {
-                if cwd.is_some() {
-                    anyhow::bail!("--dir is not valid with the hook subcommand");
+            Command::Glance {
+                dir,
+                format,
+                watch,
+                interval,
+            } => {
+                if watch {
+                    crate::watch::run(
+                        crate::watch::WatchMode::Compact,
+                        dir.as_deref(),
+                        interval,
+                        &format,
+                        false,
+                        None,
+                        None,
+                    )
+                } else {
+                    if let Some(state) = crate::state::EditorState::current(dir.as_deref(), &[])? {
+                        match format {
+                            Format::Human => println!("{state}"),
+                            Format::Json => {
+                                let payload = crate::json::CompactPayload::from_state(&state);
+                                let wrapped = crate::json::Timestamped::now(payload);
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&wrapped)
+                                        .expect("serialization of known type")
+                                );
+                            }
+                        }
+                    }
+                    Ok(())
                 }
-                hook.run()
             }
-            Command::View {
+            Command::Look {
                 dir,
                 format,
                 full,
                 before,
                 after,
+                watch,
+                interval,
                 args,
             } => {
-                let cwd = dir.or(cwd);
-                let entries = if args.is_empty() {
-                    match crate::state::EditorState::current(cwd.as_deref(), &[])? {
-                        Some(state) => state.files,
-                        None => return Ok(()),
-                    }
-                } else if args.len() == 1 && args[0] == "-" {
-                    let mut input = String::new();
-                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
-                    crate::view::parse_compact(&input)?
+                if watch {
+                    crate::watch::run(
+                        crate::watch::WatchMode::View,
+                        dir.as_deref(),
+                        interval,
+                        &format,
+                        full,
+                        before,
+                        after,
+                    )
                 } else {
-                    crate::view::parse_compact(&args.join(" "))?
-                };
-                let extent = if full {
-                    crate::view::Extent::Full
-                } else if before.is_some() || after.is_some() {
-                    crate::view::Extent::Lines {
-                        before: before.unwrap_or(0),
-                        after: after.unwrap_or(0),
+                    let entries = if args.is_empty() {
+                        match crate::state::EditorState::current(dir.as_deref(), &[])? {
+                            Some(state) => state.files,
+                            None => return Ok(()),
+                        }
+                    } else if args.len() == 1 && args[0] == "-" {
+                        let mut input = String::new();
+                        std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
+                        crate::view::parse_compact(&input)?
+                    } else {
+                        crate::view::parse_compact(&args.join(" "))?
+                    };
+                    let extent = if full {
+                        crate::view::Extent::Full
+                    } else if before.is_some() || after.is_some() {
+                        crate::view::Extent::Lines {
+                            before: before.unwrap_or(0),
+                            after: after.unwrap_or(0),
+                        }
+                    } else {
+                        crate::view::Extent::Exact
+                    };
+                    match format {
+                        Format::Human => {
+                            print!("{}", crate::view::render(&entries, dir.as_deref(), extent)?);
+                        }
+                        Format::Json => {
+                            let payload =
+                                crate::view::render_json(&entries, dir.as_deref(), extent)?;
+                            let wrapped = crate::json::Timestamped::now(payload);
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&wrapped)
+                                    .expect("serialization of known type")
+                            );
+                        }
                     }
-                } else {
-                    crate::view::Extent::Exact
-                };
-                match format {
-                    Format::Human => {
-                        print!("{}", crate::view::render(&entries, cwd.as_deref(), extent)?);
-                    }
-                    Format::Json => {
-                        let payload = crate::view::render_json(&entries, cwd.as_deref(), extent)?;
-                        let wrapped = crate::json::Timestamped::now(payload);
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&wrapped)
-                                .expect("serialization of known type")
-                        );
-                    }
+                    Ok(())
+                }
+            }
+            Command::Meditate { interval } => crate::watch::run(
+                crate::watch::WatchMode::Silent,
+                None,
+                interval,
+                &Format::Human,
+                false,
+                None,
+                None,
+            ),
+            Command::Listen { check, session } => {
+                // check → one-shot (old `receive` without --wait)
+                // default → wait (old `receive --wait`)
+                crate::narrate::receive::run(!check, session)
+            }
+            Command::Narrate(cmd) => cmd.run(),
+            Command::Hook(event) => event.run(),
+            Command::Install {
+                agent,
+                editor,
+                project,
+                dev,
+            } => {
+                if agent.is_empty() && editor.is_empty() {
+                    anyhow::bail!(
+                        "specify at least one --agent or --editor.\n  Available agents: {}\n  Available editors: {}",
+                        crate::agent::AGENTS
+                            .iter()
+                            .map(|a| a.name())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        crate::editor::EDITORS
+                            .iter()
+                            .map(|e| e.name())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    );
+                }
+                let bin_cmd = crate::agent::resolve_bin_cmd(dev)?;
+                for name in &agent {
+                    crate::agent::install(name, project.clone(), dev)?;
+                }
+                for name in &editor {
+                    let ed = crate::editor::editor_by_name(name)
+                        .ok_or_else(|| anyhow::anyhow!("unknown editor: {name}"))?;
+                    ed.install_narration(&bin_cmd)?;
+                }
+                crate::state::save_install_meta(&crate::state::InstallMeta {
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    agents: agent,
+                    editors: editor,
+                    dev,
+                });
+                Ok(())
+            }
+            Command::Uninstall {
+                agent,
+                editor,
+                project,
+            } => {
+                if agent.is_empty() && editor.is_empty() {
+                    anyhow::bail!(
+                        "specify at least one --agent or --editor.\n  Available agents: {}\n  Available editors: {}",
+                        crate::agent::AGENTS
+                            .iter()
+                            .map(|a| a.name())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        crate::editor::EDITORS
+                            .iter()
+                            .map(|e| e.name())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    );
+                }
+                for name in &agent {
+                    crate::agent::uninstall(name, project.clone())?;
+                }
+                for name in &editor {
+                    let ed = crate::editor::editor_by_name(name)
+                        .ok_or_else(|| anyhow::anyhow!("unknown editor: {name}"))?;
+                    ed.uninstall_narration()?;
                 }
                 Ok(())
             }

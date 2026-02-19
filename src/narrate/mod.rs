@@ -24,7 +24,7 @@ pub(crate) fn process_alive(pid: i32) -> bool {
     unsafe { libc::kill(pid, 0) == 0 }
 }
 
-/// Base directory for all dictation state files.
+/// Base directory for all narration state files.
 fn cache_dir() -> PathBuf {
     crate::state::cache_dir().expect("cannot determine cache directory")
 }
@@ -49,15 +49,15 @@ pub(crate) fn receive_lock_path() -> PathBuf {
     cache_dir().join("receive.lock")
 }
 
-/// Directory where pending dictation files are written.
+/// Directory where pending narration files are written.
 ///
-/// Each dictation is stored as `<timestamp>.json` inside
+/// Each narration is stored as `<timestamp>.json` inside
 /// `~/.cache/attend/pending/<session_id>/`.
 pub(crate) fn pending_dir(session_id: &str) -> PathBuf {
     cache_dir().join("pending").join(session_id)
 }
 
-/// Directory where archived dictation files are stored.
+/// Directory where archived narration files are stored.
 pub(crate) fn archive_dir(session_id: &str) -> PathBuf {
     cache_dir().join("archive").join(session_id)
 }
@@ -101,7 +101,7 @@ pub(crate) fn status() -> anyhow::Result<()> {
             if process_alive(pid) {
                 "recording"
             } else {
-                "stale lock (daemon not running) — run `attend dictate toggle` to clean up"
+                "stale lock (daemon not running) — run `attend narrate toggle` to clean up"
             }
         } else {
             "recording"
@@ -148,7 +148,7 @@ pub(crate) fn status() -> anyhow::Result<()> {
 
     // Editor integration health
     for editor in crate::editor::EDITORS {
-        let warnings = editor.check_dictation()?;
+        let warnings = editor.check_narration()?;
         if warnings.is_empty() {
             println!("Editor:     {} (ok)", editor.name());
         } else {
@@ -156,7 +156,7 @@ pub(crate) fn status() -> anyhow::Result<()> {
         }
     }
 
-    // Pending dictation count
+    // Pending narration count
     if let Some(ref sid) = session {
         let dir = pending_dir(sid);
         let count = fs::read_dir(&dir)
@@ -167,7 +167,7 @@ pub(crate) fn status() -> anyhow::Result<()> {
                     .count()
             })
             .unwrap_or(0);
-        println!("Pending:    {count} dictation(s)");
+        println!("Pending:    {count} narration(s)");
     } else {
         println!("Pending:    -");
     }
@@ -175,7 +175,7 @@ pub(crate) fn status() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Remove archived dictation files older than the given duration.
+/// Remove archived narration files older than the given duration.
 pub(crate) fn clean(older_than: Duration) -> anyhow::Result<()> {
     let archive_root = cache_dir().join("archive");
     if !archive_root.exists() {
@@ -186,7 +186,7 @@ pub(crate) fn clean(older_than: Duration) -> anyhow::Result<()> {
     let removed = clean_archive_dir(&archive_root, older_than);
 
     let age = humantime::format_duration(older_than);
-    println!("Removed {removed} archived dictation(s) older than {age}.");
+    println!("Removed {removed} archived narration(s) older than {age}.");
     Ok(())
 }
 

@@ -1,7 +1,7 @@
 ---
 name: attend
-description: Activate dictation mode for this session
+description: Activate narration mode for this session
 allowedTools:
-  - Bash({bin_cmd} dictate receive:*)
-  - Bash({bin_cmd} view:*)
+  - Bash({bin_cmd} listen:*)
+  - Bash({bin_cmd} look:*)
 ---

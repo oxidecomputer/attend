@@ -35,19 +35,19 @@ pub trait Editor: Sync {
         Vec::new()
     }
 
-    /// Install dictation integration (task, keybinding, etc.).
-    fn install_dictation(&self, _bin_cmd: &str) -> anyhow::Result<()> {
-        anyhow::bail!("{} does not support dictation", self.name())
+    /// Install narration integration (task, keybinding, etc.).
+    fn install_narration(&self, _bin_cmd: &str) -> anyhow::Result<()> {
+        anyhow::bail!("{} does not support narration", self.name())
     }
 
-    /// Remove dictation integration.
-    fn uninstall_dictation(&self) -> anyhow::Result<()> {
-        anyhow::bail!("{} does not support dictation removal", self.name())
+    /// Remove narration integration.
+    fn uninstall_narration(&self) -> anyhow::Result<()> {
+        anyhow::bail!("{} does not support narration removal", self.name())
     }
 
-    /// Check the health of dictation integration.
+    /// Check the health of narration integration.
     /// Returns a list of diagnostic warnings (empty = healthy).
-    fn check_dictation(&self) -> anyhow::Result<Vec<String>> {
+    fn check_narration(&self) -> anyhow::Result<Vec<String>> {
         Ok(Vec::new())
     }
 }

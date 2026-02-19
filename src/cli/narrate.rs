@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 
-use crate::dictate::transcribe::Engine;
+use crate::narrate::transcribe::Engine;
 
 /// Parse a human-friendly duration string (e.g. "7d", "24h", "30days").
 fn parse_duration(s: &str) -> Result<std::time::Duration, String> {
@@ -18,20 +18,20 @@ pub struct RecordingArgs {
     /// Path to model file or directory (auto-downloaded if omitted).
     #[arg(long)]
     model: Option<PathBuf>,
-    /// Session to deliver dictation to (defaults to the active `attend hook` session).
+    /// Session to deliver narration to (defaults to the active `attend hook` session).
     #[arg(long)]
     session: Option<String>,
 }
 
-/// Dictation CLI subcommands.
+/// Narration CLI subcommands.
 #[derive(Subcommand)]
-pub enum DictateCommand {
+pub enum NarrateCommand {
     /// Start or stop recording (one hotkey).
     Toggle {
         #[command(flatten)]
         args: RecordingArgs,
     },
-    /// Submit current dictation and keep recording.
+    /// Submit current narration and keep recording.
     ///
     /// If not recording, starts recording (like toggle).
     /// If recording, flushes the current audio for transcription
@@ -48,18 +48,9 @@ pub enum DictateCommand {
     },
     /// Signal recorder to stop (idempotent).
     Stop,
-    /// Check for / wait for dictation.
-    Receive {
-        /// Poll until dictation arrives.
-        #[arg(long)]
-        wait: bool,
-        /// Session ID (defaults to listening file).
-        #[arg(long)]
-        session: Option<String>,
-    },
     /// Show recording and system status.
     Status,
-    /// Remove old archived dictation files.
+    /// Remove old archived narration files.
     Clean {
         /// Remove archives older than this duration (e.g. "7d", "24h", "30days").
         #[arg(long, default_value = "7d", value_parser = parse_duration)]
@@ -76,27 +67,24 @@ pub enum DictateCommand {
     Bench,
 }
 
-impl DictateCommand {
-    /// Run a dictate subcommand.
+impl NarrateCommand {
+    /// Run a narrate subcommand.
     pub fn run(self) -> anyhow::Result<()> {
-        use crate::dictate::record;
+        use crate::narrate::record;
 
         match self {
-            DictateCommand::Toggle { args } => {
+            NarrateCommand::Toggle { args } => {
                 record::toggle(args.engine, args.model, args.session)
             }
-            DictateCommand::Flush { args } => record::flush(args.engine, args.model, args.session),
-            DictateCommand::Start { args } => record::start(args.engine, args.model, args.session),
-            DictateCommand::Stop => record::stop(),
-            DictateCommand::Receive { wait, session } => {
-                crate::dictate::receive::run(wait, session)
-            }
-            DictateCommand::Status => crate::dictate::status(),
-            DictateCommand::Clean { older_than } => crate::dictate::clean(older_than),
-            DictateCommand::RecordDaemon { args } => {
+            NarrateCommand::Flush { args } => record::flush(args.engine, args.model, args.session),
+            NarrateCommand::Start { args } => record::start(args.engine, args.model, args.session),
+            NarrateCommand::Stop => record::stop(),
+            NarrateCommand::Status => crate::narrate::status(),
+            NarrateCommand::Clean { older_than } => crate::narrate::clean(older_than),
+            NarrateCommand::RecordDaemon { args } => {
                 record::daemon(args.engine, args.model, args.session)
             }
-            DictateCommand::Bench => crate::dictate::bench(),
+            NarrateCommand::Bench => crate::narrate::bench(),
         }
     }
 }
