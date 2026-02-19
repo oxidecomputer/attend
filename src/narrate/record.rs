@@ -5,15 +5,14 @@
 //! The daemon records until a stop sentinel file appears, then transcribes,
 //! merges all streams, and writes the result as a pending narration file.
 
-use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use super::audio;
-use super::merge::{self, Event, RenderedFile};
+use super::capture;
+use super::merge::{self, Event};
 use super::transcribe::Engine;
 use super::{
     cache_dir, flush_sentinel_path, pending_dir, record_lock_path, resolve_session,
@@ -21,8 +20,6 @@ use super::{
 };
 use crate::config::Config;
 use crate::json::utc_now;
-use crate::state::{self, EditorState};
-use crate::view;
 
 /// Toggle recording: start if not recording, stop if recording.
 pub fn toggle() -> anyhow::Result<()> {
@@ -194,7 +191,7 @@ pub fn daemon() -> anyhow::Result<()> {
 
     // Start editor polling and file diff tracking on background threads.
     // Pass None for cwd so paths stay absolute — filtering is deferred to receive.
-    let editor_events = poll_editor_and_diffs(None)?;
+    let editor_events = capture::start(None)?;
 
     // Track time base for word timestamp offsets across flushes
     let mut time_base_secs = 0.0_f64;
@@ -315,191 +312,3 @@ fn transcribe_and_write(
     Ok(())
 }
 
-/// Handle for the background editor/diff polling threads.
-struct EditorPollHandle {
-    stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    editor_events: std::sync::Arc<Mutex<Vec<Event>>>,
-    diff_events: std::sync::Arc<Mutex<Vec<Event>>>,
-    editor_thread: Option<thread::JoinHandle<()>>,
-    diff_thread: Option<thread::JoinHandle<()>>,
-}
-
-impl EditorPollHandle {
-    /// Drain accumulated events without stopping threads.
-    fn drain(&self) -> (Vec<Event>, Vec<Event>) {
-        let editor = std::mem::take(&mut *self.editor_events.lock().unwrap());
-        let diff = std::mem::take(&mut *self.diff_events.lock().unwrap());
-        (editor, diff)
-    }
-
-    /// Signal stop and collect remaining results.
-    fn collect(mut self) -> (Vec<Event>, Vec<Event>) {
-        self.stop_flag
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-
-        if let Some(h) = self.editor_thread.take() {
-            let _ = h.join();
-        }
-        if let Some(h) = self.diff_thread.take() {
-            let _ = h.join();
-        }
-
-        self.drain()
-    }
-}
-
-/// Start background threads for editor polling and file diff tracking.
-fn poll_editor_and_diffs(cwd: Option<PathBuf>) -> anyhow::Result<EditorPollHandle> {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    let stop_flag = Arc::new(AtomicBool::new(false));
-    let start = Instant::now();
-
-    let editor_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
-    let diff_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
-
-    // Editor state polling thread
-    let stop_ed = Arc::clone(&stop_flag);
-    let ed_cwd = cwd.clone();
-    let ed_events = Arc::clone(&editor_events);
-    let editor_thread = thread::spawn(move || {
-        let mut prev_files: Option<Vec<state::FileEntry>> = None;
-
-        while !stop_ed.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_millis(100));
-
-            let state = match EditorState::current(ed_cwd.as_deref(), &[]) {
-                Ok(Some(s)) => s,
-                _ => continue,
-            };
-
-            // Check if file entries changed
-            if prev_files.as_ref() == Some(&state.files) {
-                continue;
-            }
-
-            let files = state.files;
-            prev_files = Some(files.clone());
-
-            let offset_secs = start.elapsed().as_secs_f64();
-            // Pass None for cwd so paths stay absolute — filtering deferred to receive.
-            let rendered = render_snapshot_files(&files, None);
-
-            ed_events.lock().unwrap().push(Event::EditorSnapshot {
-                offset_secs,
-                files,
-                rendered,
-            });
-        }
-    });
-
-    // File diff tracking thread
-    let stop_diff = Arc::clone(&stop_flag);
-    let diff_cwd = cwd;
-    let df_events = Arc::clone(&diff_events);
-    let diff_thread = thread::spawn(move || {
-        let mut file_contents: HashMap<PathBuf, String> = HashMap::new();
-        let mut file_mtimes: HashMap<PathBuf, std::time::SystemTime> = HashMap::new();
-
-        // Snapshot initial state of recently active files
-        if let Ok(Some(state)) = EditorState::current(diff_cwd.as_deref(), &[]) {
-            for file in &state.files {
-                if let Ok(content) = fs::read_to_string(&file.path) {
-                    if let Ok(meta) = fs::metadata(&file.path)
-                        && let Ok(mtime) = meta.modified()
-                    {
-                        file_mtimes.insert(file.path.clone(), mtime);
-                    }
-                    file_contents.insert(file.path.clone(), content);
-                }
-            }
-        }
-
-        while !stop_diff.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_secs(1));
-
-            // Check current editor files for changes
-            let state = match EditorState::current(diff_cwd.as_deref(), &[]) {
-                Ok(Some(s)) => s,
-                _ => continue,
-            };
-
-            for file in &state.files {
-                let Ok(meta) = fs::metadata(&file.path) else {
-                    continue;
-                };
-                let Ok(mtime) = meta.modified() else {
-                    continue;
-                };
-
-                let changed = file_mtimes
-                    .get(&file.path)
-                    .map(|prev| *prev != mtime)
-                    .unwrap_or(true);
-
-                if !changed {
-                    continue;
-                }
-
-                file_mtimes.insert(file.path.clone(), mtime);
-
-                let Ok(new_content) = fs::read_to_string(&file.path) else {
-                    continue;
-                };
-
-                if let Some(old_content) = file_contents.get(&file.path)
-                    && *old_content != new_content
-                {
-                    let offset_secs = start.elapsed().as_secs_f64();
-                    // Keep absolute path — filtering deferred to receive.
-                    let display_path = file.path.to_string_lossy().to_string();
-                    df_events.lock().unwrap().push(Event::FileDiff {
-                        offset_secs,
-                        path: display_path,
-                        old: old_content.clone(),
-                        new: new_content.clone(),
-                    });
-                }
-
-                file_contents.insert(file.path.clone(), new_content);
-            }
-        }
-    });
-
-    Ok(EditorPollHandle {
-        stop_flag,
-        editor_events,
-        diff_events,
-        editor_thread: Some(editor_thread),
-        diff_thread: Some(diff_thread),
-    })
-}
-
-/// Render file entries into `RenderedFile` entries with relative paths.
-fn render_snapshot_files(files: &[state::FileEntry], cwd: Option<&Path>) -> Vec<RenderedFile> {
-    let mut rendered = Vec::new();
-
-    for file in files {
-        if file.selections.is_empty() {
-            continue;
-        }
-
-        let Ok(payload) = view::render_json(std::slice::from_ref(file), cwd, view::Extent::Exact)
-        else {
-            continue;
-        };
-
-        for vf in payload.files {
-            for group in &vf.groups {
-                rendered.push(RenderedFile {
-                    path: vf.path.clone(),
-                    content: group.content.clone(),
-                    first_line: group.first_line.get() as u32,
-                });
-            }
-        }
-    }
-
-    rendered
-}

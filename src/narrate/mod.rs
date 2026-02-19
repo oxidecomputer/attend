@@ -6,6 +6,7 @@
 //! delivers a formatted prompt to a running Claude Code session.
 
 mod audio;
+mod capture;
 pub(crate) mod merge;
 pub(crate) mod receive;
 pub(crate) mod record;
