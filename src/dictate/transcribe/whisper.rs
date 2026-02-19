@@ -117,7 +117,12 @@ impl super::Transcriber for WhisperTranscriber {
 
         let total = state_time + transcribe_time;
 
-        tracing::debug!(state_creation_s = state_time.as_secs_f64(), transcription_s = transcribe_time.as_secs_f64(), total_s = total.as_secs_f64(), "Whisper bench");
+        tracing::debug!(
+            state_creation_s = state_time.as_secs_f64(),
+            transcription_s = transcribe_time.as_secs_f64(),
+            total_s = total.as_secs_f64(),
+            "Whisper bench"
+        );
     }
 }
 
@@ -134,9 +139,7 @@ fn download_model(model_path: &Path) -> anyhow::Result<()> {
         .file_name()
         .and_then(|f| f.to_str())
         .ok_or_else(|| anyhow::anyhow!("invalid model path"))?;
-    let url = format!(
-        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}"
-    );
+    let url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}");
 
     tracing::info!(path = %model_path.display(), "Downloading Whisper model...");
 

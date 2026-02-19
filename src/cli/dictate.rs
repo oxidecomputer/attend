@@ -4,6 +4,11 @@ use clap::{Args, Subcommand};
 
 use crate::dictate::transcribe::Engine;
 
+/// Parse a human-friendly duration string (e.g. "7d", "24h", "30days").
+fn parse_duration(s: &str) -> Result<std::time::Duration, String> {
+    humantime::parse_duration(s).map_err(|e| e.to_string())
+}
+
 /// Shared recording arguments for toggle / start / daemon.
 #[derive(Args, Clone)]
 pub struct RecordingArgs {
@@ -54,6 +59,12 @@ pub enum DictateCommand {
     },
     /// Show recording and system status.
     Status,
+    /// Remove old archived dictation files.
+    Clean {
+        /// Remove archives older than this duration (e.g. "7d", "24h", "30days").
+        #[arg(long, default_value = "7d", value_parser = parse_duration)]
+        older_than: std::time::Duration,
+    },
     /// Internal: run the recording daemon (not user-facing).
     #[command(name = "_record-daemon", hide = true)]
     RecordDaemon {
@@ -74,17 +85,14 @@ impl DictateCommand {
             DictateCommand::Toggle { args } => {
                 record::toggle(args.engine, args.model, args.session)
             }
-            DictateCommand::Flush { args } => {
-                record::flush(args.engine, args.model, args.session)
-            }
-            DictateCommand::Start { args } => {
-                record::start(args.engine, args.model, args.session)
-            }
+            DictateCommand::Flush { args } => record::flush(args.engine, args.model, args.session),
+            DictateCommand::Start { args } => record::start(args.engine, args.model, args.session),
             DictateCommand::Stop => record::stop(),
             DictateCommand::Receive { wait, session } => {
                 crate::dictate::receive::run(wait, session)
             }
             DictateCommand::Status => crate::dictate::status(),
+            DictateCommand::Clean { older_than } => crate::dictate::clean(older_than),
             DictateCommand::RecordDaemon { args } => {
                 record::daemon(args.engine, args.model, args.session)
             }

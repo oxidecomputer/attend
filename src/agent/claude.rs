@@ -150,9 +150,7 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
         let stop_arr = hooks_obj
             .entry(HOOK_KEY_STOP)
             .or_insert_with(|| serde_json::json!([]));
-        let stop_vec = stop_arr
-            .as_array_mut()
-            .context("Stop is not an array")?;
+        let stop_vec = stop_arr.as_array_mut().context("Stop is not an array")?;
 
         let before = stop_vec.len();
         stop_vec.retain(|entry| !entry_has_attend_cmd(entry, Some(bin_cmd)));
@@ -224,7 +222,11 @@ fn uninstall(project: Option<PathBuf>) -> anyhow::Result<()> {
     };
 
     let mut removed = false;
-    let hook_keys = [HOOK_KEY_SESSION_START, HOOK_KEY_USER_PROMPT_SUBMIT, HOOK_KEY_STOP];
+    let hook_keys = [
+        HOOK_KEY_SESSION_START,
+        HOOK_KEY_USER_PROMPT_SUBMIT,
+        HOOK_KEY_STOP,
+    ];
     for key in &hook_keys {
         if let Some(arr) = hooks.get_mut(*key).and_then(|v| v.as_array_mut()) {
             let before = arr.len();
@@ -236,17 +238,19 @@ fn uninstall(project: Option<PathBuf>) -> anyhow::Result<()> {
     }
 
     // Remove attend view permission
-    if let Some(perms) = settings.get_mut("permissions").and_then(|p| p.as_object_mut()) {
-        if let Some(allow) = perms.get_mut("allow").and_then(|a| a.as_array_mut()) {
-            let before = allow.len();
-            allow.retain(|v| {
-                v.as_str()
-                    .map(|s| !s.contains("attend") || !s.contains("view"))
-                    .unwrap_or(true)
-            });
-            if allow.len() < before {
-                removed = true;
-            }
+    if let Some(perms) = settings
+        .get_mut("permissions")
+        .and_then(|p| p.as_object_mut())
+        && let Some(allow) = perms.get_mut("allow").and_then(|a| a.as_array_mut())
+    {
+        let before = allow.len();
+        allow.retain(|v| {
+            v.as_str()
+                .map(|s| !s.contains("attend") || !s.contains("view"))
+                .unwrap_or(true)
+        });
+        if allow.len() < before {
+            removed = true;
         }
     }
 
@@ -275,7 +279,10 @@ fn install_skill_file(bin_cmd: &str, project: Option<&Path>) -> anyhow::Result<(
 
     let skill_content = format!(
         "{}{}",
-        format_args!(include_str!("claude_skill_frontmatter.md"), bin_cmd = bin_cmd),
+        format_args!(
+            include_str!("claude_skill_frontmatter.md"),
+            bin_cmd = bin_cmd
+        ),
         format_args!(include_str!("claude_skill_body.md"), bin_cmd = bin_cmd),
     );
 

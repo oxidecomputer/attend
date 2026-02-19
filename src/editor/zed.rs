@@ -158,7 +158,7 @@ fn install_task(bin_cmd: &str, label: &str, args: &[&str]) -> anyhow::Result<()>
         "use_new_terminal": true
     });
 
-    if tasks.iter().any(|t| *t == task_entry) {
+    if tasks.contains(&task_entry) {
         return Ok(());
     }
 
@@ -167,10 +167,9 @@ fn install_task(bin_cmd: &str, label: &str, args: &[&str]) -> anyhow::Result<()>
         .iter()
         .find(|t| t.get("label").and_then(|l| l.as_str()) == Some(label))
         .and_then(|t| t.get("command").and_then(|c| c.as_str()))
+        && !std::path::Path::new(cmd).exists()
     {
-        if !std::path::Path::new(cmd).exists() {
-            tracing::warn!("Replacing stale command path: {cmd}");
-        }
+        tracing::warn!("Replacing stale command path: {cmd}");
     }
 
     tasks.retain(|t| t.get("label").and_then(|l| l.as_str()) != Some(label));
@@ -355,12 +354,12 @@ fn check_dictation_health() -> anyhow::Result<Vec<String>> {
             match task {
                 None => warnings.push(format!("{label} task not found — {reinstall}")),
                 Some(t) => {
-                    if let Some(cmd) = t.get("command").and_then(|c| c.as_str()) {
-                        if !std::path::Path::new(cmd).exists() {
-                            warnings.push(format!(
-                                "task command path does not exist: {cmd} — reinstall with {reinstall}"
-                            ));
-                        }
+                    if let Some(cmd) = t.get("command").and_then(|c| c.as_str())
+                        && !std::path::Path::new(cmd).exists()
+                    {
+                        warnings.push(format!(
+                            "task command path does not exist: {cmd} — reinstall with {reinstall}"
+                        ));
                     }
                 }
             }
@@ -373,7 +372,7 @@ fn check_dictation_health() -> anyhow::Result<Vec<String>> {
 
     if keymap.is_empty() && !keymap_path.exists() {
         warnings.push(format!("keymap.json not found — {reinstall}"));
-    } else if !keymap.iter().any(|e| is_dictation_keybinding(e)) {
+    } else if !keymap.iter().any(is_dictation_keybinding) {
         warnings.push(format!("dictation keybinding not found — {reinstall}"));
     }
 

@@ -364,7 +364,11 @@ fn snip_above_threshold_collapses() {
 
 #[test]
 fn snip_at_exact_threshold_unchanged() {
-    let text = (1..=5).map(|i| format!("line{i}")).collect::<Vec<_>>().join("\n") + "\n";
+    let text = (1..=5)
+        .map(|i| format!("line{i}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
     let cfg = SnipConfig {
         threshold: 5,
         head: 2,
@@ -413,7 +417,7 @@ fn snip_applied_to_diff_block() {
 
 #[test]
 fn compress_consecutive_cursor_snapshots() {
-    use crate::state::{FileEntry, Selection, Position, Line, Col};
+    use crate::state::{Col, FileEntry, Line, Position, Selection};
 
     // Helper: cursor-only snapshot (all selections are cursor-like).
     let cursor_snap = |t: f64, path: &str| {
@@ -425,7 +429,10 @@ fn compress_consecutive_cursor_snapshots() {
             offset_secs: t,
             files: vec![FileEntry {
                 path: path.into(),
-                selections: vec![Selection { start: pos, end: pos }],
+                selections: vec![Selection {
+                    start: pos,
+                    end: pos,
+                }],
             }],
             rendered: vec![RenderedFile {
                 path: path.to_string(),
@@ -456,7 +463,7 @@ fn compress_consecutive_cursor_snapshots() {
 
 #[test]
 fn compress_preserves_selection_snapshots() {
-    use crate::state::{FileEntry, Selection, Position, Line, Col};
+    use crate::state::{Col, FileEntry, Line, Position, Selection};
 
     let cursor_snap = |t: f64, path: &str| {
         let pos = Position {
@@ -467,7 +474,10 @@ fn compress_preserves_selection_snapshots() {
             offset_secs: t,
             files: vec![FileEntry {
                 path: path.into(),
-                selections: vec![Selection { start: pos, end: pos }],
+                selections: vec![Selection {
+                    start: pos,
+                    end: pos,
+                }],
             }],
             rendered: vec![RenderedFile {
                 path: path.to_string(),
@@ -511,7 +521,10 @@ fn compress_preserves_selection_snapshots() {
         cursor_snap(3.0, "c.rs"),
     ];
     let md = format_markdown(&mut events, SnipConfig::default());
-    assert!(!md.contains("a.rs"), "cursor-only a.rs should be compressed");
+    assert!(
+        !md.contains("a.rs"),
+        "cursor-only a.rs should be compressed"
+    );
     assert!(md.contains("b.rs"), "selection b.rs must be preserved");
     assert!(md.contains("c.rs"), "c.rs is last cursor, should be kept");
 
@@ -524,7 +537,7 @@ fn compress_preserves_selection_snapshots() {
 
 #[test]
 fn compress_keeps_diffs_between_snapshots() {
-    use crate::state::{FileEntry, Selection, Position, Line, Col};
+    use crate::state::{Col, FileEntry, Line, Position, Selection};
 
     let cursor_snap = |t: f64, path: &str| {
         let pos = Position {
@@ -535,7 +548,10 @@ fn compress_keeps_diffs_between_snapshots() {
             offset_secs: t,
             files: vec![FileEntry {
                 path: path.into(),
-                selections: vec![Selection { start: pos, end: pos }],
+                selections: vec![Selection {
+                    start: pos,
+                    end: pos,
+                }],
             }],
             rendered: vec![RenderedFile {
                 path: path.to_string(),

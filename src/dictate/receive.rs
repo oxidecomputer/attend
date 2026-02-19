@@ -40,19 +40,23 @@ pub(crate) fn collect_pending(session_id: &str) -> Vec<PathBuf> {
 /// Deserialize, filter, relativize, and render pending JSON event files.
 ///
 /// Returns `None` if no content remains after filtering.
-pub(crate) fn read_pending(files: &[PathBuf], cwd: &Path, include_dirs: &[PathBuf]) -> Option<String> {
+pub(crate) fn read_pending(
+    files: &[PathBuf],
+    cwd: &Path,
+    include_dirs: &[PathBuf],
+) -> Option<String> {
     if files.is_empty() {
         return None;
     }
 
     let mut all_events: Vec<Event> = Vec::new();
     for path in files {
-        if let Ok(content) = fs::read_to_string(path) {
-            if let Ok(mut events) = serde_json::from_str::<Vec<Event>>(&content) {
-                filter_events(&mut events, cwd, include_dirs);
-                relativize_events(&mut events, cwd);
-                all_events.append(&mut events);
-            }
+        if let Ok(content) = fs::read_to_string(path)
+            && let Ok(mut events) = serde_json::from_str::<Vec<Event>>(&content)
+        {
+            filter_events(&mut events, cwd, include_dirs);
+            relativize_events(&mut events, cwd);
+            all_events.append(&mut events);
         }
     }
 
@@ -94,7 +98,7 @@ fn path_included(path: &str, cwd: &Path, include_dirs: &[PathBuf]) -> bool {
 }
 
 /// Rewrite absolute paths to be relative to `cwd`.
-fn relativize_events(events: &mut Vec<Event>, cwd: &Path) {
+fn relativize_events(events: &mut [Event], cwd: &Path) {
     for event in events.iter_mut() {
         match event {
             Event::EditorSnapshot { rendered, .. } => {

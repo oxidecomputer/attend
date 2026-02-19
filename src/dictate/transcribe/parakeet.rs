@@ -92,7 +92,10 @@ impl super::Transcriber for ParakeetTranscriber {
         );
         let transcribe_time = t0.elapsed();
 
-        tracing::debug!(transcription_s = transcribe_time.as_secs_f64(), "Parakeet bench");
+        tracing::debug!(
+            transcription_s = transcribe_time.as_secs_f64(),
+            "Parakeet bench"
+        );
     }
 }
 

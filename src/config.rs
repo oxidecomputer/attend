@@ -80,13 +80,12 @@ mod tests {
     fn load_file_valid_toml() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            "include_dirs = [\"/Users/oxide/src/shared\"]\n",
-        )
-        .unwrap();
+        std::fs::write(&path, "include_dirs = [\"/Users/oxide/src/shared\"]\n").unwrap();
         let raw = load_file(&path).unwrap();
-        assert_eq!(raw.include_dirs, vec![PathBuf::from("/Users/oxide/src/shared")]);
+        assert_eq!(
+            raw.include_dirs,
+            vec![PathBuf::from("/Users/oxide/src/shared")]
+        );
     }
 
     #[test]

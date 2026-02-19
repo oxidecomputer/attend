@@ -80,7 +80,8 @@ fn parse_jsonc_with_comments_and_trailing_commas() {
 #[test]
 fn is_dictation_keybinding_current_keys() {
     let flush = serde_json::json!({"bindings": {"cmd-:": ["task::Spawn", {"task_name": "Flush"}]}});
-    let toggle = serde_json::json!({"bindings": {"cmd-;": ["task::Spawn", {"task_name": "Toggle"}]}});
+    let toggle =
+        serde_json::json!({"bindings": {"cmd-;": ["task::Spawn", {"task_name": "Toggle"}]}});
     assert!(is_dictation_keybinding(&flush));
     assert!(is_dictation_keybinding(&toggle));
 }

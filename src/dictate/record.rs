@@ -66,7 +66,9 @@ pub fn start(
     session: Option<String>,
 ) -> anyhow::Result<()> {
     if record_lock_path().exists() {
-        eprintln!("Already recording. Run `attend dictate stop` first, or `attend dictate toggle` to stop and restart.");
+        eprintln!(
+            "Already recording. Run `attend dictate stop` first, or `attend dictate toggle` to stop and restart."
+        );
         return Ok(());
     }
 
@@ -298,7 +300,10 @@ fn transcribe_and_write(
         return Ok(());
     }
 
-    tracing::info!(duration_secs = recording.duration_secs(), "Transcribing audio...");
+    tracing::info!(
+        duration_secs = recording.duration_secs(),
+        "Transcribing audio..."
+    );
 
     let samples_16k = audio::resample(&recording.flatten(), recording.sample_rate, 16000)?;
     let words = transcriber.transcribe(&samples_16k)?;
@@ -529,4 +534,3 @@ fn render_snapshot_files(files: &[state::FileEntry], cwd: Option<&Path>) -> Vec<
 
     rendered
 }
-

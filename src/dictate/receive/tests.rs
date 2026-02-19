@@ -62,8 +62,14 @@ fn read_pending_filters_by_cwd() {
 
     let cwd = Path::new("/project");
     let result = read_pending(&[path], cwd, &[]).unwrap();
-    assert!(result.contains("src/main.rs"), "project file should be included");
-    assert!(!result.contains("/other/lib.rs"), "outside file should be filtered out");
+    assert!(
+        result.contains("src/main.rs"),
+        "project file should be included"
+    );
+    assert!(
+        !result.contains("/other/lib.rs"),
+        "outside file should be filtered out"
+    );
 }
 
 #[test]

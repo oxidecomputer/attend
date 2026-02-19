@@ -125,8 +125,16 @@ impl Hook {
                 if agent.is_empty() && editor.is_empty() {
                     anyhow::bail!(
                         "specify at least one --agent or --editor.\n  Available agents: {}\n  Available editors: {}",
-                        crate::agent::AGENTS.iter().map(|a| a.name()).collect::<Vec<_>>().join(", "),
-                        crate::editor::EDITORS.iter().map(|e| e.name()).collect::<Vec<_>>().join(", "),
+                        crate::agent::AGENTS
+                            .iter()
+                            .map(|a| a.name())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        crate::editor::EDITORS
+                            .iter()
+                            .map(|e| e.name())
+                            .collect::<Vec<_>>()
+                            .join(", "),
                     );
                 }
                 let bin_cmd = crate::agent::resolve_bin_cmd(dev)?;
@@ -148,8 +156,16 @@ impl Hook {
                 if agent.is_empty() && editor.is_empty() {
                     anyhow::bail!(
                         "specify at least one --agent or --editor.\n  Available agents: {}\n  Available editors: {}",
-                        crate::agent::AGENTS.iter().map(|a| a.name()).collect::<Vec<_>>().join(", "),
-                        crate::editor::EDITORS.iter().map(|e| e.name()).collect::<Vec<_>>().join(", "),
+                        crate::agent::AGENTS
+                            .iter()
+                            .map(|a| a.name())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        crate::editor::EDITORS
+                            .iter()
+                            .map(|e| e.name())
+                            .collect::<Vec<_>>()
+                            .join(", "),
                     );
                 }
                 for name in &agent {

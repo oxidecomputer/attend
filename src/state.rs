@@ -158,15 +158,14 @@ impl EditorState {
         let Some(cp) = shared_cache_path() else {
             return;
         };
-        if let Some(parent) = cp.parent() {
-            if let Err(e) = fs::create_dir_all(parent) {
-                tracing::warn!(path = %parent.display(), "Failed to create cache directory: {e}");
-                return;
-            }
+        if let Some(parent) = cp.parent()
+            && let Err(e) = fs::create_dir_all(parent)
+        {
+            tracing::warn!(path = %parent.display(), "Failed to create cache directory: {e}");
+            return;
         }
         if let Err(e) = atomic_write(&cp, |file| {
-            serde_json::to_writer(io::BufWriter::new(file), self)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+            serde_json::to_writer(io::BufWriter::new(file), self).map_err(io::Error::other)
         }) {
             tracing::warn!(path = %cp.display(), "Failed to write cache: {e}");
         }

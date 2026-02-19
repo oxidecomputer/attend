@@ -330,13 +330,7 @@ fn merge_adjacent(events: &mut Vec<Event>) {
                         entry.1 = *offset_secs;
                         entry.3 = new.clone();
                     } else {
-                        by_path.push((
-                            path.clone(),
-                            *offset_secs,
-                            old.clone(),
-                            new.clone(),
-                            idx,
-                        ));
+                        by_path.push((path.clone(), *offset_secs, old.clone(), new.clone(), idx));
                     }
                 }
             }

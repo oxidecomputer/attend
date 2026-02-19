@@ -161,7 +161,8 @@ fn refresh(
                         let payload = crate::json::CompactPayload::from_state(s);
                         let wrapped = crate::json::Timestamped::now(payload);
                         if is_tty {
-                            serde_json::to_string_pretty(&wrapped).expect("serialization of known type")
+                            serde_json::to_string_pretty(&wrapped)
+                                .expect("serialization of known type")
                         } else {
                             serde_json::to_string(&wrapped).expect("serialization of known type")
                         }
@@ -199,9 +200,11 @@ fn refresh(
                         Ok(payload) => {
                             let wrapped = crate::json::Timestamped::now(payload);
                             let output = if is_tty {
-                                serde_json::to_string_pretty(&wrapped).expect("serialization of known type")
+                                serde_json::to_string_pretty(&wrapped)
+                                    .expect("serialization of known type")
                             } else {
-                                serde_json::to_string(&wrapped).expect("serialization of known type")
+                                serde_json::to_string(&wrapped)
+                                    .expect("serialization of known type")
                             };
                             if is_tty {
                                 clear_screen();

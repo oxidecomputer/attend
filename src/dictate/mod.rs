@@ -13,6 +13,7 @@ pub(crate) mod transcribe;
 
 use std::fs;
 use std::path::PathBuf;
+use std::time::{Duration, SystemTime};
 
 /// Check whether a process with the given PID is alive.
 ///
@@ -122,10 +123,7 @@ pub(crate) fn status() -> anyhow::Result<()> {
 
     // Session
     let session = crate::state::listening_session();
-    println!(
-        "Session:    {}",
-        session.as_deref().unwrap_or("none")
-    );
+    println!("Session:    {}", session.as_deref().unwrap_or("none"));
 
     // Receive listener
     let recv_lock = receive_lock_path();
@@ -165,11 +163,7 @@ pub(crate) fn status() -> anyhow::Result<()> {
             .map(|entries| {
                 entries
                     .filter_map(|e| e.ok())
-                    .filter(|e| {
-                        e.path()
-                            .extension()
-                            .is_some_and(|ext| ext == "json")
-                    })
+                    .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
                     .count()
             })
             .unwrap_or(0);
@@ -178,6 +172,51 @@ pub(crate) fn status() -> anyhow::Result<()> {
         println!("Pending:    -");
     }
 
+    Ok(())
+}
+
+/// Remove archived dictation files older than the given duration.
+pub(crate) fn clean(older_than: Duration) -> anyhow::Result<()> {
+    let archive_root = cache_dir().join("archive");
+    let Ok(sessions) = fs::read_dir(&archive_root) else {
+        println!("No archive directory found.");
+        return Ok(());
+    };
+
+    let cutoff = SystemTime::now() - older_than;
+    let mut removed = 0u64;
+
+    for entry in sessions.filter_map(|e| e.ok()) {
+        let session_dir = entry.path();
+        if !session_dir.is_dir() {
+            continue;
+        }
+
+        let Ok(files) = fs::read_dir(&session_dir) else {
+            continue;
+        };
+
+        for file in files.filter_map(|e| e.ok()) {
+            let path = file.path();
+            let dominated_by_cutoff = path
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .is_some_and(|mtime| mtime < cutoff);
+
+            if dominated_by_cutoff && fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+
+        // Remove session directory if now empty.
+        if fs::read_dir(&session_dir).is_ok_and(|mut d| d.next().is_none()) {
+            let _ = fs::remove_dir(&session_dir);
+        }
+    }
+
+    let age = humantime::format_duration(older_than);
+    println!("Removed {removed} archived dictation(s) older than {age}.");
     Ok(())
 }
 

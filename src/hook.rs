@@ -103,13 +103,11 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
     // Update session cache and emit.
     if let Some(sid) = session_id
         && let Some(cp) = session_cache_path(sid)
+        && let Err(e) = state::atomic_write(&cp, |file| {
+            serde_json::to_writer(io::BufWriter::new(file), &state).map_err(io::Error::other)
+        })
     {
-        if let Err(e) = state::atomic_write(&cp, |file| {
-            serde_json::to_writer(io::BufWriter::new(file), &state)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
-        }) {
-            tracing::warn!("Failed to write session cache: {e}");
-        }
+        tracing::warn!("Failed to write session cache: {e}");
     }
 
     println!("<editor-context>\n{state}\n</editor-context>");
@@ -177,7 +175,9 @@ fn stop_decision(
 
     // First attempt, no receiver — ask the agent to start one.
     StopDecision::Block {
-        reason: "Run `attend dictate receive --wait` in the background to wait for the next dictation.".to_string(),
+        reason:
+            "Run `attend dictate receive --wait` in the background to wait for the next dictation."
+                .to_string(),
     }
 }
 
@@ -209,8 +209,7 @@ pub fn stop() -> anyhow::Result<()> {
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         let config = crate::config::Config::load(&cwd);
         let files = crate::dictate::receive::collect_pending(session_id);
-        let content =
-            crate::dictate::receive::read_pending(&files, &cwd, &config.include_dirs);
+        let content = crate::dictate::receive::read_pending(&files, &cwd, &config.include_dirs);
         (content, files)
     } else {
         (None, Vec::new())
@@ -237,10 +236,10 @@ pub fn stop() -> anyhow::Result<()> {
         }
         StopDecision::Block { reason } => {
             // Archive pending files if we blocked with dictation content.
-            if !pending_files.is_empty() {
-                if let Some(sid) = listening.as_deref() {
-                    crate::dictate::receive::archive_pending(&pending_files, sid);
-                }
+            if !pending_files.is_empty()
+                && let Some(sid) = listening.as_deref()
+            {
+                crate::dictate::receive::archive_pending(&pending_files, sid);
             }
             let response = serde_json::json!({ "decision": "block", "reason": reason });
             println!("{}", serde_json::to_string(&response)?);
