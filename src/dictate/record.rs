@@ -33,7 +33,7 @@ pub fn toggle(
     if lock.exists() {
         // Check for stale lock (daemon was killed without cleanup).
         if is_lock_stale(&lock) {
-            eprintln!("Stale record lock detected, cleaning up.");
+            tracing::warn!("Stale record lock detected, cleaning up.");
             let _ = fs::remove_file(&lock);
             let _ = fs::remove_file(stop_sentinel_path());
             start(engine, model, session)
@@ -54,8 +54,7 @@ fn is_lock_stale(lock_path: &Path) -> bool {
         // No PID in the file — can't determine, assume not stale.
         return false;
     };
-    // kill(pid, 0) checks if the process exists without sending a signal.
-    unsafe { libc::kill(pid, 0) != 0 }
+    !super::process_alive(pid)
 }
 
 /// Start recording by spawning a detached daemon process.
@@ -67,7 +66,7 @@ pub fn start(
     session: Option<String>,
 ) -> anyhow::Result<()> {
     if record_lock_path().exists() {
-        eprintln!("Already recording.");
+        eprintln!("Already recording. Run `attend dictate stop` first, or `attend dictate toggle` to stop and restart.");
         return Ok(());
     }
 
@@ -121,7 +120,7 @@ pub fn start(
 /// If not recording (no lock), this is a no-op.
 pub fn stop() -> anyhow::Result<()> {
     if !record_lock_path().exists() {
-        eprintln!("Not recording.");
+        eprintln!("Not recording. Run `attend dictate toggle` or `attend dictate start` to begin.");
         return Ok(());
     }
 
@@ -160,7 +159,7 @@ pub fn flush(
     }
 
     if is_lock_stale(&lock) {
-        eprintln!("Stale record lock detected, cleaning up.");
+        tracing::warn!("Stale record lock detected, cleaning up.");
         let _ = fs::remove_file(&lock);
         let _ = fs::remove_file(stop_sentinel_path());
         let _ = fs::remove_file(flush_sentinel_path());
@@ -292,14 +291,14 @@ fn transcribe_and_write(
     session_id: &Option<String>,
 ) -> anyhow::Result<()> {
     if recording.duration_secs() < 0.5 {
-        eprintln!(
-            "Recording too short ({:.1}s), discarding.",
-            recording.duration_secs()
+        tracing::debug!(
+            duration_secs = recording.duration_secs(),
+            "Recording too short, discarding."
         );
         return Ok(());
     }
 
-    eprintln!("Transcribing {:.1}s of audio...", recording.duration_secs());
+    tracing::info!(duration_secs = recording.duration_secs(), "Transcribing audio...");
 
     let samples_16k = audio::resample(&recording.flatten(), recording.sample_rate, 16000)?;
     let words = transcriber.transcribe(&samples_16k)?;
@@ -320,7 +319,7 @@ fn transcribe_and_write(
     merge::compress_and_merge(&mut events);
 
     if events.is_empty() {
-        eprintln!("No content captured, discarding.");
+        tracing::debug!("No content captured, discarding.");
         return Ok(());
     }
 
@@ -332,11 +331,11 @@ fn transcribe_and_write(
         fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{ts}.json"));
         fs::write(&path, &json)?;
-        eprintln!("Dictation written to {}", path.display());
+        tracing::info!(path = %path.display(), "Dictation written");
     } else {
         let path = cache_dir().join("dictation.json");
         fs::write(&path, &json)?;
-        eprintln!("Dictation written to {}", path.display());
+        tracing::info!(path = %path.display(), "Dictation written");
     }
 
     Ok(())

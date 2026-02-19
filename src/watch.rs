@@ -15,7 +15,7 @@ pub fn run(watch: &Watch, dir: Option<&Path>) -> anyhow::Result<()> {
     let is_tty = std::io::stdout().is_terminal();
 
     if watch.mode == WatchMode::Silent {
-        eprintln!("attend: watching");
+        tracing::info!("watching");
     }
 
     // Signal handlers: SIGINT for clean shutdown, SIGWINCH for resize.
@@ -141,7 +141,7 @@ fn refresh(
         Ok(s) => s,
         Err(e) => {
             if watch.mode != WatchMode::Silent {
-                eprintln!("attend: {e}");
+                tracing::warn!("{e}");
             }
             return false;
         }
@@ -161,9 +161,9 @@ fn refresh(
                         let payload = crate::json::CompactPayload::from_state(s);
                         let wrapped = crate::json::Timestamped::now(payload);
                         if is_tty {
-                            serde_json::to_string_pretty(&wrapped).unwrap_or_default()
+                            serde_json::to_string_pretty(&wrapped).expect("serialization of known type")
                         } else {
-                            serde_json::to_string(&wrapped).unwrap_or_default()
+                            serde_json::to_string(&wrapped).expect("serialization of known type")
                         }
                     }
                 };
@@ -199,9 +199,9 @@ fn refresh(
                         Ok(payload) => {
                             let wrapped = crate::json::Timestamped::now(payload);
                             let output = if is_tty {
-                                serde_json::to_string_pretty(&wrapped).unwrap_or_default()
+                                serde_json::to_string_pretty(&wrapped).expect("serialization of known type")
                             } else {
-                                serde_json::to_string(&wrapped).unwrap_or_default()
+                                serde_json::to_string(&wrapped).expect("serialization of known type")
                             };
                             if is_tty {
                                 clear_screen();

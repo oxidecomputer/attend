@@ -106,7 +106,7 @@ pub fn start_capture() -> anyhow::Result<CaptureHandle> {
             }
         },
         |err| {
-            eprintln!("audio capture error: {err}");
+            tracing::error!("audio capture error: {err}");
         },
         None,
     )?;
@@ -250,7 +250,7 @@ pub fn play_flush_chime() -> anyhow::Result<()> {
             }
         },
         |err| {
-            eprintln!("audio output error: {err}");
+            tracing::error!("audio output error: {err}");
         },
         None,
     )?;
@@ -319,7 +319,7 @@ pub fn play_chime(ascending: bool) -> anyhow::Result<()> {
             }
         },
         |err| {
-            eprintln!("audio output error: {err}");
+            tracing::error!("audio output error: {err}");
         },
         None,
     )?;

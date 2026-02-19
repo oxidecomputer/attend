@@ -92,7 +92,7 @@ impl super::Transcriber for ParakeetTranscriber {
         );
         let transcribe_time = t0.elapsed();
 
-        eprintln!("  Transcription:  {:.3}s", transcribe_time.as_secs_f64());
+        tracing::debug!(transcription_s = transcribe_time.as_secs_f64(), "Parakeet bench");
     }
 }
 
@@ -115,7 +115,7 @@ fn download_model(dir: &Path) -> anyhow::Result<()> {
         }
 
         let url = format!("https://huggingface.co/{REPO}/resolve/main/{filename}");
-        eprintln!("Downloading {filename} to {}...", dir.display());
+        tracing::info!(filename, dir = %dir.display(), "Downloading Parakeet model file...");
 
         let response = ureq::get(&url).call()?;
         let mut reader = response.into_body().into_reader();
@@ -127,6 +127,6 @@ fn download_model(dir: &Path) -> anyhow::Result<()> {
         fs::rename(&tmp_path, &dest)?;
     }
 
-    eprintln!("Parakeet TDT model downloaded successfully.");
+    tracing::info!("Parakeet TDT model downloaded successfully.");
     Ok(())
 }

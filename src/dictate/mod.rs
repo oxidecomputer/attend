@@ -14,14 +14,18 @@ pub(crate) mod transcribe;
 use std::fs;
 use std::path::PathBuf;
 
+/// Check whether a process with the given PID is alive.
+///
+/// # Safety
+/// Calls `libc::kill(pid, 0)` which checks process existence without
+/// sending a signal. This is the POSIX-specified way to probe for a process.
+pub(crate) fn process_alive(pid: i32) -> bool {
+    unsafe { libc::kill(pid, 0) == 0 }
+}
+
 /// Base directory for all dictation state files.
 fn cache_dir() -> PathBuf {
     crate::state::cache_dir().expect("cannot determine cache directory")
-}
-
-/// Read the session ID of the currently attending session, if any.
-fn listening_session() -> Option<String> {
-    crate::state::listening_session()
 }
 
 /// Path to the record lock file.
@@ -59,7 +63,7 @@ pub(crate) fn archive_dir(session_id: &str) -> PathBuf {
 
 /// Resolve the session ID from flag, listening file, or None.
 pub(crate) fn resolve_session(flag: Option<String>) -> Option<String> {
-    flag.or_else(listening_session)
+    flag.or_else(crate::state::listening_session)
 }
 
 /// Run model benchmarks for all engines and model variants.
@@ -72,9 +76,9 @@ pub(crate) fn bench() -> anyhow::Result<()> {
     for engine in &[Engine::Whisper, Engine::Parakeet] {
         for name in engine.model_names() {
             let path = models_dir.join(name);
-            eprintln!("Ensuring model: {name}");
+            tracing::info!("Ensuring model: {name}");
             engine.preload(&path)?; // ensure + load to verify download
-            eprintln!("\n--- {name} ---");
+            tracing::info!("--- {name} ---");
             let mut transcriber = engine.ensure_and_load(&path)?;
             transcriber.bench(&samples);
         }
@@ -93,10 +97,10 @@ pub(crate) fn status() -> anyhow::Result<()> {
         if let Ok(content) = fs::read_to_string(&lock_path)
             && let Ok(pid) = content.trim().parse::<i32>()
         {
-            if unsafe { libc::kill(pid, 0) } == 0 {
+            if process_alive(pid) {
                 "recording"
             } else {
-                "stale lock (daemon not running)"
+                "stale lock (daemon not running) — run `attend dictate toggle` to clean up"
             }
         } else {
             "recording"
@@ -117,7 +121,7 @@ pub(crate) fn status() -> anyhow::Result<()> {
     println!("Engine:     parakeet (model {model_status})");
 
     // Session
-    let session = listening_session();
+    let session = crate::state::listening_session();
     println!(
         "Session:    {}",
         session.as_deref().unwrap_or("none")
@@ -128,7 +132,7 @@ pub(crate) fn status() -> anyhow::Result<()> {
     let listener = if recv_lock.exists() {
         if let Ok(content) = fs::read_to_string(&recv_lock) {
             if let Ok(pid) = content.trim().parse::<i32>() {
-                if unsafe { libc::kill(pid, 0) } == 0 {
+                if process_alive(pid) {
                     "active"
                 } else {
                     "stale lock"

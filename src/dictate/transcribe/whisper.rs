@@ -94,7 +94,7 @@ impl super::Transcriber for WhisperTranscriber {
         let mut state = match self.ctx.create_state() {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("  Failed to create state: {e}");
+                tracing::error!("Failed to create whisper state: {e}");
                 return;
             }
         };
@@ -117,9 +117,7 @@ impl super::Transcriber for WhisperTranscriber {
 
         let total = state_time + transcribe_time;
 
-        eprintln!("  State creation: {:.3}s", state_time.as_secs_f64());
-        eprintln!("  Transcription:  {:.3}s", transcribe_time.as_secs_f64());
-        eprintln!("  Total:          {:.3}s", total.as_secs_f64());
+        tracing::debug!(state_creation_s = state_time.as_secs_f64(), transcription_s = transcribe_time.as_secs_f64(), total_s = total.as_secs_f64(), "Whisper bench");
     }
 }
 
@@ -140,7 +138,7 @@ fn download_model(model_path: &Path) -> anyhow::Result<()> {
         "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}"
     );
 
-    eprintln!("Downloading Whisper model to {}...", model_path.display());
+    tracing::info!(path = %model_path.display(), "Downloading Whisper model...");
 
     if let Some(parent) = model_path.parent() {
         fs::create_dir_all(parent)?;
@@ -154,7 +152,7 @@ fn download_model(model_path: &Path) -> anyhow::Result<()> {
     std::io::copy(&mut reader, &mut file)?;
 
     fs::rename(&tmp_path, model_path)?;
-    eprintln!("Model downloaded successfully.");
+    tracing::info!("Whisper model downloaded successfully.");
 
     Ok(())
 }

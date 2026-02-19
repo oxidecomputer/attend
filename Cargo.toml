@@ -21,6 +21,8 @@ parakeet-rs = "0.3"
 cpal = "0.15"
 rubato = "0.16"
 similar = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ureq = "3"
 
 [dev-dependencies]

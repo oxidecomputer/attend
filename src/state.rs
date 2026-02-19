@@ -140,10 +140,20 @@ impl EditorState {
             return;
         };
         if let Some(parent) = cp.parent() {
-            let _ = fs::create_dir_all(parent);
+            if let Err(e) = fs::create_dir_all(parent) {
+                tracing::warn!(path = %parent.display(), "Failed to create cache directory: {e}");
+                return;
+            }
         }
-        if let Ok(file) = fs::File::create(&cp) {
-            let _ = serde_json::to_writer(io::BufWriter::new(file), self);
+        match fs::File::create(&cp) {
+            Ok(file) => {
+                if let Err(e) = serde_json::to_writer(io::BufWriter::new(file), self) {
+                    tracing::warn!(path = %cp.display(), "Failed to write cache: {e}");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(path = %cp.display(), "Failed to create cache file: {e}");
+            }
         }
     }
 

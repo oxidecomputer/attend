@@ -123,7 +123,11 @@ impl Hook {
                 dev,
             } => {
                 if agent.is_empty() && editor.is_empty() {
-                    anyhow::bail!("specify at least one --agent or --editor");
+                    anyhow::bail!(
+                        "specify at least one --agent or --editor.\n  Available agents: {}\n  Available editors: {}",
+                        crate::agent::AGENTS.iter().map(|a| a.name()).collect::<Vec<_>>().join(", "),
+                        crate::editor::EDITORS.iter().map(|e| e.name()).collect::<Vec<_>>().join(", "),
+                    );
                 }
                 let bin_cmd = crate::agent::resolve_bin_cmd(dev)?;
                 for name in &agent {
@@ -142,7 +146,11 @@ impl Hook {
                 project,
             } => {
                 if agent.is_empty() && editor.is_empty() {
-                    anyhow::bail!("specify at least one --agent or --editor");
+                    anyhow::bail!(
+                        "specify at least one --agent or --editor.\n  Available agents: {}\n  Available editors: {}",
+                        crate::agent::AGENTS.iter().map(|a| a.name()).collect::<Vec<_>>().join(", "),
+                        crate::editor::EDITORS.iter().map(|e| e.name()).collect::<Vec<_>>().join(", "),
+                    );
                 }
                 for name in &agent {
                     crate::agent::uninstall(name, project.clone())?;

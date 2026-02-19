@@ -13,9 +13,7 @@ use std::thread;
 use std::time::Duration;
 
 use super::merge::{self, Event, SnipConfig};
-use super::{
-    archive_dir, cache_dir, listening_session, pending_dir, receive_lock_path, resolve_session,
-};
+use super::{archive_dir, cache_dir, pending_dir, receive_lock_path, resolve_session};
 use crate::config::Config;
 
 /// Re-dispatch instruction appended to output when running with `--wait`.
@@ -75,7 +73,9 @@ fn read_pending(files: &[PathBuf], cwd: &Path, include_dirs: &[PathBuf]) -> Opti
 fn filter_events(events: &mut Vec<Event>, cwd: &Path, include_dirs: &[PathBuf]) {
     events.retain_mut(|event| match event {
         Event::Words { .. } => true,
-        Event::EditorSnapshot { rendered, files, .. } => {
+        Event::EditorSnapshot {
+            rendered, files, ..
+        } => {
             rendered.retain(|r| path_included(&r.path, cwd, include_dirs));
             files.retain(|f| path_included(&f.path.to_string_lossy(), cwd, include_dirs));
             !rendered.is_empty()
@@ -159,7 +159,7 @@ fn try_lock(lock_path: &Path) -> Option<LockGuard> {
             // Check if the lock is stale (process no longer exists)
             if let Ok(content) = fs::read_to_string(lock_path)
                 && let Ok(pid) = content.trim().parse::<u32>()
-                && !process_exists(pid)
+                && !super::process_alive(pid as i32)
             {
                 let _ = fs::remove_file(lock_path);
                 return try_lock(lock_path);
@@ -167,12 +167,6 @@ fn try_lock(lock_path: &Path) -> Option<LockGuard> {
             None
         }
     }
-}
-
-/// Check if a process with the given PID exists.
-fn process_exists(pid: u32) -> bool {
-    // kill(pid, 0) checks existence without sending a signal
-    unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
 /// RAII guard that removes the lock file on drop.
@@ -259,7 +253,7 @@ fn run_wait(session_id: Option<String>) -> anyhow::Result<()> {
         Some(guard) => guard,
         None => {
             // Another listener is already running
-            eprintln!("Listener already running.");
+            eprintln!("Listener already running. Use `attend dictate status` to check.");
             std::process::exit(0);
         }
     };
@@ -268,7 +262,7 @@ fn run_wait(session_id: Option<String>) -> anyhow::Result<()> {
 
     loop {
         // Check if session was stolen
-        match listening_session() {
+        match crate::state::listening_session() {
             Some(current) if current == session_id => {}
             _ => {
                 println!(

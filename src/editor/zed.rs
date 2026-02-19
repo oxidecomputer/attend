@@ -119,10 +119,17 @@ const DICTATION_TASK_LABELS: &[&str] = &["Toggle Dictation", "Flush Dictation"];
 
 /// Read a Zed JSONC config file as a JSON array, or empty vec if missing/invalid.
 fn read_jsonc_array(path: &std::path::Path) -> Vec<serde_json::Value> {
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|c| parse_jsonc(&c).ok())
-        .unwrap_or_default()
+    let content = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    match parse_jsonc(&content) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(path = %path.display(), "Failed to parse JSONC: {e}");
+            Vec::new()
+        }
+    }
 }
 
 /// Write a JSON array to a config file with pretty formatting.
@@ -162,7 +169,7 @@ fn install_task(bin_cmd: &str, label: &str, args: &[&str]) -> anyhow::Result<()>
         .and_then(|t| t.get("command").and_then(|c| c.as_str()))
     {
         if !std::path::Path::new(cmd).exists() {
-            eprintln!("Warning: replacing stale command path: {cmd}");
+            tracing::warn!("Replacing stale command path: {cmd}");
         }
     }
 
@@ -390,7 +397,17 @@ fn query_editors(conn: &rusqlite::Connection) -> anyhow::Result<Vec<RawEditor>> 
     let editors: Vec<RawEditor> = stmt
         .query_map([], |row| {
             let path_bytes: Vec<u8> = row.get(0)?;
-            let path = std::path::PathBuf::from(String::from_utf8(path_bytes).unwrap_or_default());
+            let path = match String::from_utf8(path_bytes) {
+                Ok(s) => std::path::PathBuf::from(s),
+                Err(e) => {
+                    tracing::warn!("Skipping non-UTF8 path from Zed DB: {e}");
+                    return Ok(RawEditor {
+                        path: std::path::PathBuf::new(),
+                        sel_start: None,
+                        sel_end: None,
+                    });
+                }
+            };
             Ok(RawEditor {
                 path,
                 sel_start: row.get(1)?,

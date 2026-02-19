@@ -5,6 +5,11 @@ use anyhow::Context;
 
 use super::{Agent, HookEvent};
 
+/// Claude Code hook configuration keys.
+const HOOK_KEY_SESSION_START: &str = "SessionStart";
+const HOOK_KEY_USER_PROMPT_SUBMIT: &str = "UserPromptSubmit";
+const HOOK_KEY_STOP: &str = "Stop";
+
 /// Claude Code agent backend.
 pub struct Claude;
 
@@ -93,7 +98,7 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
     });
 
     let ss_arr = hooks_obj
-        .entry("SessionStart")
+        .entry(HOOK_KEY_SESSION_START)
         .or_insert_with(|| serde_json::json!([]));
     let ss_vec = ss_arr
         .as_array_mut()
@@ -117,7 +122,7 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
     });
 
     let ups_arr = hooks_obj
-        .entry("UserPromptSubmit")
+        .entry(HOOK_KEY_USER_PROMPT_SUBMIT)
         .or_insert_with(|| serde_json::json!([]));
     let ups_vec = ups_arr
         .as_array_mut()
@@ -142,7 +147,7 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
         });
 
         let stop_arr = hooks_obj
-            .entry("Stop")
+            .entry(HOOK_KEY_STOP)
             .or_insert_with(|| serde_json::json!([]));
         let stop_vec = stop_arr
             .as_array_mut()
@@ -218,7 +223,7 @@ fn uninstall(project: Option<PathBuf>) -> anyhow::Result<()> {
     };
 
     let mut removed = false;
-    let hook_keys = ["SessionStart", "UserPromptSubmit", "Stop"];
+    let hook_keys = [HOOK_KEY_SESSION_START, HOOK_KEY_USER_PROMPT_SUBMIT, HOOK_KEY_STOP];
     for key in &hook_keys {
         if let Some(arr) = hooks.get_mut(*key).and_then(|v| v.as_array_mut()) {
             let before = arr.len();

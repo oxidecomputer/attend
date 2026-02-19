@@ -137,7 +137,7 @@ impl Cli {
                             let wrapped = crate::json::Timestamped::now(payload);
                             println!(
                                 "{}",
-                                serde_json::to_string_pretty(&wrapped).unwrap_or_default()
+                                serde_json::to_string_pretty(&wrapped).expect("serialization of known type")
                             );
                         }
                     }
@@ -201,7 +201,7 @@ impl Command {
                         let wrapped = crate::json::Timestamped::now(payload);
                         println!(
                             "{}",
-                            serde_json::to_string_pretty(&wrapped).unwrap_or_default()
+                            serde_json::to_string_pretty(&wrapped).expect("serialization of known type")
                         );
                     }
                 }

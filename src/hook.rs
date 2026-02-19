@@ -105,7 +105,9 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
         && let Some(cp) = session_cache_path(sid)
         && let Ok(file) = fs::File::create(&cp)
     {
-        let _ = serde_json::to_writer(io::BufWriter::new(file), &state);
+        if let Err(e) = serde_json::to_writer(io::BufWriter::new(file), &state) {
+            tracing::warn!("Failed to write session cache: {e}");
+        }
     }
 
     println!("<editor-context>\n{state}\n</editor-context>");
