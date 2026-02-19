@@ -161,7 +161,7 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
     fs::write(&settings_path, output).context("cannot write settings file")?;
 
     // SKILL.md for /attend discoverability
-    install_skill_file(project.as_deref())?;
+    install_skill_file(bin_cmd, project.as_deref())?;
 
     if existing {
         println!("Updated existing hooks in {}", settings_path.display());
@@ -237,25 +237,34 @@ echo '\''{{\"decision\":\"block\",\"reason\":\"Run `attend dictate receive --wai
 }
 
 /// Install the SKILL.md file for `/attend` discoverability.
-fn install_skill_file(project: Option<&Path>) -> anyhow::Result<()> {
+fn install_skill_file(bin_cmd: &str, project: Option<&Path>) -> anyhow::Result<()> {
     let base = if let Some(proj) = project {
         proj.to_path_buf()
     } else {
-        PathBuf::from(".")
+        dirs::home_dir().context("cannot determine home directory")?
     };
     let skill_dir = base.join(".claude/skills/attend");
     fs::create_dir_all(&skill_dir)?;
 
-    let skill_content = "\
+    let skill_content = format!(
+        "\
 ---
 name: attend
 description: Activate dictation mode for this session
+allowedTools:
+  - Bash({bin_cmd} dictate receive:*)
 ---
-Dictation mode is handled by the UserPromptSubmit hook.
+Activate dictation mode: run `{bin_cmd} dictate receive --wait` in the
+background (Bash with `run_in_background: true`). Do nothing else.
 
-When the user runs /attend, the hook activates dictation for this session
-and instructs Claude to start a background listener.
-";
+Dictation input arrives through two paths:
+- **Stop hook** (non-blocking): delivers pending dictation when you stop.
+  No action needed — the hook handles this automatically.
+- **Background receiver** (blocking): polls until dictation arrives, then
+  prints it and exits. When this background task completes, immediately
+  start a new one so you are always listening for the next dictation.
+"
+    );
 
     fs::write(skill_dir.join("SKILL.md"), skill_content)?;
     Ok(())
