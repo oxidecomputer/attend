@@ -132,6 +132,22 @@ pub struct CaptureHandle {
 }
 
 impl CaptureHandle {
+    /// Drain accumulated audio without stopping the capture stream.
+    ///
+    /// Returns a `Recording` of everything captured so far, then resets the
+    /// internal buffer. The cpal stream keeps running — new samples accumulate
+    /// into the now-empty Vec. No audio is lost.
+    pub fn drain(&self) -> Recording {
+        let chunks = std::mem::take(&mut *self.chunks.lock().unwrap());
+
+        Recording {
+            chunks,
+            sample_rate: self.sample_rate,
+            start_instant: self.start_instant,
+            start_wall_clock: self.start_wall_clock.clone(),
+        }
+    }
+
     /// Stop recording and return the accumulated audio data.
     pub fn stop(self) -> Recording {
         drop(self.stream);
@@ -190,6 +206,62 @@ pub fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> anyhow::Result
     output.truncate(expected);
 
     Ok(output)
+}
+
+/// Play a single short note as a flush chime (distinct from start/stop).
+///
+/// A single G5 note (~80ms) signals "submitted, still recording".
+pub fn play_flush_chime() -> anyhow::Result<()> {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .ok_or_else(|| anyhow::anyhow!("no audio output device found"))?;
+
+    let config = device.default_output_config()?;
+    let sample_rate = config.sample_rate().0 as f32;
+    let channels = config.channels() as usize;
+
+    let freq = 783.99_f32; // G5
+    let note_samples = (sample_rate * 0.08) as usize; // 80ms
+    let sample_idx = Arc::new(AtomicUsize::new(0));
+    let sample_idx_ref = Arc::clone(&sample_idx);
+
+    let stream_config: cpal::StreamConfig = config.into();
+
+    let stream = device.build_output_stream(
+        &stream_config,
+        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+            for frame in data.chunks_mut(channels) {
+                let idx = sample_idx_ref.fetch_add(1, Ordering::Relaxed);
+                let sample = if idx >= note_samples {
+                    0.0
+                } else {
+                    let t = idx as f32 / sample_rate;
+                    let pos = idx as f32 / note_samples as f32;
+                    let envelope = (pos * std::f32::consts::PI).sin();
+                    (t * freq * 2.0 * std::f32::consts::PI).sin() * envelope * 0.3
+                };
+                for ch in frame.iter_mut() {
+                    *ch = sample;
+                }
+            }
+        },
+        |err| {
+            eprintln!("audio output error: {err}");
+        },
+        None,
+    )?;
+
+    stream.play()?;
+
+    let total_duration =
+        std::time::Duration::from_secs_f32(note_samples as f32 / sample_rate + 0.05);
+    std::thread::sleep(total_duration);
+
+    Ok(())
 }
 
 /// Play a short synthesized chime for auditory feedback.

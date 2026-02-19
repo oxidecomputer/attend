@@ -53,6 +53,15 @@ pub enum DictateCommand {
         #[command(flatten)]
         args: RecordingArgs,
     },
+    /// Submit current dictation and keep recording.
+    ///
+    /// If not recording, starts recording (like toggle).
+    /// If recording, flushes the current audio for transcription
+    /// while continuing to record.
+    Flush {
+        #[command(flatten)]
+        args: RecordingArgs,
+    },
     /// Spawn detached recorder (idempotent).
     #[command(hide = true)]
     Start {
@@ -91,6 +100,9 @@ impl DictateCommand {
         match self {
             DictateCommand::Toggle { args } => {
                 record::toggle(args.engine, args.model, args.session, args.snip.into_config())
+            }
+            DictateCommand::Flush { args } => {
+                record::flush(args.engine, args.model, args.session, args.snip.into_config())
             }
             DictateCommand::Start { args } => {
                 record::start(args.engine, args.model, args.session, args.snip.into_config())

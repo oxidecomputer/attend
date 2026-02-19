@@ -10,7 +10,8 @@ use super::{Editor, QueryResult, RawEditor};
 /// Zed uses `~/.config/zed` on all platforms, not the platform-native
 /// config directory (e.g. `~/Library/Application Support` on macOS).
 fn zed_config_dir() -> anyhow::Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+    let home =
+        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
     Ok(home.join(".config").join("zed"))
 }
 
@@ -39,9 +40,11 @@ impl Editor for Zed {
     }
 
     fn install_dictation(&self, bin_cmd: &str) -> anyhow::Result<()> {
-        install_task(bin_cmd)?;
-        install_keybinding()?;
-        println!("Installed Zed dictation task and keybinding.");
+        install_task(bin_cmd, "Toggle Dictation", &["dictate", "toggle"])?;
+        install_task(bin_cmd, "Flush Dictation", &["dictate", "flush"])?;
+        install_keybinding("cmd-;", "Toggle Dictation")?;
+        install_keybinding("cmd-:", "Flush Dictation")?;
+        println!("Installed Zed dictation tasks and keybindings.");
         Ok(())
     }
 
@@ -105,214 +108,121 @@ fn find_db() -> Option<std::path::PathBuf> {
     with_mtime.into_iter().next().map(|(p, _)| p)
 }
 
-/// Install the Zed task definition for toggling dictation.
-///
-/// Preserves existing file content (comments, formatting) by appending
-/// via string manipulation rather than parse-and-rewrite.
-fn install_task(bin_cmd: &str) -> anyhow::Result<()> {
+/// Known dictation keybindings (current + legacy).
+const DICTATION_KEYS: &[&str] = &[
+    "cmd-:", // flush (current)
+    "cmd-;", // toggle (current)
+];
+
+/// Dictation task labels.
+const DICTATION_TASK_LABELS: &[&str] = &["Toggle Dictation", "Flush Dictation"];
+
+/// Read a Zed JSONC config file as a JSON array, or empty vec if missing/invalid.
+fn read_jsonc_array(path: &std::path::Path) -> Vec<serde_json::Value> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|c| parse_jsonc(&c).ok())
+        .unwrap_or_default()
+}
+
+/// Write a JSON array to a config file with pretty formatting.
+fn write_json_array(path: &std::path::Path, items: &[serde_json::Value]) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut output = serde_json::to_string_pretty(items)?;
+    output.push('\n');
+    fs::write(path, output)?;
+    Ok(())
+}
+
+/// Install a Zed task definition for dictation.
+fn install_task(bin_cmd: &str, label: &str, args: &[&str]) -> anyhow::Result<()> {
     let tasks_path = zed_config_dir()?.join("tasks.json");
+    let mut tasks = read_jsonc_array(&tasks_path);
 
     let task_entry = serde_json::json!({
-        "label": "Toggle Dictation",
+        "label": label,
         "command": bin_cmd,
-        "args": ["dictate", "toggle"],
+        "args": args,
         "hide": "always",
         "reveal": "never",
         "allow_concurrent_runs": false,
         "use_new_terminal": true
     });
 
-    if let Some(parent) = tasks_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    if !tasks_path.exists() {
-        let mut output = serde_json::to_string_pretty(&[&task_entry])?;
-        output.push('\n');
-        fs::write(&tasks_path, output)?;
+    if tasks.iter().any(|t| *t == task_entry) {
         return Ok(());
     }
 
-    let content = fs::read_to_string(&tasks_path)?;
-
-    let existing: Vec<serde_json::Value> =
-        parse_jsonc(&content).unwrap_or_default();
-
-    let prev = existing.iter().find(|t| {
-        t.get("label")
-            .and_then(|l| l.as_str())
-            .is_some_and(|l| l == "Toggle Dictation")
-    });
-
-    if prev.is_some_and(|p| *p == task_entry) {
-        // Already up to date.
-        return Ok(());
-    }
-
-    if prev.is_some() {
-        // Warn if the old command path is stale.
-        if let Some(old_cmd) = prev.unwrap().get("command").and_then(|c| c.as_str()) {
-            if !std::path::Path::new(old_cmd).exists() {
-                eprintln!("Warning: replacing stale command path: {old_cmd}");
-            }
+    // Warn about stale command path before replacing.
+    if let Some(cmd) = tasks
+        .iter()
+        .find(|t| t.get("label").and_then(|l| l.as_str()) == Some(label))
+        .and_then(|t| t.get("command").and_then(|c| c.as_str()))
+    {
+        if !std::path::Path::new(cmd).exists() {
+            eprintln!("Warning: replacing stale command path: {cmd}");
         }
-        // Replace outdated entry (rewrite unavoidable).
-        let mut tasks = existing;
-        tasks.retain(|t| {
-            t.get("label")
-                .and_then(|l| l.as_str())
-                .is_none_or(|l| l != "Toggle Dictation")
-        });
-        tasks.push(task_entry);
-        let mut output = serde_json::to_string_pretty(&tasks)?;
-        output.push('\n');
-        fs::write(&tasks_path, output)?;
-        return Ok(());
     }
 
-    // Append to existing file, preserving comments and formatting.
-    let new_json = serde_json::to_string_pretty(&task_entry)?;
-    let output = append_to_json_array(&content, &new_json)?;
-    fs::write(&tasks_path, output)?;
-
-    Ok(())
+    tasks.retain(|t| t.get("label").and_then(|l| l.as_str()) != Some(label));
+    tasks.push(task_entry);
+    write_json_array(&tasks_path, &tasks)
 }
 
-/// Remove the Zed task definition for dictation.
+/// Remove the Zed task definitions for dictation.
 fn uninstall_task() -> anyhow::Result<()> {
     let tasks_path = zed_config_dir()?.join("tasks.json");
-
-    if !tasks_path.exists() {
-        return Ok(());
-    }
-
-    let content = fs::read_to_string(&tasks_path)?;
-    let mut tasks: Vec<serde_json::Value> =
-        parse_jsonc(&content).unwrap_or_default();
+    let mut tasks = read_jsonc_array(&tasks_path);
 
     let before = tasks.len();
     tasks.retain(|t| {
-        t.get("label")
-            .and_then(|l| l.as_str())
-            .is_none_or(|l| l != "Toggle Dictation")
+        let label = t.get("label").and_then(|l| l.as_str());
+        !label.is_some_and(|l| DICTATION_TASK_LABELS.contains(&l))
     });
 
     if tasks.len() < before {
-        let mut output = serde_json::to_string_pretty(&tasks)?;
-        output.push('\n');
-        fs::write(&tasks_path, output)?;
+        write_json_array(&tasks_path, &tasks)?;
     }
-
     Ok(())
 }
 
-/// Remove the Zed keybinding for dictation.
+/// Remove the Zed keybindings for dictation.
 fn uninstall_keybinding() -> anyhow::Result<()> {
     let keymap_path = zed_config_dir()?.join("keymap.json");
-
-    if !keymap_path.exists() {
-        return Ok(());
-    }
-
-    let content = fs::read_to_string(&keymap_path)?;
-    let mut keymap: Vec<serde_json::Value> =
-        parse_jsonc(&content).unwrap_or_default();
+    let mut keymap = read_jsonc_array(&keymap_path);
 
     let before = keymap.len();
     keymap.retain(|entry| !is_dictation_keybinding(entry));
 
     if keymap.len() < before {
-        let mut output = serde_json::to_string_pretty(&keymap)?;
-        output.push('\n');
-        fs::write(&keymap_path, output)?;
+        write_json_array(&keymap_path, &keymap)?;
     }
-
     Ok(())
 }
 
-/// Install a Zed keybinding for the Toggle Dictation task.
-///
-/// Preserves existing file content (comments, formatting) by appending
-/// via string manipulation rather than parse-and-rewrite.
-fn install_keybinding() -> anyhow::Result<()> {
+/// Install a Zed keybinding for a dictation task.
+fn install_keybinding(key: &str, task_name: &str) -> anyhow::Result<()> {
     let keymap_path = zed_config_dir()?.join("keymap.json");
+    let mut keymap = read_jsonc_array(&keymap_path);
 
-    let binding_entry = serde_json::json!({
-        "bindings": {
-            "cmd-:": ["task::Spawn", {"task_name": "Toggle Dictation"}]
-        }
+    let already_bound = keymap.iter().any(|e| {
+        e.get("bindings")
+            .and_then(|b| b.as_object())
+            .is_some_and(|b| b.contains_key(key))
     });
-
-    if let Some(parent) = keymap_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    if !keymap_path.exists() {
-        let mut output = serde_json::to_string_pretty(&[&binding_entry])?;
-        output.push('\n');
-        fs::write(&keymap_path, output)?;
+    if already_bound {
         return Ok(());
     }
 
-    let content = fs::read_to_string(&keymap_path)?;
-
-    // Check if already installed.
-    let existing: Vec<serde_json::Value> =
-        parse_jsonc(&content).unwrap_or_default();
-    if existing.iter().any(|e| is_dictation_keybinding(e)) {
-        return Ok(());
-    }
-
-    // Append to existing file, preserving comments and formatting.
-    let new_json = serde_json::to_string_pretty(&binding_entry)?;
-    let output = append_to_json_array(&content, &new_json)?;
-    fs::write(&keymap_path, output)?;
-
-    Ok(())
-}
-
-/// Append a JSON object to a top-level JSON array by string manipulation.
-///
-/// Finds the last `]` in the file and inserts a comma + the new entry
-/// before it, preserving all existing content (comments, whitespace).
-fn append_to_json_array(content: &str, new_entry_json: &str) -> anyhow::Result<String> {
-    // Find the last `]` (closing the top-level array).
-    let close_bracket = content
-        .rfind(']')
-        .ok_or_else(|| anyhow::anyhow!("no closing ] found in JSON array"))?;
-
-    // Check if the array has existing entries (look for non-whitespace before `]`).
-    let before = &content[..close_bracket];
-    let needs_comma = before
-        .bytes()
-        .rev()
-        .find(|&b| !b.is_ascii_whitespace())
-        .is_some_and(|b| b != b'[' && b != b',');
-
-    let mut out = String::with_capacity(content.len() + new_entry_json.len() + 16);
-    out.push_str(before.trim_end());
-    if needs_comma {
-        out.push(',');
-    }
-    out.push('\n');
-
-    // Indent the new entry to match typical Zed formatting (2 spaces).
-    for line in new_entry_json.lines() {
-        out.push_str("  ");
-        out.push_str(line);
-        out.push('\n');
-    }
-
-    // Close the array and preserve any trailing content (newline).
-    out.push(']');
-    let after = &content[close_bracket + 1..];
-    if after.is_empty() {
-        out.push('\n');
-    } else {
-        out.push_str(after);
-    }
-
-    Ok(out)
+    let mut bindings = serde_json::Map::new();
+    bindings.insert(
+        key.to_string(),
+        serde_json::json!(["task::Spawn", {"task_name": task_name}]),
+    );
+    keymap.push(serde_json::json!({ "bindings": bindings }));
+    write_json_array(&keymap_path, &keymap)
 }
 
 /// Check whether a keymap entry is solely our dictation keybinding.
@@ -323,14 +233,12 @@ fn is_dictation_keybinding(entry: &serde_json::Value) -> bool {
     if bindings.len() != 1 {
         return false;
     }
-    // Match current key or legacy key.
-    let is_spawn = |key: &str| {
+    DICTATION_KEYS.iter().any(|key| {
         bindings
-            .get(key)
+            .get(*key)
             .and_then(|v| v.as_array())
             .is_some_and(|a| a.first().and_then(|s| s.as_str()) == Some("task::Spawn"))
-    };
-    is_spawn("cmd-:") || is_spawn("ctrl-shift-'") || is_spawn("cmd-shift-'") || is_spawn("cmd-shift-d")
+    })
 }
 
 /// Parse a JSONC string (Zed's config format: `//` comments + trailing commas).
@@ -423,51 +331,43 @@ fn find_line_comment(line: &str) -> Option<usize> {
 
 /// Check health of installed Zed dictation integration.
 fn check_dictation_health() -> anyhow::Result<Vec<String>> {
+    let reinstall = "run `attend hook install --editor zed`";
     let mut warnings = Vec::new();
 
-    // Check task
+    // Check tasks
     let tasks_path = zed_config_dir()?.join("tasks.json");
-    if !tasks_path.exists() {
-        warnings.push("tasks.json not found — run `attend hook install --editor zed`".into());
+    let tasks = read_jsonc_array(&tasks_path);
+
+    if tasks.is_empty() && !tasks_path.exists() {
+        warnings.push(format!("tasks.json not found — {reinstall}"));
     } else {
-        let content = fs::read_to_string(&tasks_path)?;
-        let tasks: Vec<serde_json::Value> = parse_jsonc(&content).unwrap_or_default();
-        let task = tasks.iter().find(|t| {
-            t.get("label")
-                .and_then(|l| l.as_str())
-                .is_some_and(|l| l == "Toggle Dictation")
-        });
-        match task {
-            None => {
-                warnings.push(
-                    "Toggle Dictation task not found — run `attend hook install --editor zed`"
-                        .into(),
-                );
-            }
-            Some(t) => {
-                if let Some(cmd) = t.get("command").and_then(|c| c.as_str()) {
-                    if !std::path::Path::new(cmd).exists() {
-                        warnings.push(format!(
-                            "task command path does not exist: {cmd} — reinstall with `attend hook install --editor zed`"
-                        ));
+        for label in DICTATION_TASK_LABELS {
+            let task = tasks
+                .iter()
+                .find(|t| t.get("label").and_then(|l| l.as_str()) == Some(label));
+            match task {
+                None => warnings.push(format!("{label} task not found — {reinstall}")),
+                Some(t) => {
+                    if let Some(cmd) = t.get("command").and_then(|c| c.as_str()) {
+                        if !std::path::Path::new(cmd).exists() {
+                            warnings.push(format!(
+                                "task command path does not exist: {cmd} — reinstall with {reinstall}"
+                            ));
+                        }
                     }
                 }
             }
         }
     }
 
-    // Check keybinding
+    // Check keybindings
     let keymap_path = zed_config_dir()?.join("keymap.json");
-    if !keymap_path.exists() {
-        warnings.push("keymap.json not found — run `attend hook install --editor zed`".into());
-    } else {
-        let content = fs::read_to_string(&keymap_path)?;
-        let keymap: Vec<serde_json::Value> = parse_jsonc(&content).unwrap_or_default();
-        if !keymap.iter().any(|e| is_dictation_keybinding(e)) {
-            warnings.push(
-                "dictation keybinding not found — run `attend hook install --editor zed`".into(),
-            );
-        }
+    let keymap = read_jsonc_array(&keymap_path);
+
+    if keymap.is_empty() && !keymap_path.exists() {
+        warnings.push(format!("keymap.json not found — {reinstall}"));
+    } else if !keymap.iter().any(|e| is_dictation_keybinding(e)) {
+        warnings.push(format!("dictation keybinding not found — {reinstall}"));
     }
 
     Ok(warnings)
@@ -505,112 +405,4 @@ fn query_editors(conn: &rusqlite::Connection) -> anyhow::Result<Vec<RawEditor>> 
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn strip_json_comments_full_line() {
-        let input = "// This is a comment\n{\"key\": \"value\"}\n";
-        let result = strip_json_comments(input);
-        assert_eq!(result, "{\"key\": \"value\"}\n");
-    }
-
-    #[test]
-    fn strip_json_comments_inline() {
-        let input = "{\"key\": \"value\"} // trailing comment\n";
-        let result = strip_json_comments(input);
-        assert_eq!(result, "{\"key\": \"value\"} \n");
-    }
-
-    #[test]
-    fn strip_json_comments_inside_string_preserved() {
-        let input = "{\"url\": \"https://example.com\"}\n";
-        let result = strip_json_comments(input);
-        assert_eq!(result, "{\"url\": \"https://example.com\"}\n");
-    }
-
-    #[test]
-    fn strip_json_comments_empty() {
-        let result = strip_json_comments("");
-        assert_eq!(result, "");
-    }
-
-    #[test]
-    fn strip_json_comments_mixed() {
-        let input = "// header comment\n{\n  // inner comment\n  \"a\": 1\n}\n";
-        let result = strip_json_comments(input);
-        assert_eq!(result, "{\n  \"a\": 1\n}\n");
-    }
-
-    #[test]
-    fn find_line_comment_none_when_absent() {
-        assert_eq!(find_line_comment("{\"key\": \"value\"}"), None);
-    }
-
-    #[test]
-    fn find_line_comment_finds_comment() {
-        assert_eq!(find_line_comment("code // comment"), Some(5));
-    }
-
-    #[test]
-    fn find_line_comment_ignores_url_in_string() {
-        assert_eq!(find_line_comment("\"url\": \"https://example.com\""), None);
-    }
-
-    #[test]
-    fn find_line_comment_after_string_with_slash() {
-        assert_eq!(find_line_comment("\"path\": \"a/b\" // comment"), Some(14));
-    }
-
-    #[test]
-    fn append_to_json_array_preserves_content() {
-        let existing = "// Zed keymap\n[\n  {\n    \"context\": \"Editor\",\n    \"bindings\": {\n      \"alt-q\": \"vim::Rewrap\"\n    }\n  }\n]\n";
-        let new_entry = "{\n  \"bindings\": {\n    \"cmd-:\": [\"task::Spawn\"]\n  }\n}";
-        let result = append_to_json_array(existing, new_entry).unwrap();
-        // Original comment and content preserved
-        assert!(result.starts_with("// Zed keymap\n"));
-        assert!(result.contains("\"alt-q\": \"vim::Rewrap\""));
-        // New entry appended
-        assert!(result.contains("\"cmd-:\""));
-        // Valid JSON after stripping comments
-        let parsed: Vec<serde_json::Value> =
-            parse_jsonc(&result).unwrap();
-        assert_eq!(parsed.len(), 2);
-    }
-
-    #[test]
-    fn append_to_array_with_trailing_comma() {
-        let existing = "[\n  {\"a\": 1},\n]\n";
-        let new_entry = "{\n  \"b\": 2\n}";
-        let result = append_to_json_array(existing, new_entry).unwrap();
-        // No double comma
-        assert!(!result.contains(",,"));
-        let parsed: Vec<serde_json::Value> = parse_jsonc(&result).unwrap();
-        assert_eq!(parsed.len(), 2);
-    }
-
-    #[test]
-    fn parse_jsonc_trailing_commas() {
-        let input = "[{\"a\": 1}, {\"b\": 2},]";
-        let parsed: Vec<serde_json::Value> = parse_jsonc(input).unwrap();
-        assert_eq!(parsed.len(), 2);
-    }
-
-    #[test]
-    fn strip_trailing_commas_in_object() {
-        let input = "{\"a\": 1, \"b\": 2,}";
-        let result = strip_trailing_commas(input);
-        let _: serde_json::Value = serde_json::from_str(&result).unwrap();
-    }
-
-    #[test]
-    fn append_to_empty_array() {
-        let existing = "[]\n";
-        let new_entry = "{\n  \"label\": \"test\"\n}";
-        let result = append_to_json_array(existing, new_entry).unwrap();
-        let parsed: Vec<serde_json::Value> =
-            parse_jsonc(&result).unwrap();
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0]["label"], "test");
-    }
-}
+mod tests;

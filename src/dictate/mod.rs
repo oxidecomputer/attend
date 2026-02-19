@@ -34,6 +34,11 @@ pub(crate) fn stop_sentinel_path() -> PathBuf {
     cache_dir().join("stop")
 }
 
+/// Path to the flush sentinel file.
+pub(crate) fn flush_sentinel_path() -> PathBuf {
+    cache_dir().join("flush")
+}
+
 /// Path to the receive lock file.
 pub(crate) fn receive_lock_path() -> PathBuf {
     cache_dir().join("receive.lock")

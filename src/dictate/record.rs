@@ -8,13 +8,17 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use super::audio;
 use super::merge::{self, Event, RenderedFile};
 use super::transcribe::Engine;
-use super::{cache_dir, pending_dir, record_lock_path, resolve_session, stop_sentinel_path};
+use super::{
+    cache_dir, flush_sentinel_path, pending_dir, record_lock_path, resolve_session,
+    stop_sentinel_path,
+};
 use crate::json::utc_now;
 use crate::state::{self, EditorState};
 use crate::view;
@@ -153,10 +157,54 @@ pub fn stop() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Flush: submit current dictation and keep recording.
+///
+/// If not recording (no lock), starts recording (like toggle).
+/// If recording, creates the flush sentinel and waits for the daemon to
+/// acknowledge it (by deleting the sentinel).
+pub fn flush(
+    engine: Engine,
+    model: Option<PathBuf>,
+    session: Option<String>,
+    snip_cfg: merge::SnipConfig,
+) -> anyhow::Result<()> {
+    let lock = record_lock_path();
+    if !lock.exists() {
+        // Not recording — start.
+        return start(engine, model, session, snip_cfg);
+    }
+
+    if is_lock_stale(&lock) {
+        eprintln!("Stale record lock detected, cleaning up.");
+        let _ = fs::remove_file(&lock);
+        let _ = fs::remove_file(stop_sentinel_path());
+        let _ = fs::remove_file(flush_sentinel_path());
+        return start(engine, model, session, snip_cfg);
+    }
+
+    // Recording — create flush sentinel.
+    let sentinel = flush_sentinel_path();
+    if let Some(parent) = sentinel.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&sentinel, "")?;
+
+    // Wait for the daemon to delete the sentinel (acknowledging the flush).
+    for _ in 0..100 {
+        if !sentinel.exists() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    eprintln!("Flush signal sent; daemon may still be transcribing.");
+    Ok(())
+}
+
 /// The actual recording daemon entry point.
 ///
 /// Acquires the record lock, captures audio + editor state + file diffs,
-/// waits for the stop sentinel, transcribes, merges, and writes output.
+/// waits for stop/flush sentinels, transcribes, merges, and writes output.
 pub fn daemon(
     engine: Engine,
     model: Option<PathBuf>,
@@ -177,11 +225,12 @@ pub fn daemon(
     // Write our PID so the lock can be detected as stale if we're killed
     let _ = fs::write(record_lock_path(), std::process::id().to_string());
 
-    // Clean up any stale stop sentinel
+    // Clean up any stale sentinels
     let _ = fs::remove_file(stop_sentinel_path());
+    let _ = fs::remove_file(flush_sentinel_path());
 
-    // Preload model in background (overlaps with audio capture + recording)
-    let preload_handle = thread::spawn(move || engine.preload(&model_path));
+    // Preload model (blocks until ready — must complete before first transcription)
+    let mut transcriber = engine.preload(&model_path)?;
 
     // Play start chime
     let _ = audio::play_chime(true);
@@ -195,22 +244,74 @@ pub fn daemon(
     // Start editor polling and file diff tracking on background threads
     let editor_events = poll_editor_and_diffs(cwd)?;
 
-    // Wait for stop sentinel
-    let sentinel = stop_sentinel_path();
-    while !sentinel.exists() {
+    // Track time base for word timestamp offsets across flushes
+    let mut time_base_secs = 0.0_f64;
+    let mut last_drain = Instant::now();
+
+    let stop_sentinel = stop_sentinel_path();
+    let flush_sentinel = flush_sentinel_path();
+
+    loop {
+        // Check for stop sentinel
+        if stop_sentinel.exists() {
+            let _ = audio::play_chime(false);
+            let recording = capture.stop();
+            let _ = fs::remove_file(&stop_sentinel);
+
+            let (editor_snapshots, file_diffs) = editor_events.collect();
+            transcribe_and_write(
+                &mut *transcriber,
+                recording,
+                editor_snapshots,
+                file_diffs,
+                time_base_secs,
+                &session_id,
+                snip_cfg,
+            )?;
+            break;
+        }
+
+        // Check for flush sentinel
+        if flush_sentinel.exists() {
+            let _ = audio::play_flush_chime();
+            let recording = capture.drain();
+            let elapsed = last_drain.elapsed().as_secs_f64();
+
+            let (editor_snapshots, file_diffs) = editor_events.drain();
+            transcribe_and_write(
+                &mut *transcriber,
+                recording,
+                editor_snapshots,
+                file_diffs,
+                time_base_secs,
+                &session_id,
+                snip_cfg,
+            )?;
+
+            time_base_secs += elapsed;
+            last_drain = Instant::now();
+
+            // Acknowledge flush by deleting sentinel
+            let _ = fs::remove_file(&flush_sentinel);
+            continue;
+        }
+
         thread::sleep(Duration::from_millis(100));
     }
 
-    // Play stop chime
-    let _ = audio::play_chime(false);
+    Ok(())
+}
 
-    // Stop audio capture
-    let recording = capture.stop();
-
-    // Clean up sentinel
-    let _ = fs::remove_file(&sentinel);
-
-    // Bail early if recording is too short
+/// Transcribe audio, merge with editor events, and write the pending file.
+fn transcribe_and_write(
+    transcriber: &mut dyn super::transcribe::Transcriber,
+    recording: audio::Recording,
+    editor_snapshots: Vec<Event>,
+    file_diffs: Vec<Event>,
+    time_base_secs: f64,
+    session_id: &Option<String>,
+    snip_cfg: merge::SnipConfig,
+) -> anyhow::Result<()> {
     if recording.duration_secs() < 0.5 {
         eprintln!(
             "Recording too short ({:.1}s), discarding.",
@@ -221,38 +322,21 @@ pub fn daemon(
 
     eprintln!("Transcribing {:.1}s of audio...", recording.duration_secs());
 
-    // Join preload thread (usually already done by now)
-    let mut transcriber = preload_handle
-        .join()
-        .map_err(|_| anyhow::anyhow!("model preload thread panicked"))??;
-
-    // Resample to 16kHz
     let samples_16k = audio::resample(&recording.flatten(), recording.sample_rate, 16000)?;
-
-    // Transcribe with preloaded engine
     let words = transcriber.transcribe(&samples_16k)?;
 
-    // Collect editor events
-    let (editor_snapshots, file_diffs) = editor_events.collect();
-
-    // Build merged event list
     let mut events: Vec<Event> = Vec::new();
 
-    // Add transcribed words
     for word in &words {
         events.push(Event::Words {
-            offset_secs: word.start_secs,
+            offset_secs: word.start_secs + time_base_secs,
             text: word.text.clone(),
         });
     }
 
-    // Add editor snapshots
     events.extend(editor_snapshots);
-
-    // Add file diffs
     events.extend(file_diffs);
 
-    // Format as markdown
     let markdown = merge::format_markdown(&mut events, snip_cfg);
 
     if markdown.trim().is_empty() {
@@ -260,16 +344,14 @@ pub fn daemon(
         return Ok(());
     }
 
-    // Write to pending directory with timestamp filename
-    let ts = utc_now().replace(':', "-"); // filesystem-safe timestamp
-    if let Some(sid) = &session_id {
+    let ts = utc_now().replace(':', "-");
+    if let Some(sid) = session_id {
         let dir = pending_dir(sid);
         fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{ts}.md"));
         fs::write(&path, &markdown)?;
         eprintln!("Dictation written to {}", path.display());
     } else {
-        // Fallback: unsuffixed file
         let path = cache_dir().join("dictation.md");
         fs::write(&path, &markdown)?;
         eprintln!("Dictation written to {}", path.display());
@@ -281,28 +363,42 @@ pub fn daemon(
 /// Handle for the background editor/diff polling threads.
 struct EditorPollHandle {
     stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    editor_thread: Option<thread::JoinHandle<Vec<Event>>>,
-    diff_thread: Option<thread::JoinHandle<Vec<Event>>>,
+    /// When set, the editor thread resets prev_files so the current cursor
+    /// position is re-emitted as context for the next batch.
+    reset_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    editor_events: std::sync::Arc<Mutex<Vec<Event>>>,
+    diff_events: std::sync::Arc<Mutex<Vec<Event>>>,
+    editor_thread: Option<thread::JoinHandle<()>>,
+    diff_thread: Option<thread::JoinHandle<()>>,
 }
 
 impl EditorPollHandle {
-    /// Signal stop and collect results.
+    /// Drain accumulated events without stopping threads.
+    ///
+    /// Signals the editor thread to re-emit the current cursor position,
+    /// so the next batch includes editor context even if the user hasn't
+    /// moved since the last drain.
+    fn drain(&self) -> (Vec<Event>, Vec<Event>) {
+        let editor = std::mem::take(&mut *self.editor_events.lock().unwrap());
+        let diff = std::mem::take(&mut *self.diff_events.lock().unwrap());
+        self.reset_flag
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        (editor, diff)
+    }
+
+    /// Signal stop and collect remaining results.
     fn collect(mut self) -> (Vec<Event>, Vec<Event>) {
         self.stop_flag
             .store(true, std::sync::atomic::Ordering::Relaxed);
 
-        let editor_events = self
-            .editor_thread
-            .take()
-            .and_then(|h| h.join().ok())
-            .unwrap_or_default();
-        let diff_events = self
-            .diff_thread
-            .take()
-            .and_then(|h| h.join().ok())
-            .unwrap_or_default();
+        if let Some(h) = self.editor_thread.take() {
+            let _ = h.join();
+        }
+        if let Some(h) = self.diff_thread.take() {
+            let _ = h.join();
+        }
 
-        (editor_events, diff_events)
+        self.drain()
     }
 }
 
@@ -314,16 +410,27 @@ fn poll_editor_and_diffs(cwd: Option<PathBuf>) -> anyhow::Result<EditorPollHandl
     let stop_flag = Arc::new(AtomicBool::new(false));
     let start = Instant::now();
 
+    let editor_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
+    let diff_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
+
+    let reset_flag = Arc::new(AtomicBool::new(false));
+
     // Editor state polling thread
     let stop_ed = Arc::clone(&stop_flag);
+    let reset_ed = Arc::clone(&reset_flag);
     let ed_cwd = cwd.clone();
+    let ed_events = Arc::clone(&editor_events);
     let editor_thread = thread::spawn(move || {
-        let mut events = Vec::new();
         let mut prev_files: Option<Vec<state::FileEntry>> = None;
-        let mut is_first = true;
 
         while !stop_ed.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(100));
+
+            // After a flush, reset so we re-capture the current cursor
+            // position as context for the next batch.
+            if reset_ed.swap(false, Ordering::Relaxed) {
+                prev_files = None;
+            }
 
             let state = match EditorState::current(ed_cwd.as_deref()) {
                 Ok(Some(s)) => s,
@@ -338,30 +445,22 @@ fn poll_editor_and_diffs(cwd: Option<PathBuf>) -> anyhow::Result<EditorPollHandl
             let files = state.files;
             prev_files = Some(files.clone());
 
-            // Suppress the initial snapshot (cursor position before user navigates)
-            if is_first {
-                is_first = false;
-                continue;
-            }
-
             let offset_secs = start.elapsed().as_secs_f64();
             let rendered = render_snapshot_files(&files, state.cwd.as_deref());
 
-            events.push(Event::EditorSnapshot {
+            ed_events.lock().unwrap().push(Event::EditorSnapshot {
                 offset_secs,
                 files,
                 rendered,
             });
         }
-
-        events
     });
 
     // File diff tracking thread
     let stop_diff = Arc::clone(&stop_flag);
     let diff_cwd = cwd;
+    let df_events = Arc::clone(&diff_events);
     let diff_thread = thread::spawn(move || {
-        let mut events = Vec::new();
         let mut file_contents: HashMap<PathBuf, String> = HashMap::new();
         let mut file_mtimes: HashMap<PathBuf, std::time::SystemTime> = HashMap::new();
 
@@ -416,7 +515,7 @@ fn poll_editor_and_diffs(cwd: Option<PathBuf>) -> anyhow::Result<EditorPollHandl
                 {
                     let offset_secs = start.elapsed().as_secs_f64();
                     let display_path = relativize_path(&file.path, diff_cwd.as_deref());
-                    events.push(Event::FileDiff {
+                    df_events.lock().unwrap().push(Event::FileDiff {
                         offset_secs,
                         path: display_path,
                         old: old_content.clone(),
@@ -427,12 +526,13 @@ fn poll_editor_and_diffs(cwd: Option<PathBuf>) -> anyhow::Result<EditorPollHandl
                 file_contents.insert(file.path.clone(), new_content);
             }
         }
-
-        events
     });
 
     Ok(EditorPollHandle {
         stop_flag,
+        reset_flag,
+        editor_events,
+        diff_events,
         editor_thread: Some(editor_thread),
         diff_thread: Some(diff_thread),
     })
