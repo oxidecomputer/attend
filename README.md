@@ -1,21 +1,19 @@
-# `attend`
+# `attend` is all you need
 
-Attention is all you need, after all.
+Let your coding agent hear your voice and see what you're doing, as if you were
+screen-sharing on a voice call with a collaborator.
 
 When you're "pair programming" with an AI coding agent in your terminal, there's
-a gap: the agent can see your files, but it can't see what *you're* doing. Instead,
+a gap: the agent can see your files, but it can't see what you're seeing. Instead,
 you have to tell it! You end up copy-pasting code snippets, typing out line numbers,
 or vaguely describing context the agent would already have if it could see what you
 do and hear you chat about it.
 
-Using `attend` lets your coding agent hear your voice and see what you're doing,
-almost as if you were screen-sharing on a voice call with a human collaborator.
-
 Speak your thoughts while navigating code, and `attend` transcribes and delivers
 them as prompts. You can highlight code, flip between files, and narrate what you
 want done, without leaving your editor or switching to a chat window. The agent
-receives your words interleaved with what you were looking at, highlighting,
-or typing (though, caveat, it can only see your changes once you save a file).
+receives your words interleaved with what you were looking at or editing as you
+spoke.
 
 Even when you're not actively narrating, `attend` queries your editor for changes
 in visible files, cursor positions, and selections, then injects that context into
@@ -72,8 +70,7 @@ can bind *global* hotkeys to `attend narrate start` and `attend narrate toggle`.
 
 ### Agent integration
 
-In order for the agent to receive your narration, you need to manually start it
-listening.
+For the agent to receive your narration, ask it to attend.
 
 In Claude Code, this is done with the `/attend` slash-command. If you use multiple
 Claude Code sessions, you can move narration from one session to another by invoking
@@ -162,35 +159,40 @@ live-updating view, or `--format json` for structured output.
 
 #### `attend look`
 
-Show file content with given cursors/selections applied:
+Reads files from disk and prints content with cursors and selections overlaid.
+
+When writing to a TTY, cursors and selections are marked with inverse-video;
+otherwise, or when `NO_COLOR` is set, cursors are marked with `❘` and selections
+with `⟦⟧`.
+
+Show file content with specific cursors/selections applied:
 
 ```bash
 $ attend look src/foo.rs 5:12 19:40-24:6 src/bar.rs 10:1
 ```
 
-Or show file content currently selected:
-
-```bash
-attend look
-```
-
-Reads files from disk and prints content at the given positions. When writing to
-a TTY, cursors and selections are marked with inverse-video; when writing to a
-pipe or when `NO_COLOR` is set, cursors are marked with `❘` and selections with
-`⟦⟧`.
-
-Use `-B`/`-A` for additional context lines, `--full` for the entire file, and
-add `--watch` for live updates.
-
-Input can also come from stdin with `-`:
+Cursors/selections are given using the same format output by `attend glance`,
+and `attend look -` parses from stdin:
 
 ```
 attend glance | attend look -
 ```
 
+You can also combine these into the equivalent shortcut:
+
+```bash
+attend look
+```
+
+Use `attend look --watch` to get a live-updated view in your terminal (or a
+newline-separated stream of updates, if stdout is not a TTY).
+
+Use `-B`/`-A` for additional context lines, or `--full` for the entire file.
+
+Use `--format json` for machine-readable output.
+
 **Caveat**: Because `attend look` reads the live editor selection state, but
 shows file contents from disk, results from unsaved files may not be accurate.
-
 
 #### `attend meditate`
 
@@ -227,8 +229,8 @@ terminal is possible, but takes you out of the flow.
 | Command | Purpose |
 |---------|---------|
 | `attend narrate start` | Start narration, or send current narration and keep recording |
-| `attend narrate toggle` | Start or stop narration |
-| `attend narrate stop` | Stop narration |
+| `attend narrate toggle` | Start narration, or send current narration and stop recording |
+| `attend narrate stop` | Send current narration and stop recording |
 
 ### Agent integration
 
@@ -237,7 +239,7 @@ typically don't run them directly: your coding agent does.
 
 | Command | Purpose |
 |---------|---------|
-| `attend hook --agent claude <event>` | Run a hook event (session-start, user-prompt, stop) |
+| `attend hook --agent <agent> <event>` | Run a hook event (session-start, user-prompt, stop) |
 | `attend listen` | Wait for narration and deliver it to the agent |
 | `attend listen --check` | Check for pending narration without waiting |
 
