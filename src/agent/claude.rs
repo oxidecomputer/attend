@@ -80,8 +80,8 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
         .context("settings is not an object")?;
 
     // Build hook commands
-    let session_start_cmd = format!("{bin_cmd} hook --agent claude session-start");
-    let prompt_cmd = format!("{bin_cmd} hook --agent claude user-prompt");
+    let session_start_cmd = format!("{bin_cmd} hook session-start --agent claude");
+    let prompt_cmd = format!("{bin_cmd} hook user-prompt --agent claude");
 
     // Build the hooks structure
     let hooks = obj.entry("hooks").or_insert_with(|| serde_json::json!({}));
@@ -136,7 +136,7 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
 
     // Stop hook (narration delivery)
     {
-        let stop_cmd = format!("{bin_cmd} hook --agent claude stop");
+        let stop_cmd = format!("{bin_cmd} hook stop --agent claude");
         let stop_hook = serde_json::json!({
             "hooks": [
                 {

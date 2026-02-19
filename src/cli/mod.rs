@@ -12,7 +12,7 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 #[derive(Parser)]
 #[command(
     name = "attend",
-    about = "Read editor state for AI coding agents.",
+    about = "Pair program with your coding agent — editor context and voice narration, delivered seamlessly.",
     version
 )]
 pub struct Cli {
@@ -32,7 +32,30 @@ pub enum Format {
 /// Top-level subcommands.
 #[derive(Subcommand)]
 pub enum Command {
-    /// Quick glance at editor state (paths + positions).
+    /// Set up agent hooks and editor keybindings.
+    #[command(display_order = 1)]
+    Install {
+        /// Agent to install hooks for (repeatable).
+        #[arg(long, short, value_parser = hook::agent_value_parser())]
+        agent: Vec<String>,
+
+        /// Editor to install narration keybindings for (repeatable).
+        #[arg(long, short, value_parser = hook::editor_value_parser())]
+        editor: Vec<String>,
+
+        /// Install to a project-local settings file instead of global.
+        #[arg(long, short)]
+        project: Option<PathBuf>,
+
+        /// Use absolute path to current binary instead of $PATH lookup.
+        #[arg(long)]
+        dev: bool,
+    },
+    /// Record and transcribe voice narration for your agent.
+    #[command(display_order = 2, subcommand)]
+    Narrate(NarrateCommand),
+    /// Show editor state (open files, cursors, selections).
+    #[command(display_order = 3)]
     Glance {
         /// Resolve paths relative to this directory and show relative paths.
         #[arg(long, short)]
@@ -50,7 +73,8 @@ pub enum Command {
         #[arg(long, short = 'i')]
         interval: Option<f64>,
     },
-    /// Show file content at editor cursor/selection positions.
+    /// Show file content at cursor and selection positions.
+    #[command(display_order = 4)]
     Look {
         /// Resolve paths relative to this directory and show relative paths.
         #[arg(long, short)]
@@ -85,13 +109,15 @@ pub enum Command {
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
-    /// Quietly watch editor state in the background (daemon).
+    /// Run as a background daemon, keeping the state cache warm.
+    #[command(display_order = 5)]
     Meditate {
         /// Override polling / debounce interval in seconds.
         #[arg(long, short = 'i')]
         interval: Option<f64>,
     },
-    /// Listen for narration (wait for voice input).
+    /// Receive narration from a recording session.
+    #[command(display_order = 6)]
     Listen {
         /// Check once and exit instead of waiting.
         #[arg(long)]
@@ -101,31 +127,11 @@ pub enum Command {
         #[arg(long)]
         session: Option<String>,
     },
-    /// Voice-driven prompt composition.
-    #[command(subcommand)]
-    Narrate(NarrateCommand),
-    /// Run an agent hook event.
-    #[command(subcommand)]
+    /// Respond to agent lifecycle events (used by installed hooks).
+    #[command(display_order = 7, subcommand)]
     Hook(HookEvent),
-    /// Install hooks and editor integration.
-    Install {
-        /// Agent to install hooks for (repeatable).
-        #[arg(long, short, value_parser = hook::agent_value_parser())]
-        agent: Vec<String>,
-
-        /// Editor to install narration keybindings for (repeatable).
-        #[arg(long, short, value_parser = hook::editor_value_parser())]
-        editor: Vec<String>,
-
-        /// Install to a project-local settings file instead of global.
-        #[arg(long, short)]
-        project: Option<PathBuf>,
-
-        /// Use absolute path to current binary instead of $PATH lookup.
-        #[arg(long)]
-        dev: bool,
-    },
-    /// Remove hooks and editor integration.
+    /// Remove agent hooks and editor keybindings.
+    #[command(display_order = 8)]
     Uninstall {
         /// Agent to uninstall hooks for (repeatable).
         #[arg(long, short, value_parser = hook::agent_value_parser())]
@@ -140,6 +146,7 @@ pub enum Command {
         project: Option<PathBuf>,
     },
     /// Generate shell completions and print to stdout.
+    #[command(display_order = 9)]
     Completions {
         /// Shell to generate completions for.
         shell: clap_complete::Shell,
