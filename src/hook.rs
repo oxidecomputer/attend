@@ -21,6 +21,10 @@ fn read_stdin_json() -> Option<serde_json::Value> {
 /// On compact/clear, if this session is actively listening for dictation,
 /// re-emit the dictation skill instructions so the agent knows to restart
 /// its background receiver.
+///
+/// Also checks whether the running binary version matches the version that
+/// installed the hooks. On mismatch, auto-reinstalls for all previously
+/// installed agents and editors.
 pub fn session_start() -> anyhow::Result<()> {
     let stdin_json = read_stdin_json();
     let session_id = stdin_json
@@ -34,6 +38,9 @@ pub fn session_start() -> anyhow::Result<()> {
     {
         let _ = fs::remove_file(cp);
     }
+
+    // Auto-upgrade hooks on version mismatch.
+    auto_upgrade_hooks();
 
     let bin = std::env::current_exe()
         .map(|p| p.display().to_string())
@@ -305,6 +312,54 @@ fn handle_attend_activate(json: &serde_json::Value) -> anyhow::Result<()> {
     });
     println!("{}", serde_json::to_string(&response)?);
     Ok(())
+}
+
+/// Auto-upgrade hooks and editor integration when the running binary version
+/// doesn't match the version that originally installed the hooks.
+fn auto_upgrade_hooks() {
+    let Some(meta) = state::installed_meta() else {
+        return;
+    };
+    let running = env!("CARGO_PKG_VERSION");
+    if meta.version == running {
+        return;
+    }
+
+    tracing::info!(
+        installed = meta.version,
+        running,
+        "Version mismatch — reinstalling hooks"
+    );
+
+    let bin_cmd = match crate::agent::resolve_bin_cmd(meta.dev) {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            tracing::warn!("Cannot resolve bin command for auto-upgrade: {e}");
+            return;
+        }
+    };
+
+    for name in &meta.agents {
+        if let Err(e) = crate::agent::install(name, None, meta.dev) {
+            tracing::warn!(agent = name, "Auto-upgrade failed for agent: {e}");
+        }
+    }
+    for name in &meta.editors {
+        if let Some(ed) = crate::editor::editor_by_name(name)
+            && let Err(e) = ed.install_dictation(&bin_cmd)
+        {
+            tracing::warn!(editor = name, "Auto-upgrade failed for editor: {e}");
+        }
+    }
+
+    state::save_install_meta(&state::InstallMeta {
+        version: running.to_string(),
+        agents: meta.agents,
+        editors: meta.editors,
+        dev: meta.dev,
+    });
+
+    eprintln!("attend: hooks upgraded from {} to {running}", meta.version);
 }
 
 #[cfg(test)]

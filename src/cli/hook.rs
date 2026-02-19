@@ -146,6 +146,12 @@ impl Hook {
                         .ok_or_else(|| anyhow::anyhow!("unknown editor: {name}"))?;
                     ed.install_dictation(&bin_cmd)?;
                 }
+                crate::state::save_install_meta(&crate::state::InstallMeta {
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    agents: agent,
+                    editors: editor,
+                    dev,
+                });
                 Ok(())
             }
             Hook::Uninstall {

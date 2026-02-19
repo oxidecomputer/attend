@@ -44,6 +44,40 @@ pub fn listening_session() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Path to the installed version/components file.
+pub(crate) fn version_path() -> Option<PathBuf> {
+    Some(cache_dir()?.join("version.json"))
+}
+
+/// Metadata about the most recent hook install.
+#[derive(Serialize, Deserialize, Debug)]
+pub(crate) struct InstallMeta {
+    pub version: String,
+    pub agents: Vec<String>,
+    pub editors: Vec<String>,
+    pub dev: bool,
+}
+
+/// Read the install metadata, if any.
+pub(crate) fn installed_meta() -> Option<InstallMeta> {
+    let path = version_path()?;
+    let content = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+/// Save install metadata after a successful hook install.
+pub(crate) fn save_install_meta(meta: &InstallMeta) {
+    let Some(path) = version_path() else { return };
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Err(e) = atomic_write(&path, |file| {
+        serde_json::to_writer_pretty(io::BufWriter::new(file), meta).map_err(io::Error::other)
+    }) {
+        tracing::warn!("Failed to save install metadata: {e}");
+    }
+}
+
 /// Path to the shared ordering cache.
 fn shared_cache_path() -> Option<PathBuf> {
     Some(cache_dir()?.join("latest.json"))
