@@ -20,8 +20,6 @@ pub enum HookEvent {
 pub trait Agent: Sync {
     /// CLI name (e.g., "claude").
     fn name(&self) -> &'static str;
-    /// Full name (e.g. "Claude Code").
-    fn full_name(&self) -> &'static str;
     /// Run a hook event.
     fn run_hook(&self, event: HookEvent, cwd: Option<PathBuf>) -> anyhow::Result<()>;
     /// Install hooks into agent settings.

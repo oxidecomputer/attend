@@ -67,7 +67,6 @@ fn clean_removes_old_files() {
     let mut f = std::fs::File::create(&old_file).unwrap();
     f.write_all(b"old").unwrap();
     drop(f);
-    let ten_days_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 86400);
     // We can't easily set mtime in pure Rust, so instead test with a very
     // long threshold that keeps the file and a zero threshold that removes it.
 

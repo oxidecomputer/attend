@@ -18,10 +18,6 @@ impl Agent for Claude {
         "claude"
     }
 
-    fn full_name(&self) -> &'static str {
-        "Claude Code hooks"
-    }
-
     fn run_hook(&self, event: HookEvent, cwd: Option<PathBuf>) -> anyhow::Result<()> {
         match event {
             HookEvent::SessionStart => crate::hook::session_start(),
