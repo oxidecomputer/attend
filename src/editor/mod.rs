@@ -44,6 +44,12 @@ pub trait Editor: Sync {
     fn uninstall_dictation(&self) -> anyhow::Result<()> {
         anyhow::bail!("{} does not support dictation removal", self.name())
     }
+
+    /// Check the health of dictation integration.
+    /// Returns a list of diagnostic warnings (empty = healthy).
+    fn check_dictation(&self) -> anyhow::Result<Vec<String>> {
+        Ok(Vec::new())
+    }
 }
 
 /// All registered editor backends.

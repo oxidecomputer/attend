@@ -139,6 +139,16 @@ pub(crate) fn status() -> anyhow::Result<()> {
     };
     println!("Listener:   {listener}");
 
+    // Editor integration health
+    for editor in crate::editor::EDITORS {
+        let warnings = editor.check_dictation()?;
+        if warnings.is_empty() {
+            println!("Editor:     {} (ok)", editor.name());
+        } else {
+            println!("Editor:     {} ({})", editor.name(), warnings.join("; "));
+        }
+    }
+
     // Pending dictation count
     if let Some(ref sid) = session {
         let dir = pending_dir(sid);

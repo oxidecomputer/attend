@@ -51,6 +51,10 @@ impl Editor for Zed {
         println!("Removed Zed dictation task and keybinding.");
         Ok(())
     }
+
+    fn check_dictation(&self) -> anyhow::Result<Vec<String>> {
+        check_dictation_health()
+    }
 }
 
 fn query() -> anyhow::Result<Option<QueryResult>> {
@@ -146,6 +150,12 @@ fn install_task(bin_cmd: &str) -> anyhow::Result<()> {
     }
 
     if prev.is_some() {
+        // Warn if the old command path is stale.
+        if let Some(old_cmd) = prev.unwrap().get("command").and_then(|c| c.as_str()) {
+            if !std::path::Path::new(old_cmd).exists() {
+                eprintln!("Warning: replacing stale command path: {old_cmd}");
+            }
+        }
         // Replace outdated entry (rewrite unavoidable).
         let mut tasks = existing;
         tasks.retain(|t| {
@@ -409,6 +419,58 @@ fn find_line_comment(line: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// Check health of installed Zed dictation integration.
+fn check_dictation_health() -> anyhow::Result<Vec<String>> {
+    let mut warnings = Vec::new();
+
+    // Check task
+    let tasks_path = zed_config_dir()?.join("tasks.json");
+    if !tasks_path.exists() {
+        warnings.push("tasks.json not found — run `attend hook install --editor zed`".into());
+    } else {
+        let content = fs::read_to_string(&tasks_path)?;
+        let tasks: Vec<serde_json::Value> = parse_jsonc(&content).unwrap_or_default();
+        let task = tasks.iter().find(|t| {
+            t.get("label")
+                .and_then(|l| l.as_str())
+                .is_some_and(|l| l == "Toggle Dictation")
+        });
+        match task {
+            None => {
+                warnings.push(
+                    "Toggle Dictation task not found — run `attend hook install --editor zed`"
+                        .into(),
+                );
+            }
+            Some(t) => {
+                if let Some(cmd) = t.get("command").and_then(|c| c.as_str()) {
+                    if !std::path::Path::new(cmd).exists() {
+                        warnings.push(format!(
+                            "task command path does not exist: {cmd} — reinstall with `attend hook install --editor zed`"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // Check keybinding
+    let keymap_path = zed_config_dir()?.join("keymap.json");
+    if !keymap_path.exists() {
+        warnings.push("keymap.json not found — run `attend hook install --editor zed`".into());
+    } else {
+        let content = fs::read_to_string(&keymap_path)?;
+        let keymap: Vec<serde_json::Value> = parse_jsonc(&content).unwrap_or_default();
+        if !keymap.iter().any(|e| is_dictation_keybinding(e)) {
+            warnings.push(
+                "dictation keybinding not found — run `attend hook install --editor zed`".into(),
+            );
+        }
+    }
+
+    Ok(warnings)
 }
 
 /// Query active editor tabs with their byte-offset selections.
