@@ -26,30 +26,11 @@ pub(crate) struct DaemonArgs {
 /// Narration CLI subcommands.
 #[derive(Subcommand)]
 pub enum NarrateCommand {
-    /// Start or stop recording (one hotkey).
-    Toggle {
-        /// Session to deliver narration to (defaults to the active `attend hook` session).
-        #[arg(long)]
-        session: Option<String>,
-    },
-    /// Submit current narration and keep recording.
-    ///
-    /// If not recording, starts recording (like toggle).
-    /// If recording, flushes the current audio for transcription
-    /// while continuing to record.
-    Flush {
-        /// Session to deliver narration to (defaults to the active `attend hook` session).
-        #[arg(long)]
-        session: Option<String>,
-    },
-    /// Spawn detached recorder (idempotent).
-    #[command(hide = true)]
-    Start {
-        /// Session to deliver narration to (defaults to the active `attend hook` session).
-        #[arg(long)]
-        session: Option<String>,
-    },
-    /// Signal recorder to stop (idempotent).
+    /// Start or stop narration.
+    Toggle,
+    /// Start narration, or send current narration and keep recording.
+    Start,
+    /// Stop narration.
     Stop,
     /// Show recording and system status.
     Status,
@@ -76,9 +57,8 @@ impl NarrateCommand {
         use crate::narrate::record;
 
         match self {
-            NarrateCommand::Toggle { session } => record::toggle(session),
-            NarrateCommand::Flush { session } => record::flush(session),
-            NarrateCommand::Start { session } => record::start(session),
+            NarrateCommand::Toggle => record::toggle(),
+            NarrateCommand::Start => record::start(),
             NarrateCommand::Stop => record::stop(),
             NarrateCommand::Status => crate::narrate::status(),
             NarrateCommand::Clean { older_than } => crate::narrate::clean(older_than),

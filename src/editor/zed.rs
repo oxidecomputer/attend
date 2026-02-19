@@ -41,9 +41,9 @@ impl Editor for Zed {
 
     fn install_narration(&self, bin_cmd: &str) -> anyhow::Result<()> {
         install_task(bin_cmd, "attend: toggle narration", &["narrate", "toggle"])?;
-        install_task(bin_cmd, "attend: flush narration", &["narrate", "flush"])?;
+        install_task(bin_cmd, "attend: start narration", &["narrate", "start"])?;
         install_keybinding("cmd-;", "attend: toggle narration")?;
-        install_keybinding("cmd-:", "attend: flush narration")?;
+        install_keybinding("cmd-:", "attend: start narration")?;
         println!("Installed Zed narration tasks and keybindings.");
         Ok(())
     }
@@ -110,12 +110,12 @@ fn find_db() -> Option<std::path::PathBuf> {
 
 /// Known narration keybindings (current + legacy).
 const NARRATION_KEYS: &[&str] = &[
-    "cmd-:", // flush (current)
+    "cmd-:", // start (current)
     "cmd-;", // toggle (current)
 ];
 
 /// Narration task labels.
-const NARRATION_TASK_LABELS: &[&str] = &["attend: toggle narration", "attend: flush narration"];
+const NARRATION_TASK_LABELS: &[&str] = &["attend: toggle narration", "attend: start narration"];
 
 /// Legacy task labels from previous versions.
 const LEGACY_TASK_LABELS: &[&str] = &[
@@ -123,6 +123,7 @@ const LEGACY_TASK_LABELS: &[&str] = &[
     "Flush Dictation",
     "Toggle Narration",
     "Flush Narration",
+    "attend: flush narration",
 ];
 
 /// Read a Zed JSONC config file as a JSON array, or empty vec if missing/invalid.

@@ -67,7 +67,7 @@ bound), as well as two named tasks they trigger:
 
 You can change these after the fact within Zed, and future reinstallation of Zed
 hooks from `attend` will respect your preferences. To manually assign key
-bindings, bind the tasks "attend: toggle narration" and "attend: flush
+bindings, bind the tasks "attend: toggle narration" and "attend: start
 narration".
 
 ### Agent commands
@@ -122,10 +122,9 @@ typically don't run them directly — they're invoked by hooks or keybindings.
 
 | Command | Purpose |
 |---------|---------|
-| `attend narrate start` | Start the recorder |
-| `attend narrate stop` | Stop the recorder |
+| `attend narrate start` | Start narration, or send current narration and keep recording |
+| `attend narrate stop` | Stop narration |
 | `attend narrate toggle` | Start or stop narration |
-| `attend narrate flush` | Submit current narration and keep recording |
 | `attend narrate status` | Show recording and system status |
 | `attend narrate clean` | Remove old archived narration files |
 | `attend hook --agent claude <event>` | Run a hook event (session-start, user-prompt, stop) |

@@ -25,7 +25,7 @@ use crate::state::{self, EditorState};
 use crate::view;
 
 /// Toggle recording: start if not recording, stop if recording.
-pub fn toggle(session: Option<String>) -> anyhow::Result<()> {
+pub fn toggle() -> anyhow::Result<()> {
     let lock = record_lock_path();
     if lock.exists() {
         // Check for stale lock (daemon was killed without cleanup).
@@ -33,12 +33,12 @@ pub fn toggle(session: Option<String>) -> anyhow::Result<()> {
             tracing::warn!("Stale record lock detected, cleaning up.");
             let _ = fs::remove_file(&lock);
             let _ = fs::remove_file(stop_sentinel_path());
-            start(session)
+            spawn_daemon()
         } else {
             stop()
         }
     } else {
-        start(session)
+        spawn_daemon()
     }
 }
 
@@ -54,17 +54,51 @@ pub(crate) fn is_lock_stale(lock_path: &Path) -> bool {
     !super::process_alive(pid)
 }
 
-/// Start recording by spawning a detached daemon process.
+/// Start recording, or flush current narration and keep recording.
 ///
-/// If already recording (lock exists), this is a no-op.
-pub fn start(session: Option<String>) -> anyhow::Result<()> {
-    if record_lock_path().exists() {
-        eprintln!(
-            "Already recording. Run `attend narrate stop` first, or `attend narrate toggle` to stop and restart."
-        );
-        return Ok(());
+/// If not recording, spawns a new daemon. If already recording, signals
+/// the daemon to flush (submit current narration and continue).
+pub fn start() -> anyhow::Result<()> {
+    let lock = record_lock_path();
+
+    // Already recording — flush instead.
+    if lock.exists() {
+        if is_lock_stale(&lock) {
+            tracing::warn!("Stale record lock detected, cleaning up.");
+            let _ = fs::remove_file(&lock);
+            let _ = fs::remove_file(stop_sentinel_path());
+            let _ = fs::remove_file(flush_sentinel_path());
+            // Fall through to spawn below.
+        } else {
+            return flush();
+        }
     }
 
+    spawn_daemon()
+}
+
+/// Signal the running daemon to flush (submit current narration, keep recording).
+fn flush() -> anyhow::Result<()> {
+    let sentinel = flush_sentinel_path();
+    if let Some(parent) = sentinel.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&sentinel, "")?;
+
+    // Wait for the daemon to delete the sentinel (acknowledging the flush).
+    for _ in 0..100 {
+        if !sentinel.exists() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    eprintln!("Flush signal sent; daemon may still be transcribing.");
+    Ok(())
+}
+
+/// Spawn a detached recording daemon process.
+fn spawn_daemon() -> anyhow::Result<()> {
     // Resolve engine/model from config (closest config file wins).
     let cwd = std::env::current_dir().unwrap_or_default();
     let config = Config::load(&cwd);
@@ -83,9 +117,6 @@ pub fn start(session: Option<String>) -> anyhow::Result<()> {
 
     if let Some(ref m) = config.model {
         cmd.arg("--model").arg(m);
-    }
-    if let Some(ref s) = session {
-        cmd.arg("--session").arg(s);
     }
 
     // Detach: redirect all stdio to /dev/null and start a new session
@@ -139,45 +170,6 @@ pub fn stop() -> anyhow::Result<()> {
     }
 
     eprintln!("Stop signal sent; daemon may still be transcribing.");
-    Ok(())
-}
-
-/// Flush: submit current narration and keep recording.
-///
-/// If not recording (no lock), starts recording (like toggle).
-/// If recording, creates the flush sentinel and waits for the daemon to
-/// acknowledge it (by deleting the sentinel).
-pub fn flush(session: Option<String>) -> anyhow::Result<()> {
-    let lock = record_lock_path();
-    if !lock.exists() {
-        // Not recording — start.
-        return start(session);
-    }
-
-    if is_lock_stale(&lock) {
-        tracing::warn!("Stale record lock detected, cleaning up.");
-        let _ = fs::remove_file(&lock);
-        let _ = fs::remove_file(stop_sentinel_path());
-        let _ = fs::remove_file(flush_sentinel_path());
-        return start(session);
-    }
-
-    // Recording — create flush sentinel.
-    let sentinel = flush_sentinel_path();
-    if let Some(parent) = sentinel.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&sentinel, "")?;
-
-    // Wait for the daemon to delete the sentinel (acknowledging the flush).
-    for _ in 0..100 {
-        if !sentinel.exists() {
-            return Ok(());
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-
-    eprintln!("Flush signal sent; daemon may still be transcribing.");
     Ok(())
 }
 
