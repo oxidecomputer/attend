@@ -40,10 +40,10 @@ impl Editor for Zed {
     }
 
     fn install_narration(&self, bin_cmd: &str) -> anyhow::Result<()> {
-        install_task(bin_cmd, "Toggle Narration", &["narrate", "toggle"])?;
-        install_task(bin_cmd, "Flush Narration", &["narrate", "flush"])?;
-        install_keybinding("cmd-;", "Toggle Narration")?;
-        install_keybinding("cmd-:", "Flush Narration")?;
+        install_task(bin_cmd, "attend: toggle narration", &["narrate", "toggle"])?;
+        install_task(bin_cmd, "attend: flush narration", &["narrate", "flush"])?;
+        install_keybinding("cmd-;", "attend: toggle narration")?;
+        install_keybinding("cmd-:", "attend: flush narration")?;
         println!("Installed Zed narration tasks and keybindings.");
         Ok(())
     }
@@ -115,10 +115,15 @@ const NARRATION_KEYS: &[&str] = &[
 ];
 
 /// Narration task labels.
-const NARRATION_TASK_LABELS: &[&str] = &["Toggle Narration", "Flush Narration"];
+const NARRATION_TASK_LABELS: &[&str] = &["attend: toggle narration", "attend: flush narration"];
 
 /// Legacy task labels from previous versions.
-const LEGACY_TASK_LABELS: &[&str] = &["Toggle Dictation", "Flush Dictation"];
+const LEGACY_TASK_LABELS: &[&str] = &[
+    "Toggle Dictation",
+    "Flush Dictation",
+    "Toggle Narration",
+    "Flush Narration",
+];
 
 /// Read a Zed JSONC config file as a JSON array, or empty vec if missing/invalid.
 fn read_jsonc_array(path: &std::path::Path) -> Vec<serde_json::Value> {
@@ -217,16 +222,38 @@ fn uninstall_keybinding() -> anyhow::Result<()> {
 }
 
 /// Install a Zed keybinding for a narration task.
+///
+/// Skips installation if the task is already bound to any key (user may have
+/// reassigned it) or if the default key is already bound to something else.
 fn install_keybinding(key: &str, task_name: &str) -> anyhow::Result<()> {
     let keymap_path = zed_config_dir()?.join("keymap.json");
     let mut keymap = read_jsonc_array(&keymap_path);
 
-    let already_bound = keymap.iter().any(|e| {
+    let task_already_bound = keymap.iter().any(|e| {
+        e.get("bindings")
+            .and_then(|b| b.as_object())
+            .is_some_and(|b| {
+                b.values().any(|v| {
+                    v.as_array().is_some_and(|a| {
+                        a.first().and_then(|s| s.as_str()) == Some("task::Spawn")
+                            && a.get(1)
+                                .and_then(|o| o.get("task_name"))
+                                .and_then(|n| n.as_str())
+                                == Some(task_name)
+                    })
+                })
+            })
+    });
+    if task_already_bound {
+        return Ok(());
+    }
+
+    let key_already_bound = keymap.iter().any(|e| {
         e.get("bindings")
             .and_then(|b| b.as_object())
             .is_some_and(|b| b.contains_key(key))
     });
-    if already_bound {
+    if key_already_bound {
         return Ok(());
     }
 

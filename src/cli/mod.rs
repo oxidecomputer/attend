@@ -32,25 +32,6 @@ pub enum Format {
 /// Top-level subcommands.
 #[derive(Subcommand)]
 pub enum Command {
-    /// Set up agent hooks and editor keybindings.
-    #[command(display_order = 1)]
-    Install {
-        /// Agent to install hooks for (repeatable).
-        #[arg(long, short, value_parser = hook::agent_value_parser())]
-        agent: Vec<String>,
-
-        /// Editor to install narration keybindings for (repeatable).
-        #[arg(long, short, value_parser = hook::editor_value_parser())]
-        editor: Vec<String>,
-
-        /// Install to a project-local settings file instead of global.
-        #[arg(long, short)]
-        project: Option<PathBuf>,
-
-        /// Use absolute path to current binary instead of $PATH lookup.
-        #[arg(long)]
-        dev: bool,
-    },
     /// Record and transcribe voice narration for your agent.
     #[command(display_order = 2, subcommand)]
     Narrate(NarrateCommand),
@@ -116,22 +97,28 @@ pub enum Command {
         #[arg(long, short = 'i')]
         interval: Option<f64>,
     },
-    /// Receive narration from a recording session.
+    /// Set up agent hooks and editor keybindings.
     #[command(display_order = 6)]
-    Listen {
-        /// Check once and exit instead of waiting.
-        #[arg(long)]
-        check: bool,
+    Install {
+        /// Agent to install hooks for (repeatable).
+        #[arg(long, short, value_parser = hook::agent_value_parser())]
+        agent: Vec<String>,
 
-        /// Session ID (defaults to listening file).
+        /// Editor to install narration keybindings for (repeatable).
+        #[arg(long, short, value_parser = hook::editor_value_parser())]
+        editor: Vec<String>,
+
+        /// Install to a project-local settings file instead of global.
+        #[arg(long, short)]
+        project: Option<PathBuf>,
+
+        /// Use absolute path to current binary instead of $PATH lookup.
         #[arg(long)]
-        session: Option<String>,
+        dev: bool,
     },
-    /// Respond to agent lifecycle events (used by installed hooks).
-    #[command(display_order = 7, subcommand)]
-    Hook(HookEvent),
+
     /// Remove agent hooks and editor keybindings.
-    #[command(display_order = 8)]
+    #[command(display_order = 7)]
     Uninstall {
         /// Agent to uninstall hooks for (repeatable).
         #[arg(long, short, value_parser = hook::agent_value_parser())]
@@ -146,11 +133,25 @@ pub enum Command {
         project: Option<PathBuf>,
     },
     /// Generate shell completions and print to stdout.
-    #[command(display_order = 9)]
+    #[command(display_order = 8)]
     Completions {
         /// Shell to generate completions for.
         shell: clap_complete::Shell,
     },
+    /// Receive narration from a recording session.
+    #[command(display_order = 9)]
+    Listen {
+        /// Check once and exit instead of waiting.
+        #[arg(long)]
+        check: bool,
+
+        /// Session ID (defaults to listening file).
+        #[arg(long)]
+        session: Option<String>,
+    },
+    /// Respond to agent lifecycle events (used by installed hooks).
+    #[command(display_order = 10, subcommand)]
+    Hook(HookEvent),
 }
 
 impl Cli {
