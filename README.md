@@ -6,14 +6,11 @@ When you're working with an AI coding agent in your terminal, there's a gap: the
 agent can see your files, but it can't see what *you're* doing: which file
 you're reading, where your cursor is, what you've selected. You end up
 copy-pasting code snippets, typing out line numbers, or vaguely describing
-context the agent would already have if it could see what you do. You can stop
-doing all that with `attend`.
+context the agent would already have if it could see what you do.
+
+You can stop doing all that with `attend`.
 
 ## The experience
-
-Once installed, `attend` runs as a hook inside your coding agent. Before each
-prompt, it queries your editor for changes in visible files, cursor positions,
-and selections, then injects that context into the conversation.
 
 The star feature of `attend` is **interleaved voice narration**: speak your
 thoughts while navigating code, and `attend` transcribes and delivers them as
@@ -21,6 +18,10 @@ prompts. You can highlight code, flip between files, and narrate what you want
 done — all without leaving your editor or switching to a chat window. The agent
 receives your words interleaved with what you were looking at and what you
 changed, giving it the full picture.
+
+Even when you're not narrating, `attend` queries your editor for changes in
+visible files, cursor positions, and selections, then injects that context into
+the conversation, so your coding agent knows where you're at.
 
 Personally, I've found "pair programming" using `attend` is a rather different
 experience from typing my thoughts to a coding agent. There's something very
