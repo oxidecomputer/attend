@@ -46,7 +46,7 @@ pub fn toggle(
 }
 
 /// Check whether a lock file is stale (the owning process is no longer alive).
-fn is_lock_stale(lock_path: &Path) -> bool {
+pub(crate) fn is_lock_stale(lock_path: &Path) -> bool {
     let Ok(content) = fs::read_to_string(lock_path) else {
         return false;
     };

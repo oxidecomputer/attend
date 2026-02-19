@@ -1,5 +1,124 @@
 use super::*;
 
+// -- Zed DB fixture tests --
+
+/// Create an in-memory SQLite DB with Zed's schema for testing `query_editors`.
+fn create_test_db() -> rusqlite::Connection {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE items (
+            workspace_id INTEGER,
+            item_id INTEGER,
+            kind TEXT,
+            active INTEGER
+        );
+        CREATE TABLE editors (
+            workspace_id INTEGER,
+            item_id INTEGER,
+            path BLOB
+        );
+        CREATE TABLE editor_selections (
+            workspace_id INTEGER,
+            editor_id INTEGER,
+            start INTEGER,
+            end INTEGER
+        );",
+    )
+    .unwrap();
+    conn
+}
+
+#[test]
+fn query_editors_basic() {
+    let conn = create_test_db();
+    conn.execute_batch(
+        "INSERT INTO items VALUES (1, 10, 'Editor', 1);
+         INSERT INTO editors VALUES (1, 10, X'2F746D702F666F6F2E7273');
+         INSERT INTO editor_selections VALUES (1, 10, 42, 42);",
+    )
+    .unwrap();
+    // X'2F746D702F666F6F2E7273' = "/tmp/foo.rs"
+
+    let result = query_editors(&conn).unwrap();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].path.to_str().unwrap(), "/tmp/foo.rs");
+    assert_eq!(result[0].sel_start, Some(42));
+    assert_eq!(result[0].sel_end, Some(42));
+}
+
+#[test]
+fn query_editors_empty_db() {
+    let conn = create_test_db();
+    let result = query_editors(&conn).unwrap();
+    assert!(result.is_empty());
+}
+
+#[test]
+fn query_editors_inactive_items_excluded() {
+    let conn = create_test_db();
+    conn.execute_batch(
+        "INSERT INTO items VALUES (1, 10, 'Editor', 0);
+         INSERT INTO editors VALUES (1, 10, X'2F746D702F666F6F2E7273');",
+    )
+    .unwrap();
+
+    let result = query_editors(&conn).unwrap();
+    assert!(result.is_empty());
+}
+
+#[test]
+fn query_editors_null_selections() {
+    let conn = create_test_db();
+    conn.execute_batch(
+        "INSERT INTO items VALUES (1, 10, 'Editor', 1);
+         INSERT INTO editors VALUES (1, 10, X'2F746D702F666F6F2E7273');",
+    )
+    .unwrap();
+    // No editor_selections row — LEFT JOIN gives NULLs.
+
+    let result = query_editors(&conn).unwrap();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].sel_start, None);
+    assert_eq!(result[0].sel_end, None);
+}
+
+#[test]
+fn query_editors_multiple_files() {
+    let conn = create_test_db();
+    conn.execute_batch(
+        "INSERT INTO items VALUES (1, 10, 'Editor', 1);
+         INSERT INTO items VALUES (1, 20, 'Editor', 1);
+         INSERT INTO editors VALUES (1, 10, X'2F746D702F612E7273');
+         INSERT INTO editors VALUES (1, 20, X'2F746D702F622E7273');
+         INSERT INTO editor_selections VALUES (1, 10, 0, 5);
+         INSERT INTO editor_selections VALUES (1, 20, 10, 20);",
+    )
+    .unwrap();
+    // X'2F746D702F612E7273' = "/tmp/a.rs"
+    // X'2F746D702F622E7273' = "/tmp/b.rs"
+
+    let result = query_editors(&conn).unwrap();
+    assert_eq!(result.len(), 2);
+    assert_eq!(result[0].path.to_str().unwrap(), "/tmp/a.rs");
+    assert_eq!(result[1].path.to_str().unwrap(), "/tmp/b.rs");
+}
+
+#[test]
+fn query_editors_non_utf8_path() {
+    let conn = create_test_db();
+    // Insert a path with invalid UTF-8: 0xFF byte.
+    conn.execute_batch(
+        "INSERT INTO items VALUES (1, 10, 'Editor', 1);
+         INSERT INTO editors VALUES (1, 10, X'2FFF2F666F6F');",
+    )
+    .unwrap();
+
+    let result = query_editors(&conn).unwrap();
+    assert_eq!(result.len(), 1);
+    // Non-UTF8 path should result in an empty PathBuf.
+    assert_eq!(result[0].path, std::path::PathBuf::new());
+}
+
 #[test]
 fn strip_json_comments_full_line() {
     let input = "// This is a comment\n{\"key\": \"value\"}\n";

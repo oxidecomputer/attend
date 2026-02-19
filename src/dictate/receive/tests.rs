@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::*;
 use crate::dictate::merge::{Event, RenderedFile};
@@ -188,4 +188,67 @@ fn lock_guard_cleanup() {
 
     // After drop, lock should be removed
     assert!(!lock_path.exists());
+}
+
+// -- Integration: collect → read → archive cycle --
+
+#[test]
+fn collect_read_archive_round_trip() {
+    let base = tempfile::tempdir().unwrap();
+    let session_id = "int-test-session";
+
+    // Set up a pending directory with two dictation files.
+    let pending = base.path().join("pending").join(session_id);
+    fs::create_dir_all(&pending).unwrap();
+
+    let events1 = vec![Event::Words {
+        offset_secs: 0.0,
+        text: "first dictation".to_string(),
+    }];
+    let events2 = vec![Event::Words {
+        offset_secs: 1.0,
+        text: "second dictation".to_string(),
+    }];
+
+    let f1 = pending.join("2026-02-18T10-00-00Z.json");
+    let f2 = pending.join("2026-02-18T10-00-01Z.json");
+    fs::write(&f1, serde_json::to_string(&events1).unwrap()).unwrap();
+    fs::write(&f2, serde_json::to_string(&events2).unwrap()).unwrap();
+
+    // Collect should find both files in order.
+    let files = collect_pending_from(&pending);
+    assert_eq!(files.len(), 2);
+
+    // Read should merge into a single dictation block.
+    let cwd = Path::new("/project");
+    let content = read_pending(&files, cwd, &[]).unwrap();
+    assert!(content.contains("first dictation"));
+    assert!(content.contains("second dictation"));
+
+    // Archive should move files out of pending.
+    let archive = base.path().join("archive").join(session_id);
+    fs::create_dir_all(&archive).unwrap();
+    for path in &files {
+        if let Some(filename) = path.file_name() {
+            let _ = fs::rename(path, archive.join(filename));
+        }
+    }
+    assert!(!f1.exists());
+    assert!(!f2.exists());
+    assert!(archive.join("2026-02-18T10-00-00Z.json").exists());
+    assert!(archive.join("2026-02-18T10-00-01Z.json").exists());
+}
+
+/// Helper: collect pending files from an arbitrary directory (not cache_dir).
+fn collect_pending_from(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    files.sort();
+    files
 }

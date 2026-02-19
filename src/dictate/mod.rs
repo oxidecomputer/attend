@@ -178,9 +178,23 @@ pub(crate) fn status() -> anyhow::Result<()> {
 /// Remove archived dictation files older than the given duration.
 pub(crate) fn clean(older_than: Duration) -> anyhow::Result<()> {
     let archive_root = cache_dir().join("archive");
-    let Ok(sessions) = fs::read_dir(&archive_root) else {
+    if !archive_root.exists() {
         println!("No archive directory found.");
         return Ok(());
+    }
+
+    let removed = clean_archive_dir(&archive_root, older_than);
+
+    let age = humantime::format_duration(older_than);
+    println!("Removed {removed} archived dictation(s) older than {age}.");
+    Ok(())
+}
+
+/// Walk an archive root directory, removing files older than `older_than`.
+/// Returns the number of files removed. Also removes empty session directories.
+fn clean_archive_dir(archive_root: &std::path::Path, older_than: Duration) -> u64 {
+    let Ok(sessions) = fs::read_dir(archive_root) else {
+        return 0;
     };
 
     let cutoff = SystemTime::now() - older_than;
@@ -215,9 +229,7 @@ pub(crate) fn clean(older_than: Duration) -> anyhow::Result<()> {
         }
     }
 
-    let age = humantime::format_duration(older_than);
-    println!("Removed {removed} archived dictation(s) older than {age}.");
-    Ok(())
+    removed
 }
 
 #[cfg(test)]
