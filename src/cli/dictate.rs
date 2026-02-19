@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use clap::Subcommand;
 
+use crate::dictate::transcribe::Engine;
+
 /// Value parser that validates editor names against registered backends.
 fn editor_value_parser() -> clap::builder::PossibleValuesParser {
     clap::builder::PossibleValuesParser::new(crate::editor::EDITORS.iter().map(|e| e.name()))
@@ -12,7 +14,10 @@ fn editor_value_parser() -> clap::builder::PossibleValuesParser {
 pub enum DictateCommand {
     /// Start or stop recording (one hotkey).
     Toggle {
-        /// Path to GGML Whisper model.
+        /// Transcription engine.
+        #[arg(long, value_enum, default_value_t = Engine::Parakeet)]
+        engine: Engine,
+        /// Path to model file or directory.
         #[arg(long)]
         model: Option<PathBuf>,
         /// Session ID (defaults to listening file).
@@ -30,7 +35,10 @@ pub enum DictateCommand {
     },
     /// Spawn detached recorder (idempotent).
     Start {
-        /// Path to GGML Whisper model.
+        /// Transcription engine.
+        #[arg(long, value_enum, default_value_t = Engine::Parakeet)]
+        engine: Engine,
+        /// Path to model file or directory.
         #[arg(long)]
         model: Option<PathBuf>,
         /// Session ID (defaults to listening file).
@@ -66,7 +74,10 @@ pub enum DictateCommand {
     /// Internal: run the recording daemon (not user-facing).
     #[command(name = "_record-daemon", hide = true)]
     RecordDaemon {
-        /// Path to GGML Whisper model.
+        /// Transcription engine.
+        #[arg(long, value_enum, default_value_t = Engine::Parakeet)]
+        engine: Engine,
+        /// Path to model file or directory.
         #[arg(long)]
         model: Option<PathBuf>,
         /// Session ID.
@@ -91,6 +102,7 @@ impl DictateCommand {
 
         match self {
             DictateCommand::Toggle {
+                engine,
                 model,
                 session,
                 snip_threshold,
@@ -102,9 +114,10 @@ impl DictateCommand {
                     head: snip_head,
                     tail: snip_tail,
                 };
-                record::toggle(model, session, snip_cfg)
+                record::toggle(engine, model, session, snip_cfg)
             }
             DictateCommand::Start {
+                engine,
                 model,
                 session,
                 snip_threshold,
@@ -116,12 +129,13 @@ impl DictateCommand {
                     head: snip_head,
                     tail: snip_tail,
                 };
-                record::start(model, session, snip_cfg)
+                record::start(engine, model, session, snip_cfg)
             }
             DictateCommand::Stop => record::stop(),
             DictateCommand::Receive { wait, session } => receive::run(wait, session),
             DictateCommand::Install { editor } => install(&editor),
             DictateCommand::RecordDaemon {
+                engine,
                 model,
                 session,
                 snip_threshold,
@@ -133,7 +147,7 @@ impl DictateCommand {
                     head: snip_head,
                     tail: snip_tail,
                 };
-                record::daemon(model, session, snip_cfg)
+                record::daemon(engine, model, session, snip_cfg)
             }
             DictateCommand::Bench => crate::dictate::bench(),
         }

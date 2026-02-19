@@ -13,17 +13,15 @@ use std::time::{Duration, Instant};
 
 use super::audio;
 use super::merge::{self, Event, RenderedFile};
-use super::transcribe;
-use super::{
-    cache_dir, default_model_path, pending_dir, record_lock_path, resolve_session,
-    stop_sentinel_path,
-};
+use super::transcribe::Engine;
+use super::{cache_dir, pending_dir, record_lock_path, resolve_session, stop_sentinel_path};
 use crate::json::utc_now;
 use crate::state::{self, EditorState};
 use crate::view;
 
 /// Toggle recording: start if not recording, stop if recording.
 pub fn toggle(
+    engine: Engine,
     model: Option<PathBuf>,
     session: Option<String>,
     snip_cfg: merge::SnipConfig,
@@ -31,7 +29,7 @@ pub fn toggle(
     if record_lock_path().exists() {
         stop()
     } else {
-        start(model, session, snip_cfg)
+        start(engine, model, session, snip_cfg)
     }
 }
 
@@ -39,6 +37,7 @@ pub fn toggle(
 ///
 /// If already recording (lock exists), this is a no-op.
 pub fn start(
+    engine: Engine,
     model: Option<PathBuf>,
     session: Option<String>,
     snip_cfg: merge::SnipConfig,
@@ -51,6 +50,13 @@ pub fn start(
     let exe = std::env::current_exe()?;
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("dictate").arg("_record-daemon");
+
+    // Forward engine selection to daemon
+    let engine_str = match engine {
+        Engine::Whisper => "whisper",
+        Engine::Parakeet => "parakeet",
+    };
+    cmd.arg("--engine").arg(engine_str);
 
     if let Some(ref m) = model {
         cmd.arg("--model").arg(m);
@@ -116,29 +122,27 @@ pub fn stop() -> anyhow::Result<()> {
 /// Acquires the record lock, captures audio + editor state + file diffs,
 /// waits for the stop sentinel, transcribes, merges, and writes output.
 pub fn daemon(
+    engine: Engine,
     model: Option<PathBuf>,
     session: Option<String>,
     snip_cfg: merge::SnipConfig,
 ) -> anyhow::Result<()> {
-    let model_path = model.unwrap_or_else(default_model_path);
+    let model_path = model.unwrap_or_else(|| engine.default_model_path());
     let session_id = resolve_session(session);
 
     // Ensure cache dir exists
     let cd = cache_dir();
     fs::create_dir_all(&cd)?;
 
-    // Acquire record lock
-    let lock_path = record_lock_path();
-    if lock_path.exists() {
-        anyhow::bail!("record lock already held");
-    }
-    fs::write(&lock_path, std::process::id().to_string())?;
+    // Acquire record lock (auto-removed on drop, even on error/panic)
+    let _lock = lockfile::Lockfile::create(record_lock_path())
+        .map_err(|e| anyhow::anyhow!("record lock already held: {e:?}"))?;
 
     // Clean up any stale stop sentinel
     let _ = fs::remove_file(stop_sentinel_path());
 
     // Preload model in background (overlaps with audio capture + recording)
-    let preload_handle = thread::spawn(move || transcribe::preload_model(&model_path));
+    let preload_handle = thread::spawn(move || engine.preload(&model_path));
 
     // Play start chime
     let _ = audio::play_chime(true);
@@ -173,22 +177,21 @@ pub fn daemon(
             "Recording too short ({:.1}s), discarding.",
             recording.duration_secs()
         );
-        let _ = fs::remove_file(&lock_path);
         return Ok(());
     }
 
     eprintln!("Transcribing {:.1}s of audio...", recording.duration_secs());
 
     // Join preload thread (usually already done by now)
-    let ctx = preload_handle
+    let mut transcriber = preload_handle
         .join()
         .map_err(|_| anyhow::anyhow!("model preload thread panicked"))??;
 
     // Resample to 16kHz
     let samples_16k = audio::resample(&recording.flatten(), recording.sample_rate, 16000)?;
 
-    // Transcribe with preloaded context
-    let words = transcribe::transcribe(&samples_16k, &ctx)?;
+    // Transcribe with preloaded engine
+    let words = transcriber.transcribe(&samples_16k)?;
 
     // Collect editor events
     let (editor_snapshots, file_diffs) = editor_events.collect();
@@ -215,7 +218,6 @@ pub fn daemon(
 
     if markdown.trim().is_empty() {
         eprintln!("No content captured, discarding.");
-        let _ = fs::remove_file(&lock_path);
         return Ok(());
     }
 
@@ -233,9 +235,6 @@ pub fn daemon(
         fs::write(&path, &markdown)?;
         eprintln!("Dictation written to {}", path.display());
     }
-
-    // Release lock
-    let _ = fs::remove_file(&lock_path);
 
     Ok(())
 }

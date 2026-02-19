@@ -9,7 +9,7 @@ mod audio;
 pub(crate) mod merge;
 pub(crate) mod receive;
 pub(crate) mod record;
-mod transcribe;
+pub(crate) mod transcribe;
 
 use std::path::PathBuf;
 
@@ -51,37 +51,27 @@ pub(crate) fn archive_dir(session_id: &str) -> PathBuf {
     cache_dir().join("archive").join(session_id)
 }
 
-/// Default Whisper model path.
-pub(crate) fn default_model_path() -> PathBuf {
-    cache_dir().join("models").join("ggml-small.en.bin")
-}
-
 /// Resolve the session ID from flag, listening file, or None.
 pub(crate) fn resolve_session(flag: Option<String>) -> Option<String> {
     flag.or_else(listening_session)
 }
 
-/// Run model benchmarks for base, small, and medium models.
+/// Run model benchmarks for all engines and model variants.
 pub(crate) fn bench() -> anyhow::Result<()> {
+    use transcribe::Engine;
+
     let models_dir = cache_dir().join("models");
-    let models = [
-        "ggml-base.en.bin",
-        "ggml-small.en.bin",
-        "ggml-medium.en.bin",
-    ];
-
-    for name in &models {
-        let path = models_dir.join(name);
-        eprintln!("Ensuring model: {name}");
-        transcribe::ensure_model(&path)?;
-    }
-
     let samples = vec![0.0f32; 16000 * 5];
 
-    for name in &models {
-        let path = models_dir.join(name);
-        eprintln!("\n--- {name} ---");
-        transcribe::bench_model(&path, &samples);
+    for engine in &[Engine::Whisper, Engine::Parakeet] {
+        for name in engine.model_names() {
+            let path = models_dir.join(name);
+            eprintln!("Ensuring model: {name}");
+            engine.preload(&path)?; // ensure + load to verify download
+            eprintln!("\n--- {name} ---");
+            let mut transcriber = engine.ensure_and_load(&path)?;
+            transcriber.bench(&samples);
+        }
     }
 
     Ok(())
