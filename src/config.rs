@@ -9,12 +9,18 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::narrate::transcribe::Engine;
+
 /// Attend configuration.
 #[derive(Debug, Default)]
 pub struct Config {
     /// Additional directories to include beyond the project root.
     /// Files in these directories will not be filtered out of dictation/editor context.
     pub include_dirs: Vec<PathBuf>,
+    /// Transcription engine (`parakeet` or `whisper`).
+    pub engine: Option<Engine>,
+    /// Custom model path for the transcription engine.
+    pub model: Option<PathBuf>,
 }
 
 /// Raw TOML representation (may have missing fields).
@@ -22,6 +28,8 @@ pub struct Config {
 struct RawConfig {
     #[serde(default)]
     include_dirs: Vec<PathBuf>,
+    engine: Option<String>,
+    model: Option<PathBuf>,
 }
 
 impl Config {
@@ -32,13 +40,22 @@ impl Config {
     /// Missing files are silently ignored.
     pub fn load(cwd: &Path) -> Self {
         let mut include_dirs = Vec::new();
+        // Scalar fields: "closest wins" (first value found takes precedence).
+        let mut engine: Option<Engine> = None;
+        let mut model: Option<PathBuf> = None;
 
-        // Walk upward from cwd
+        // Walk upward from cwd (closest first)
         let mut dir = Some(cwd);
         while let Some(d) = dir {
             let cfg_path = d.join(".attend").join("config.toml");
             if let Some(raw) = load_file(&cfg_path) {
                 include_dirs.extend(raw.include_dirs);
+                if engine.is_none() {
+                    engine = raw.engine.as_deref().and_then(parse_engine);
+                }
+                if model.is_none() {
+                    model = raw.model;
+                }
             }
             dir = d.parent();
         }
@@ -48,10 +65,20 @@ impl Config {
             let cfg_path = global_dir.join("attend").join("config.toml");
             if let Some(raw) = load_file(&cfg_path) {
                 include_dirs.extend(raw.include_dirs);
+                if engine.is_none() {
+                    engine = raw.engine.as_deref().and_then(parse_engine);
+                }
+                if model.is_none() {
+                    model = raw.model;
+                }
             }
         }
 
-        Config { include_dirs }
+        Config {
+            include_dirs,
+            engine,
+            model,
+        }
     }
 }
 
@@ -59,6 +86,18 @@ impl Config {
 fn load_file(path: &Path) -> Option<RawConfig> {
     let content = std::fs::read_to_string(path).ok()?;
     toml::from_str(&content).ok()
+}
+
+/// Parse an engine name string into an `Engine` variant.
+fn parse_engine(s: &str) -> Option<Engine> {
+    match s {
+        "parakeet" => Some(Engine::Parakeet),
+        "whisper" => Some(Engine::Whisper),
+        _ => {
+            tracing::warn!(engine = s, "Unknown engine in config, ignoring");
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -95,6 +134,49 @@ mod tests {
         std::fs::write(&path, "").unwrap();
         let raw = load_file(&path).unwrap();
         assert!(raw.include_dirs.is_empty());
+        assert!(raw.engine.is_none());
+        assert!(raw.model.is_none());
+    }
+
+    #[test]
+    fn load_file_engine_and_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "engine = \"whisper\"\nmodel = \"/custom/model\"\n",
+        )
+        .unwrap();
+        let raw = load_file(&path).unwrap();
+        assert_eq!(raw.engine.as_deref(), Some("whisper"));
+        assert_eq!(raw.model, Some(PathBuf::from("/custom/model")));
+    }
+
+    #[test]
+    fn engine_closest_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        // Parent sets engine = whisper
+        let parent_attend = dir.path().join(".attend");
+        std::fs::create_dir_all(&parent_attend).unwrap();
+        std::fs::write(
+            parent_attend.join("config.toml"),
+            "engine = \"whisper\"\n",
+        )
+        .unwrap();
+
+        // Child overrides with engine = parakeet
+        let child = dir.path().join("child");
+        let child_attend = child.join(".attend");
+        std::fs::create_dir_all(&child_attend).unwrap();
+        std::fs::write(
+            child_attend.join("config.toml"),
+            "engine = \"parakeet\"\n",
+        )
+        .unwrap();
+
+        let config = Config::load(&child);
+        // Child (closest) wins
+        assert!(matches!(config.engine, Some(Engine::Parakeet)));
     }
 
     #[test]

@@ -9,16 +9,16 @@ fn parse_duration(s: &str) -> Result<std::time::Duration, String> {
     humantime::parse_duration(s).map_err(|e| e.to_string())
 }
 
-/// Shared recording arguments for toggle / start / daemon.
+/// Hidden args forwarded to the recording daemon.
 #[derive(Args, Clone)]
-pub struct RecordingArgs {
+pub(crate) struct DaemonArgs {
     /// Transcription engine.
     #[arg(long, value_enum, default_value_t = Engine::Parakeet)]
     engine: Engine,
-    /// Path to model file or directory (auto-downloaded if omitted).
+    /// Path to model file or directory.
     #[arg(long)]
     model: Option<PathBuf>,
-    /// Session to deliver narration to (defaults to the active `attend hook` session).
+    /// Session to deliver narration to.
     #[arg(long)]
     session: Option<String>,
 }
@@ -28,8 +28,9 @@ pub struct RecordingArgs {
 pub enum NarrateCommand {
     /// Start or stop recording (one hotkey).
     Toggle {
-        #[command(flatten)]
-        args: RecordingArgs,
+        /// Session to deliver narration to (defaults to the active `attend hook` session).
+        #[arg(long)]
+        session: Option<String>,
     },
     /// Submit current narration and keep recording.
     ///
@@ -37,14 +38,16 @@ pub enum NarrateCommand {
     /// If recording, flushes the current audio for transcription
     /// while continuing to record.
     Flush {
-        #[command(flatten)]
-        args: RecordingArgs,
+        /// Session to deliver narration to (defaults to the active `attend hook` session).
+        #[arg(long)]
+        session: Option<String>,
     },
     /// Spawn detached recorder (idempotent).
     #[command(hide = true)]
     Start {
-        #[command(flatten)]
-        args: RecordingArgs,
+        /// Session to deliver narration to (defaults to the active `attend hook` session).
+        #[arg(long)]
+        session: Option<String>,
     },
     /// Signal recorder to stop (idempotent).
     Stop,
@@ -60,7 +63,7 @@ pub enum NarrateCommand {
     #[command(name = "_record-daemon", hide = true)]
     RecordDaemon {
         #[command(flatten)]
-        args: RecordingArgs,
+        args: DaemonArgs,
     },
     /// Internal: benchmark model load and transcription latency.
     #[command(name = "_bench", hide = true)]
@@ -73,11 +76,9 @@ impl NarrateCommand {
         use crate::narrate::record;
 
         match self {
-            NarrateCommand::Toggle { args } => {
-                record::toggle(args.engine, args.model, args.session)
-            }
-            NarrateCommand::Flush { args } => record::flush(args.engine, args.model, args.session),
-            NarrateCommand::Start { args } => record::start(args.engine, args.model, args.session),
+            NarrateCommand::Toggle { session } => record::toggle(session),
+            NarrateCommand::Flush { session } => record::flush(session),
+            NarrateCommand::Start { session } => record::start(session),
             NarrateCommand::Stop => record::stop(),
             NarrateCommand::Status => crate::narrate::status(),
             NarrateCommand::Clean { older_than } => crate::narrate::clean(older_than),

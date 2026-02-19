@@ -82,6 +82,27 @@ asking a multiple choice question, or requesting permission to do an action),
 you need never leave your focused editor, because you can narrate your responses
 while you're in the codebase.
 
+### Transcription model
+
+Narration uses a local speech-to-text model: no audio leaves your machine. The
+first time you start recording, the model is automatically downloaded from
+Hugging Face and cached in `~/.cache/attend/models/`.
+
+Two engines are available:
+
+| Engine | Default Model | Size | Notes |
+|--------|---------------|------|-------|
+| `parakeet` (default) | [Parakeet TDT 0.6B](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx) | ~1.2 GB | Better punctuation and capitalization, faster |
+| `whisper` | [Whisper Small (GGML)](https://huggingface.co/ggerganov/whisper.cpp) | ~466 MB | Lighter, English only, slower |
+
+To change the engine or model, set them in your config file
+(`~/.config/attend/config.toml` or `.attend/config.toml` in your project):
+
+```toml
+engine = "whisper"
+model = "/path/to/custom/model"
+```
+
 ## Uninstall
 
 To remove everything:

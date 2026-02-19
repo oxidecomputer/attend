@@ -19,16 +19,13 @@ use super::{
     cache_dir, flush_sentinel_path, pending_dir, record_lock_path, resolve_session,
     stop_sentinel_path,
 };
+use crate::config::Config;
 use crate::json::utc_now;
 use crate::state::{self, EditorState};
 use crate::view;
 
 /// Toggle recording: start if not recording, stop if recording.
-pub fn toggle(
-    engine: Engine,
-    model: Option<PathBuf>,
-    session: Option<String>,
-) -> anyhow::Result<()> {
+pub fn toggle(session: Option<String>) -> anyhow::Result<()> {
     let lock = record_lock_path();
     if lock.exists() {
         // Check for stale lock (daemon was killed without cleanup).
@@ -36,12 +33,12 @@ pub fn toggle(
             tracing::warn!("Stale record lock detected, cleaning up.");
             let _ = fs::remove_file(&lock);
             let _ = fs::remove_file(stop_sentinel_path());
-            start(engine, model, session)
+            start(session)
         } else {
             stop()
         }
     } else {
-        start(engine, model, session)
+        start(session)
     }
 }
 
@@ -60,11 +57,7 @@ pub(crate) fn is_lock_stale(lock_path: &Path) -> bool {
 /// Start recording by spawning a detached daemon process.
 ///
 /// If already recording (lock exists), this is a no-op.
-pub fn start(
-    engine: Engine,
-    model: Option<PathBuf>,
-    session: Option<String>,
-) -> anyhow::Result<()> {
+pub fn start(session: Option<String>) -> anyhow::Result<()> {
     if record_lock_path().exists() {
         eprintln!(
             "Already recording. Run `attend narrate stop` first, or `attend narrate toggle` to stop and restart."
@@ -72,18 +65,23 @@ pub fn start(
         return Ok(());
     }
 
+    // Resolve engine/model from config (closest config file wins).
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let config = Config::load(&cwd);
+    let engine = config.engine.unwrap_or(Engine::Parakeet);
+
     let exe = std::env::current_exe()?;
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("narrate").arg("_record-daemon");
 
-    // Forward engine selection to daemon
+    // Forward resolved engine/model to daemon
     let engine_str = match engine {
         Engine::Whisper => "whisper",
         Engine::Parakeet => "parakeet",
     };
     cmd.arg("--engine").arg(engine_str);
 
-    if let Some(ref m) = model {
+    if let Some(ref m) = config.model {
         cmd.arg("--model").arg(m);
     }
     if let Some(ref s) = session {
@@ -149,15 +147,11 @@ pub fn stop() -> anyhow::Result<()> {
 /// If not recording (no lock), starts recording (like toggle).
 /// If recording, creates the flush sentinel and waits for the daemon to
 /// acknowledge it (by deleting the sentinel).
-pub fn flush(
-    engine: Engine,
-    model: Option<PathBuf>,
-    session: Option<String>,
-) -> anyhow::Result<()> {
+pub fn flush(session: Option<String>) -> anyhow::Result<()> {
     let lock = record_lock_path();
     if !lock.exists() {
         // Not recording — start.
-        return start(engine, model, session);
+        return start(session);
     }
 
     if is_lock_stale(&lock) {
@@ -165,7 +159,7 @@ pub fn flush(
         let _ = fs::remove_file(&lock);
         let _ = fs::remove_file(stop_sentinel_path());
         let _ = fs::remove_file(flush_sentinel_path());
-        return start(engine, model, session);
+        return start(session);
     }
 
     // Recording — create flush sentinel.
