@@ -136,22 +136,6 @@ uninstall only the integrations for that.
 
 ## Commands
 
-### Agent integration
-
-These are the commands that make the pair programming experience work. You
-typically don't run them directly — they're invoked by hooks or keybindings.
-
-| Command | Purpose |
-|---------|---------|
-| `attend narrate start` | Start narration, or send current narration and keep recording |
-| `attend narrate stop` | Stop narration |
-| `attend narrate toggle` | Start or stop narration |
-| `attend narrate status` | Show recording and system status |
-| `attend narrate clean` | Remove old archived narration files |
-| `attend hook --agent claude <event>` | Run a hook event (session-start, user-prompt, stop) |
-| `attend listen` | Wait for narration and deliver it to the agent |
-| `attend listen --check` | Check for pending narration without waiting |
-
 ### Standalone tools
 
 These let you inspect your editor state directly from the terminal. Useful for
@@ -194,6 +178,22 @@ editor state cache without producing output. If you are not using narration,
 running this in the background mildly improves the accuracy of the editor
 context provided to your agent at every turn, because it keeps a more precise
 tally of which cursor or selection was most recently used by you.
+
+### Agent integration
+
+These are the commands that make the pair programming experience work. You
+typically don't run them directly — they're invoked by hooks or keybindings.
+
+| Command | Purpose |
+|---------|---------|
+| `attend narrate start` | Start narration, or send current narration and keep recording |
+| `attend narrate stop` | Stop narration |
+| `attend narrate toggle` | Start or stop narration |
+| `attend narrate status` | Show recording and system status |
+| `attend narrate clean` | Remove old archived narration files |
+| `attend hook --agent claude <event>` | Run a hook event (session-start, user-prompt, stop) |
+| `attend listen` | Wait for narration and deliver it to the agent |
+| `attend listen --check` | Check for pending narration without waiting |
 
 ## Development
 
