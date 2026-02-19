@@ -44,10 +44,13 @@ fn entry_has_attend_cmd(entry: &serde_json::Value, bin_cmd: Option<&str>) -> boo
         .any(|cmd| cmd.contains("attend") || bin_cmd.is_some_and(|b| cmd.contains(b)))
 }
 
-/// Resolve the Claude Code settings file path (global or project-local).
+/// Resolve the Claude Code settings file path.
+///
+/// Global installs use `~/.claude/settings.json`. Project installs use
+/// `settings.local.json` so as not to impose the tool on other contributors.
 fn settings_path(project: Option<&Path>) -> anyhow::Result<PathBuf> {
     if let Some(proj) = project {
-        Ok(proj.join(".claude").join("settings.json"))
+        Ok(proj.join(".claude").join("settings.local.json"))
     } else {
         let home = dirs::home_dir().context("cannot determine home directory")?;
         Ok(home.join(".claude").join("settings.json"))
@@ -151,6 +154,31 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
         stop_vec.push(stop_hook);
     }
 
+    // Pre-authorize `attend view` so Claude doesn't prompt for every view call.
+    {
+        let permissions = obj
+            .entry("permissions")
+            .or_insert_with(|| serde_json::json!({}));
+        let perms_obj = permissions
+            .as_object_mut()
+            .context("permissions is not an object")?;
+        let allow = perms_obj
+            .entry("allow")
+            .or_insert_with(|| serde_json::json!([]));
+        let allow_vec = allow
+            .as_array_mut()
+            .context("permissions.allow is not an array")?;
+
+        let view_pattern = format!("Bash({bin_cmd} view:*)");
+        // Remove stale attend view entries, then add current
+        allow_vec.retain(|v| {
+            v.as_str()
+                .map(|s| !s.contains("attend") || !s.contains("view"))
+                .unwrap_or(true)
+        });
+        allow_vec.push(serde_json::Value::String(view_pattern));
+    }
+
     // Write back
     if let Some(parent) = settings_path.parent() {
         fs::create_dir_all(parent).context("cannot create settings directory")?;
@@ -201,6 +229,21 @@ fn uninstall(project: Option<PathBuf>) -> anyhow::Result<()> {
         }
     }
 
+    // Remove attend view permission
+    if let Some(perms) = settings.get_mut("permissions").and_then(|p| p.as_object_mut()) {
+        if let Some(allow) = perms.get_mut("allow").and_then(|a| a.as_array_mut()) {
+            let before = allow.len();
+            allow.retain(|v| {
+                v.as_str()
+                    .map(|s| !s.contains("attend") || !s.contains("view"))
+                    .unwrap_or(true)
+            });
+            if allow.len() < before {
+                removed = true;
+            }
+        }
+    }
+
     if removed {
         let mut output =
             serde_json::to_string_pretty(&settings).context("cannot serialize settings")?;
@@ -246,7 +289,11 @@ fn install_skill_file(bin_cmd: &str, project: Option<&Path>) -> anyhow::Result<(
     let skill_dir = base.join(".claude/skills/attend");
     fs::create_dir_all(&skill_dir)?;
 
-    let skill_content = format!(include_str!("claude_skill.md"), bin_cmd = bin_cmd);
+    let skill_content = format!(
+        "{}{}",
+        format_args!(include_str!("claude_skill_frontmatter.md"), bin_cmd = bin_cmd),
+        format_args!(include_str!("claude_skill_body.md"), bin_cmd = bin_cmd),
+    );
 
     fs::write(skill_dir.join("SKILL.md"), skill_content)?;
     Ok(())

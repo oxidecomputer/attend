@@ -28,7 +28,6 @@ pub fn toggle(
     engine: Engine,
     model: Option<PathBuf>,
     session: Option<String>,
-    snip_cfg: merge::SnipConfig,
 ) -> anyhow::Result<()> {
     let lock = record_lock_path();
     if lock.exists() {
@@ -37,12 +36,12 @@ pub fn toggle(
             eprintln!("Stale record lock detected, cleaning up.");
             let _ = fs::remove_file(&lock);
             let _ = fs::remove_file(stop_sentinel_path());
-            start(engine, model, session, snip_cfg)
+            start(engine, model, session)
         } else {
             stop()
         }
     } else {
-        start(engine, model, session, snip_cfg)
+        start(engine, model, session)
     }
 }
 
@@ -66,7 +65,6 @@ pub fn start(
     engine: Engine,
     model: Option<PathBuf>,
     session: Option<String>,
-    snip_cfg: merge::SnipConfig,
 ) -> anyhow::Result<()> {
     if record_lock_path().exists() {
         eprintln!("Already recording.");
@@ -89,18 +87,6 @@ pub fn start(
     }
     if let Some(ref s) = session {
         cmd.arg("--session").arg(s);
-    }
-
-    let defaults = merge::SnipConfig::default();
-    if snip_cfg.threshold != defaults.threshold {
-        cmd.arg("--snip-threshold")
-            .arg(snip_cfg.threshold.to_string());
-    }
-    if snip_cfg.head != defaults.head {
-        cmd.arg("--snip-head").arg(snip_cfg.head.to_string());
-    }
-    if snip_cfg.tail != defaults.tail {
-        cmd.arg("--snip-tail").arg(snip_cfg.tail.to_string());
     }
 
     // Detach: redirect all stdio to /dev/null and start a new session
@@ -166,12 +152,11 @@ pub fn flush(
     engine: Engine,
     model: Option<PathBuf>,
     session: Option<String>,
-    snip_cfg: merge::SnipConfig,
 ) -> anyhow::Result<()> {
     let lock = record_lock_path();
     if !lock.exists() {
         // Not recording — start.
-        return start(engine, model, session, snip_cfg);
+        return start(engine, model, session);
     }
 
     if is_lock_stale(&lock) {
@@ -179,7 +164,7 @@ pub fn flush(
         let _ = fs::remove_file(&lock);
         let _ = fs::remove_file(stop_sentinel_path());
         let _ = fs::remove_file(flush_sentinel_path());
-        return start(engine, model, session, snip_cfg);
+        return start(engine, model, session);
     }
 
     // Recording — create flush sentinel.
@@ -209,7 +194,6 @@ pub fn daemon(
     engine: Engine,
     model: Option<PathBuf>,
     session: Option<String>,
-    snip_cfg: merge::SnipConfig,
 ) -> anyhow::Result<()> {
     let model_path = model.unwrap_or_else(|| engine.default_model_path());
     let session_id = resolve_session(session);
@@ -238,11 +222,9 @@ pub fn daemon(
     // Start audio capture
     let capture = audio::start_capture()?;
 
-    // Use current working directory for relative path display
-    let cwd = std::env::current_dir().ok();
-
-    // Start editor polling and file diff tracking on background threads
-    let editor_events = poll_editor_and_diffs(cwd)?;
+    // Start editor polling and file diff tracking on background threads.
+    // Pass None for cwd so paths stay absolute — filtering is deferred to receive.
+    let editor_events = poll_editor_and_diffs(None)?;
 
     // Track time base for word timestamp offsets across flushes
     let mut time_base_secs = 0.0_f64;
@@ -266,7 +248,6 @@ pub fn daemon(
                 file_diffs,
                 time_base_secs,
                 &session_id,
-                snip_cfg,
             )?;
             break;
         }
@@ -285,7 +266,6 @@ pub fn daemon(
                 file_diffs,
                 time_base_secs,
                 &session_id,
-                snip_cfg,
             )?;
 
             time_base_secs += elapsed;
@@ -302,7 +282,7 @@ pub fn daemon(
     Ok(())
 }
 
-/// Transcribe audio, merge with editor events, and write the pending file.
+/// Transcribe audio, merge with editor events, and write the pending file as JSON.
 fn transcribe_and_write(
     transcriber: &mut dyn super::transcribe::Transcriber,
     recording: audio::Recording,
@@ -310,7 +290,6 @@ fn transcribe_and_write(
     file_diffs: Vec<Event>,
     time_base_secs: f64,
     session_id: &Option<String>,
-    snip_cfg: merge::SnipConfig,
 ) -> anyhow::Result<()> {
     if recording.duration_secs() < 0.5 {
         eprintln!(
@@ -337,23 +316,26 @@ fn transcribe_and_write(
     events.extend(editor_snapshots);
     events.extend(file_diffs);
 
-    let markdown = merge::format_markdown(&mut events, snip_cfg);
+    // Sort and compress/merge events, then serialize as JSON with absolute paths.
+    merge::compress_and_merge(&mut events);
 
-    if markdown.trim().is_empty() {
+    if events.is_empty() {
         eprintln!("No content captured, discarding.");
         return Ok(());
     }
+
+    let json = serde_json::to_string(&events)?;
 
     let ts = utc_now().replace(':', "-");
     if let Some(sid) = session_id {
         let dir = pending_dir(sid);
         fs::create_dir_all(&dir)?;
-        let path = dir.join(format!("{ts}.md"));
-        fs::write(&path, &markdown)?;
+        let path = dir.join(format!("{ts}.json"));
+        fs::write(&path, &json)?;
         eprintln!("Dictation written to {}", path.display());
     } else {
-        let path = cache_dir().join("dictation.md");
-        fs::write(&path, &markdown)?;
+        let path = cache_dir().join("dictation.json");
+        fs::write(&path, &json)?;
         eprintln!("Dictation written to {}", path.display());
     }
 
@@ -414,7 +396,7 @@ fn poll_editor_and_diffs(cwd: Option<PathBuf>) -> anyhow::Result<EditorPollHandl
         while !stop_ed.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(100));
 
-            let state = match EditorState::current(ed_cwd.as_deref()) {
+            let state = match EditorState::current(ed_cwd.as_deref(), &[]) {
                 Ok(Some(s)) => s,
                 _ => continue,
             };
@@ -428,7 +410,8 @@ fn poll_editor_and_diffs(cwd: Option<PathBuf>) -> anyhow::Result<EditorPollHandl
             prev_files = Some(files.clone());
 
             let offset_secs = start.elapsed().as_secs_f64();
-            let rendered = render_snapshot_files(&files, state.cwd.as_deref());
+            // Pass None for cwd so paths stay absolute — filtering deferred to receive.
+            let rendered = render_snapshot_files(&files, None);
 
             ed_events.lock().unwrap().push(Event::EditorSnapshot {
                 offset_secs,
@@ -447,7 +430,7 @@ fn poll_editor_and_diffs(cwd: Option<PathBuf>) -> anyhow::Result<EditorPollHandl
         let mut file_mtimes: HashMap<PathBuf, std::time::SystemTime> = HashMap::new();
 
         // Snapshot initial state of recently active files
-        if let Ok(Some(state)) = EditorState::current(diff_cwd.as_deref()) {
+        if let Ok(Some(state)) = EditorState::current(diff_cwd.as_deref(), &[]) {
             for file in &state.files {
                 if let Ok(content) = fs::read_to_string(&file.path) {
                     if let Ok(meta) = fs::metadata(&file.path)
@@ -464,7 +447,7 @@ fn poll_editor_and_diffs(cwd: Option<PathBuf>) -> anyhow::Result<EditorPollHandl
             thread::sleep(Duration::from_secs(1));
 
             // Check current editor files for changes
-            let state = match EditorState::current(diff_cwd.as_deref()) {
+            let state = match EditorState::current(diff_cwd.as_deref(), &[]) {
                 Ok(Some(s)) => s,
                 _ => continue,
             };
@@ -496,7 +479,8 @@ fn poll_editor_and_diffs(cwd: Option<PathBuf>) -> anyhow::Result<EditorPollHandl
                     && *old_content != new_content
                 {
                     let offset_secs = start.elapsed().as_secs_f64();
-                    let display_path = relativize_path(&file.path, diff_cwd.as_deref());
+                    // Keep absolute path — filtering deferred to receive.
+                    let display_path = file.path.to_string_lossy().to_string();
                     df_events.lock().unwrap().push(Event::FileDiff {
                         offset_secs,
                         path: display_path,
@@ -547,12 +531,3 @@ fn render_snapshot_files(files: &[state::FileEntry], cwd: Option<&Path>) -> Vec<
     rendered
 }
 
-/// Relativize a path against a working directory for display.
-fn relativize_path(path: &Path, cwd: Option<&Path>) -> String {
-    if let Some(base) = cwd
-        && let Ok(rel) = path.strip_prefix(base)
-    {
-        return rel.to_string_lossy().to_string();
-    }
-    path.to_string_lossy().to_string()
-}

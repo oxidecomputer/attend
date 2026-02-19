@@ -46,7 +46,7 @@ pub(crate) fn receive_lock_path() -> PathBuf {
 
 /// Directory where pending dictation files are written.
 ///
-/// Each dictation is stored as `<timestamp>.md` inside
+/// Each dictation is stored as `<timestamp>.json` inside
 /// `~/.cache/attend/pending/<session_id>/`.
 pub(crate) fn pending_dir(session_id: &str) -> PathBuf {
     cache_dir().join("pending").join(session_id)
@@ -164,7 +164,7 @@ pub(crate) fn status() -> anyhow::Result<()> {
                     .filter(|e| {
                         e.path()
                             .extension()
-                            .is_some_and(|ext| ext == "md")
+                            .is_some_and(|ext| ext == "json")
                     })
                     .count()
             })

@@ -1,10 +1,3 @@
----
-name: attend
-description: Activate dictation mode for this session
-allowedTools:
-  - Bash({bin_cmd} dictate receive:*)
-  - Bash({bin_cmd} view:*)
----
 Activate dictation mode: run `{bin_cmd} dictate receive --wait` in the
 background (Bash with `run_in_background: true`, `description: "💬"`). Do nothing else.
 
@@ -18,5 +11,6 @@ Dictation input arrives through two paths:
 Use `description: "💬"` on every background receiver Bash call to keep
 task notifications minimal.
 
-To see file content at editor cursor/selection positions, run
-`{bin_cmd} view <path> <positions>...`. Use `-B` and `-A` for extra context lines.
+Dictation arrives wrapped in `<dictation>` tags. It contains the user's
+spoken words interleaved with code blocks showing what they were looking at.
+Treat it as the user's message — respond to what they said and asked.

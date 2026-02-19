@@ -137,7 +137,7 @@ fn refresh(
     is_tty: bool,
     force: bool,
 ) -> bool {
-    let state = match EditorState::current(dir) {
+    let state = match EditorState::current(dir, &[]) {
         Ok(s) => s,
         Err(e) => {
             if watch.mode != WatchMode::Silent {

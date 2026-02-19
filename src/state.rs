@@ -112,12 +112,12 @@ impl fmt::Display for EditorState {
 impl EditorState {
     /// Load current editor state from all active editors, reordering
     /// by recency relative to the shared cache, and update the cache.
-    pub fn current(cwd: Option<&Path>) -> anyhow::Result<Option<Self>> {
+    pub fn current(cwd: Option<&Path>, include_dirs: &[PathBuf]) -> anyhow::Result<Option<Self>> {
         let result = match editor::query()? {
             Some(r) => r,
             None => return Ok(None),
         };
-        let mut state = Self::build(result.editors, cwd)?;
+        let mut state = Self::build(result.editors, cwd, include_dirs)?;
         if state.files.is_empty() {
             return Ok(None);
         }
@@ -148,12 +148,20 @@ impl EditorState {
     }
 
     /// Build resolved editor state from raw editor rows: filter, group, resolve.
-    pub fn build(raw_editors: Vec<RawEditor>, cwd: Option<&Path>) -> anyhow::Result<Self> {
+    ///
+    /// Files are included if they are under `cwd` or any of `include_dirs`.
+    /// Pass `None` for `cwd` to include all files (no filtering).
+    pub fn build(
+        raw_editors: Vec<RawEditor>,
+        cwd: Option<&Path>,
+        include_dirs: &[PathBuf],
+    ) -> anyhow::Result<Self> {
         // Group by path, merging selections across panes/workspaces
         let mut files_map: BTreeMap<&Path, Vec<(i64, i64)>> = BTreeMap::new();
         for ed in &raw_editors {
             if let Some(cwd) = cwd
                 && !ed.path.starts_with(cwd)
+                && !include_dirs.iter().any(|d| ed.path.starts_with(d))
             {
                 continue;
             }

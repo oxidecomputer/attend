@@ -439,7 +439,7 @@ fn make_editor(path: &Path, sel: Option<(i64, i64)>) -> RawEditor {
 /// Between invocations, tests should round-trip the state through [`round_trip`]
 /// to match what `hook::run` does with its cache file.
 fn simulate(editors: Vec<RawEditor>, cwd: &Path, previous: &EditorState) -> (EditorState, bool) {
-    let mut state = EditorState::build(editors, Some(cwd)).unwrap();
+    let mut state = EditorState::build(editors, Some(cwd), &[]).unwrap();
     state.reorder_relative_to(previous);
     let changed = *previous != state;
     (state, changed)

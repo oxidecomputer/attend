@@ -4,6 +4,8 @@
 //! document interleaving prose (from speech) with fenced code blocks
 //! (from editor navigation) and fenced diff blocks (from file changes).
 
+use serde::{Deserialize, Serialize};
+
 use crate::state::FileEntry;
 
 /// Controls collapsing of large code snippets and diffs.
@@ -11,7 +13,7 @@ use crate::state::FileEntry;
 /// When a fenced block exceeds `threshold` lines, only the first `head`
 /// and last `tail` lines are kept, with a `// ... (N lines omitted)` marker
 /// in between.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct SnipConfig {
     /// Blocks with more lines than this are snipped.
     pub threshold: usize,
@@ -55,7 +57,7 @@ fn snip(text: &str, cfg: SnipConfig) -> String {
 }
 
 /// A timestamped event from one of the three capture streams.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
     /// A transcribed word or group of words.
     Words {
@@ -78,7 +80,7 @@ pub enum Event {
     FileDiff {
         /// Seconds from recording start.
         offset_secs: f64,
-        /// Relative path of the changed file.
+        /// Absolute path of the changed file.
         path: String,
         /// File content before the change.
         old: String,
@@ -88,9 +90,9 @@ pub enum Event {
 }
 
 /// Pre-rendered file view for an editor snapshot.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RenderedFile {
-    /// Display path (relative).
+    /// Absolute path of the file.
     pub path: String,
     /// Rendered content with selection markers.
     pub content: String,
@@ -371,13 +373,13 @@ fn merge_adjacent(events: &mut Vec<Event>) {
     }
 }
 
-/// Merge all events chronologically and format as markdown.
+/// Sort events chronologically, compress cursor-only snapshot runs, and
+/// merge adjacent non-Words events.
 ///
-/// The output interleaves prose text with fenced code/diff blocks:
-/// - Words become flowing prose text
-/// - Editor snapshots become fenced code blocks with `// path:line` headers
-/// - File diffs become fenced diff blocks with `// path` headers
-pub fn format_markdown(events: &mut Vec<Event>, snip_cfg: SnipConfig) -> String {
+/// This is the first phase of `format_markdown` — it mutates `events` in
+/// place and is path-format-agnostic (works with both absolute and relative
+/// paths).
+pub fn compress_and_merge(events: &mut Vec<Event>) {
     events.sort_by(|a, b| {
         a.offset_secs()
             .partial_cmp(&b.offset_secs())
@@ -386,7 +388,15 @@ pub fn format_markdown(events: &mut Vec<Event>, snip_cfg: SnipConfig) -> String 
 
     compress_snapshots(events);
     merge_adjacent(events);
+}
 
+/// Render a sorted/compressed event list as markdown.
+///
+/// The output interleaves prose text with fenced code/diff blocks:
+/// - Words become flowing prose text
+/// - Editor snapshots become fenced code blocks with `// path:line` headers
+/// - File diffs become fenced diff blocks with `// path` headers
+pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
     let mut out = String::new();
     let mut in_prose = false;
 
@@ -457,6 +467,16 @@ pub fn format_markdown(events: &mut Vec<Event>, snip_cfg: SnipConfig) -> String 
     }
 
     out
+}
+
+/// Merge all events chronologically and format as markdown.
+///
+/// Convenience function that calls [`compress_and_merge`] followed by
+/// [`render_markdown`]. Used primarily in tests.
+#[cfg(test)]
+pub fn format_markdown(events: &mut Vec<Event>, snip_cfg: SnipConfig) -> String {
+    compress_and_merge(events);
+    render_markdown(events, snip_cfg)
 }
 
 #[cfg(test)]

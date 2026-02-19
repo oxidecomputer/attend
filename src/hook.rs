@@ -17,6 +17,10 @@ fn read_stdin_json() -> Option<serde_json::Value> {
 }
 
 /// Handle the `SessionStart` hook: clear cache and emit format instructions.
+///
+/// On compact/clear, if this session is actively listening for dictation,
+/// re-emit the dictation skill instructions so the agent knows to restart
+/// its background receiver.
 pub fn session_start() -> anyhow::Result<()> {
     let stdin_json = read_stdin_json();
     let session_id = stdin_json
@@ -31,8 +35,22 @@ pub fn session_start() -> anyhow::Result<()> {
         let _ = fs::remove_file(cp);
     }
 
-    // Emit instructions
-    print!("{}", include_str!("instructions.txt"));
+    let bin = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "attend".to_string());
+
+    // Emit instructions (templated with the binary path)
+    print!(include_str!("instructions.txt"), bin_cmd = bin);
+
+    // If this session is actively listening for dictation, re-emit the
+    // dictation skill instructions so the agent restarts its background
+    // receiver after context compaction or clear.
+    if let Some(sid) = session_id
+        && state::listening_session().as_deref() == Some(sid)
+    {
+        print!("{}", dictation_instructions(&bin));
+    }
+
     Ok(())
 }
 
@@ -64,13 +82,15 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
         .or(stdin_cwd)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
+    let config = crate::config::Config::load(&cwd);
+
     // Per-session cache: what this session last saw, used for deduplication.
     let session_previous = session_id
         .and_then(session_cache_path)
         .and_then(|cp| fs::read_to_string(&cp).ok())
         .and_then(|s| serde_json::from_str::<state::EditorState>(&s).ok());
 
-    let state = match state::EditorState::current(Some(&cwd))? {
+    let state = match state::EditorState::current(Some(&cwd), &config.include_dirs)? {
         Some(s) => s,
         None => return Ok(()),
     };
@@ -90,6 +110,18 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
 
     println!("<editor-context>\n{state}\n</editor-context>");
     Ok(())
+}
+
+/// Build dictation skill instructions for re-emission after context compaction.
+///
+/// Uses `claude_skill_body.md` — the same body as the installed SKILL.md,
+/// so the instructions stay consistent with the skill template.
+fn dictation_instructions(bin_cmd: &str) -> String {
+    let body = format!(
+        include_str!("agent/claude_skill_body.md"),
+        bin_cmd = bin_cmd
+    );
+    format!("\n<dictation-instructions>\n{body}</dictation-instructions>\n")
 }
 
 /// Check if the user prompt is `/attend`.

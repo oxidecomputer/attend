@@ -1,18 +1,22 @@
 //! Check for and deliver pending dictation files to Claude Code.
 //!
-//! Dictation files are stored as individual timestamped markdown files in
-//! `~/.cache/attend/pending/<session_id>/`. When multiple dictations happen
-//! before a receive, they are concatenated chronologically (separated by
-//! `---`) and delivered as a single response.
+//! Dictation files are stored as individual timestamped JSON files in
+//! `~/.cache/attend/pending/<session_id>/`. Each file contains a
+//! `Vec<Event>` with absolute paths. On receive, events are filtered to
+//! the current project directory (and any configured `include_dirs`),
+//! paths are relativized, and the result is rendered as markdown wrapped
+//! in `<dictation>` tags.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
+use super::merge::{self, Event, SnipConfig};
 use super::{
     archive_dir, cache_dir, listening_session, pending_dir, receive_lock_path, resolve_session,
 };
+use crate::config::Config;
 
 /// Re-dispatch instruction appended to output when running with `--wait`.
 const REDISPATCH_MSG: &str =
@@ -28,34 +32,91 @@ fn collect_pending(session_id: &str) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = entries
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("md"))
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
         .collect();
 
     files.sort();
     files
 }
 
-/// Read and concatenate all pending dictation files, separating with `---`.
-fn read_pending(files: &[PathBuf]) -> Option<String> {
+/// Deserialize, filter, relativize, and render pending JSON event files.
+///
+/// Returns `None` if no content remains after filtering.
+fn read_pending(files: &[PathBuf], cwd: &Path, include_dirs: &[PathBuf]) -> Option<String> {
     if files.is_empty() {
         return None;
     }
 
-    let mut parts = Vec::new();
+    let mut all_events: Vec<Event> = Vec::new();
     for path in files {
         if let Ok(content) = fs::read_to_string(path) {
-            let content = content.trim().to_string();
-            if !content.is_empty() {
-                parts.push(content);
+            if let Ok(mut events) = serde_json::from_str::<Vec<Event>>(&content) {
+                filter_events(&mut events, cwd, include_dirs);
+                relativize_events(&mut events, cwd);
+                all_events.append(&mut events);
             }
         }
     }
 
-    if parts.is_empty() {
+    if all_events.is_empty() {
         return None;
     }
 
-    Some(parts.join("\n\n---\n\n"))
+    let markdown = merge::render_markdown(&all_events, SnipConfig::default());
+    let trimmed = markdown.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(format!("<dictation>\n{trimmed}\n</dictation>"))
+}
+
+/// Filter events to only include files under `cwd` or any `include_dirs`.
+fn filter_events(events: &mut Vec<Event>, cwd: &Path, include_dirs: &[PathBuf]) {
+    events.retain_mut(|event| match event {
+        Event::Words { .. } => true,
+        Event::EditorSnapshot { rendered, files, .. } => {
+            rendered.retain(|r| path_included(&r.path, cwd, include_dirs));
+            files.retain(|f| path_included(&f.path.to_string_lossy(), cwd, include_dirs));
+            !rendered.is_empty()
+        }
+        Event::FileDiff { path, .. } => path_included(path, cwd, include_dirs),
+    });
+}
+
+/// Check if a path (as string) is under `cwd` or any of the `include_dirs`.
+fn path_included(path: &str, cwd: &Path, include_dirs: &[PathBuf]) -> bool {
+    let p = Path::new(path);
+    if p.starts_with(cwd) {
+        return true;
+    }
+    include_dirs.iter().any(|dir| p.starts_with(dir))
+}
+
+/// Rewrite absolute paths to be relative to `cwd`.
+fn relativize_events(events: &mut Vec<Event>, cwd: &Path) {
+    for event in events.iter_mut() {
+        match event {
+            Event::EditorSnapshot { rendered, .. } => {
+                for file in rendered.iter_mut() {
+                    file.path = relativize_str(&file.path, cwd);
+                }
+            }
+            Event::FileDiff { path, .. } => {
+                *path = relativize_str(path, cwd);
+            }
+            Event::Words { .. } => {}
+        }
+    }
+}
+
+/// Strip a cwd prefix from a path string, returning the relative form.
+fn relativize_str(path: &str, cwd: &Path) -> String {
+    let p = Path::new(path);
+    if let Ok(rel) = p.strip_prefix(cwd) {
+        return rel.to_string_lossy().to_string();
+    }
+    path.to_string()
 }
 
 /// Archive pending dictation files by moving them to the archive directory.
@@ -141,27 +202,36 @@ pub fn run(wait: bool, session_flag: Option<String>) -> anyhow::Result<()> {
 
 /// One-shot check: print pending dictations if any exist, then exit.
 fn run_once(session_id: Option<String>) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let config = Config::load(&cwd);
+
     let session_id = match session_id {
         Some(s) => s,
         None => {
             // No session — try unsuffixed fallback
-            let fallback = cache_dir().join("dictation.md");
+            let fallback = cache_dir().join("dictation.json");
             if fallback.exists()
                 && let Ok(content) = fs::read_to_string(&fallback)
             {
-                let content = content.trim();
-                if !content.is_empty() {
-                    print!("{content}");
-                    let _ = fs::remove_file(&fallback);
-                    return Ok(());
+                if let Ok(mut events) = serde_json::from_str::<Vec<Event>>(&content) {
+                    filter_events(&mut events, &cwd, &config.include_dirs);
+                    relativize_events(&mut events, &cwd);
+                    let markdown = merge::render_markdown(&events, SnipConfig::default());
+                    let trimmed = markdown.trim();
+                    if !trimmed.is_empty() {
+                        print!("<dictation>\n{trimmed}\n</dictation>");
+                        let _ = fs::remove_file(&fallback);
+                        return Ok(());
+                    }
                 }
+                let _ = fs::remove_file(&fallback);
             }
             std::process::exit(1);
         }
     };
 
     let files = collect_pending(&session_id);
-    match read_pending(&files) {
+    match read_pending(&files, &cwd, &config.include_dirs) {
         Some(content) => {
             print!("{content}");
             archive_pending(&files, &session_id);
@@ -179,6 +249,9 @@ fn run_wait(session_id: Option<String>) -> anyhow::Result<()> {
             anyhow::bail!("no session ID available (use --session or run /attend first)");
         }
     };
+
+    let cwd = std::env::current_dir()?;
+    let config = Config::load(&cwd);
 
     // Acquire exclusive lock
     let lock_path = receive_lock_path();
@@ -208,7 +281,7 @@ fn run_wait(session_id: Option<String>) -> anyhow::Result<()> {
 
         // Check for pending dictation
         let files = collect_pending(&session_id);
-        if let Some(content) = read_pending(&files) {
+        if let Some(content) = read_pending(&files, &cwd, &config.include_dirs) {
             print!("{content}");
             println!("{REDISPATCH_MSG}");
             archive_pending(&files, &session_id);

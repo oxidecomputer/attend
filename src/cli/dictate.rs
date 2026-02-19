@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 
-use crate::dictate::merge::SnipConfig;
 use crate::dictate::transcribe::Engine;
 
 /// Shared recording arguments for toggle / start / daemon.
@@ -17,32 +16,6 @@ pub struct RecordingArgs {
     /// Session to deliver dictation to (defaults to the active `attend hook` session).
     #[arg(long)]
     session: Option<String>,
-    #[command(flatten)]
-    snip: SnipArgs,
-}
-
-/// Snip configuration for large code/diff blocks.
-#[derive(Args, Clone)]
-pub struct SnipArgs {
-    /// Snip code/diff blocks longer than this many lines.
-    #[arg(long, default_value_t = 20, help_heading = "Advanced")]
-    snip_threshold: usize,
-    /// Lines to keep at the start of a snipped block.
-    #[arg(long, default_value_t = 10, help_heading = "Advanced")]
-    snip_head: usize,
-    /// Lines to keep at the end of a snipped block.
-    #[arg(long, default_value_t = 5, help_heading = "Advanced")]
-    snip_tail: usize,
-}
-
-impl SnipArgs {
-    fn into_config(self) -> SnipConfig {
-        SnipConfig {
-            threshold: self.snip_threshold,
-            head: self.snip_head,
-            tail: self.snip_tail,
-        }
-    }
 }
 
 /// Dictation CLI subcommands.
@@ -99,13 +72,13 @@ impl DictateCommand {
 
         match self {
             DictateCommand::Toggle { args } => {
-                record::toggle(args.engine, args.model, args.session, args.snip.into_config())
+                record::toggle(args.engine, args.model, args.session)
             }
             DictateCommand::Flush { args } => {
-                record::flush(args.engine, args.model, args.session, args.snip.into_config())
+                record::flush(args.engine, args.model, args.session)
             }
             DictateCommand::Start { args } => {
-                record::start(args.engine, args.model, args.session, args.snip.into_config())
+                record::start(args.engine, args.model, args.session)
             }
             DictateCommand::Stop => record::stop(),
             DictateCommand::Receive { wait, session } => {
@@ -113,7 +86,7 @@ impl DictateCommand {
             }
             DictateCommand::Status => crate::dictate::status(),
             DictateCommand::RecordDaemon { args } => {
-                record::daemon(args.engine, args.model, args.session, args.snip.into_config())
+                record::daemon(args.engine, args.model, args.session)
             }
             DictateCommand::Bench => crate::dictate::bench(),
         }

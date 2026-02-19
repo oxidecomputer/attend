@@ -129,7 +129,7 @@ impl Cli {
                 command.run(self.dir)?;
             }
             None => {
-                if let Some(state) = crate::state::EditorState::current(self.dir.as_deref())? {
+                if let Some(state) = crate::state::EditorState::current(self.dir.as_deref(), &[])? {
                     match self.format {
                         Format::Human => println!("{state}"),
                         Format::Json => {
@@ -171,7 +171,7 @@ impl Command {
             } => {
                 let cwd = dir.or(cwd);
                 let entries = if args.is_empty() {
-                    match crate::state::EditorState::current(cwd.as_deref())? {
+                    match crate::state::EditorState::current(cwd.as_deref(), &[])? {
                         Some(state) => state.files,
                         None => return Ok(()),
                     }

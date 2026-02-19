@@ -2,6 +2,7 @@
 
 mod agent;
 mod cli;
+mod config;
 mod dictate;
 mod editor;
 mod hook;
