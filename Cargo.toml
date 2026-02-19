@@ -2,6 +2,12 @@
 name = "attend"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+description = "Give your coding agent eyes and ears in your editor"
+repository = "https://github.com/oxidecomputer/attend"
+readme = "README.md"
+keywords = ["cli", "editor", "agent", "narration", "pair-programming"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 anyhow = "1"
