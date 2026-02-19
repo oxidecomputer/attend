@@ -170,13 +170,15 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
             .context("permissions.allow is not an array")?;
 
         let look_pattern = format!("Bash({bin_cmd} look:*)");
-        // Remove stale attend look/view entries, then add current
+        let listen_pattern = format!("Bash({bin_cmd} listen:*)");
+        // Remove stale attend entries, then add current
         allow_vec.retain(|v| {
             v.as_str()
-                .map(|s| !s.contains("attend") || (!s.contains("look") && !s.contains("view")))
+                .map(|s| !s.contains("attend"))
                 .unwrap_or(true)
         });
         allow_vec.push(serde_json::Value::String(look_pattern));
+        allow_vec.push(serde_json::Value::String(listen_pattern));
     }
 
     // Write back
@@ -233,7 +235,7 @@ fn uninstall(project: Option<PathBuf>) -> anyhow::Result<()> {
         }
     }
 
-    // Remove attend look/view permission
+    // Remove attend permissions
     if let Some(perms) = settings
         .get_mut("permissions")
         .and_then(|p| p.as_object_mut())
@@ -242,7 +244,7 @@ fn uninstall(project: Option<PathBuf>) -> anyhow::Result<()> {
         let before = allow.len();
         allow.retain(|v| {
             v.as_str()
-                .map(|s| !s.contains("attend") || (!s.contains("look") && !s.contains("view")))
+                .map(|s| !s.contains("attend"))
                 .unwrap_or(true)
         });
         if allow.len() < before {

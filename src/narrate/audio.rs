@@ -76,7 +76,7 @@ pub fn start_capture() -> anyhow::Result<CaptureHandle> {
         .ok_or_else(|| anyhow::anyhow!("no audio input device found"))?;
 
     let config = device.default_input_config()?;
-    let sample_rate = config.sample_rate().0;
+    let sample_rate = config.sample_rate();
     let channels = config.channels() as usize;
 
     let chunks: Arc<Mutex<Vec<AudioChunk>>> = Arc::new(Mutex::new(Vec::new()));
@@ -172,8 +172,10 @@ pub fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> anyhow::Result
         return Ok(samples.to_vec());
     }
 
+    use audioadapter_buffers::direct::InterleavedSlice;
     use rubato::{
-        Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
+        Async, FixedAsync, Resampler, SincInterpolationParameters, SincInterpolationType,
+        WindowFunction,
     };
 
     let params = SincInterpolationParameters {
@@ -186,7 +188,8 @@ pub fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> anyhow::Result
 
     let ratio = to_rate as f64 / from_rate as f64;
     let chunk_size = 1024;
-    let mut resampler = SincFixedIn::<f32>::new(ratio, 2.0, params, chunk_size, 1)?;
+    let mut resampler =
+        Async::<f32>::new_sinc(ratio, 2.0, &params, chunk_size, 1, FixedAsync::Input)?;
 
     let mut output = Vec::with_capacity((samples.len() as f64 * ratio) as usize + chunk_size);
     let mut pos = 0;
@@ -197,8 +200,9 @@ pub fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> anyhow::Result
         if chunk.len() < chunk_size {
             chunk.resize(chunk_size, 0.0);
         }
-        let result = resampler.process(&[&chunk], None)?;
-        output.extend_from_slice(&result[0]);
+        let input = InterleavedSlice::new(&chunk, 1, chunk_size)?;
+        let result = resampler.process(&input, 0, None)?;
+        output.extend(result.take_data());
         pos += chunk_size;
     }
 
@@ -221,7 +225,7 @@ pub fn play_flush_chime() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("no audio output device found"))?;
 
     let config = device.default_output_config()?;
-    let sample_rate = config.sample_rate().0 as f32;
+    let sample_rate = config.sample_rate() as f32;
     let channels = config.channels() as usize;
 
     let freq = 783.99_f32; // G5
@@ -277,7 +281,7 @@ pub fn play_chime(ascending: bool) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("no audio output device found"))?;
 
     let config = device.default_output_config()?;
-    let sample_rate = config.sample_rate().0 as f32;
+    let sample_rate = config.sample_rate() as f32;
     let channels = config.channels() as usize;
 
     // Two-note chime: 100ms per note

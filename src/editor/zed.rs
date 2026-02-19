@@ -371,6 +371,16 @@ fn find_line_comment(line: &str) -> Option<usize> {
     None
 }
 
+/// Check whether a command exists — either as an absolute path or on PATH.
+fn command_exists(cmd: &str) -> bool {
+    let path = std::path::Path::new(cmd);
+    if path.is_absolute() {
+        path.exists()
+    } else {
+        which::which(cmd).is_ok()
+    }
+}
+
 /// Check health of installed Zed narration integration.
 fn check_narration_health() -> anyhow::Result<Vec<String>> {
     let reinstall = "run `attend install --editor zed`";
@@ -391,7 +401,7 @@ fn check_narration_health() -> anyhow::Result<Vec<String>> {
                 None => warnings.push(format!("{label} task not found — {reinstall}")),
                 Some(t) => {
                     if let Some(cmd) = t.get("command").and_then(|c| c.as_str())
-                        && !std::path::Path::new(cmd).exists()
+                        && !command_exists(cmd)
                     {
                         warnings.push(format!(
                             "task command path does not exist: {cmd} — reinstall with {reinstall}"

@@ -52,33 +52,23 @@ impl super::Transcriber for WhisperTranscriber {
             .full(params, samples_16k)
             .map_err(|e| anyhow::anyhow!("whisper transcription failed: {e}"))?;
 
-        let n_segments = state
-            .full_n_segments()
-            .map_err(|e| anyhow::anyhow!("failed to get segment count: {e}"))?;
-
         let mut words = Vec::new();
 
-        for i in 0..n_segments {
-            let text = state
-                .full_get_segment_text(i)
-                .map_err(|e| anyhow::anyhow!("failed to get segment text: {e}"))?;
-            let text = text.trim().to_string();
+        for segment in state.as_iter() {
+            let text = segment
+                .to_str()
+                .map_err(|e| anyhow::anyhow!("failed to get segment text: {e}"))?
+                .trim()
+                .to_string();
             if text.is_empty() {
                 continue;
             }
 
-            let start = state
-                .full_get_segment_t0(i)
-                .map_err(|e| anyhow::anyhow!("failed to get segment t0: {e}"))?;
-            let end = state
-                .full_get_segment_t1(i)
-                .map_err(|e| anyhow::anyhow!("failed to get segment t1: {e}"))?;
-
             // Whisper timestamps are in centiseconds
             words.push(Word {
                 text,
-                start_secs: start as f64 / 100.0,
-                end_secs: end as f64 / 100.0,
+                start_secs: segment.start_timestamp() as f64 / 100.0,
+                end_secs: segment.end_timestamp() as f64 / 100.0,
             });
         }
 
