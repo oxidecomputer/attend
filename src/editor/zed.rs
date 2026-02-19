@@ -31,6 +31,14 @@ impl Editor for Zed {
     fn install_dictation(&self, bin_cmd: &str) -> anyhow::Result<()> {
         install_task(bin_cmd)?;
         install_keybinding()?;
+        println!("Installed Zed dictation task and keybinding.");
+        Ok(())
+    }
+
+    fn uninstall_dictation(&self) -> anyhow::Result<()> {
+        uninstall_task()?;
+        uninstall_keybinding()?;
+        println!("Removed Zed dictation task and keybinding.");
         Ok(())
     }
 }
@@ -125,6 +133,64 @@ fn install_task(bin_cmd: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Remove the Zed task definition for dictation.
+fn uninstall_task() -> anyhow::Result<()> {
+    let tasks_path = dirs::config_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine config directory"))?
+        .join("zed")
+        .join("tasks.json");
+
+    if !tasks_path.exists() {
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(&tasks_path)?;
+    let mut tasks: Vec<serde_json::Value> =
+        serde_json::from_str(&strip_json_comments(&content)).unwrap_or_default();
+
+    let before = tasks.len();
+    tasks.retain(|t| {
+        t.get("label")
+            .and_then(|l| l.as_str())
+            .is_none_or(|l| l != "Toggle Dictation")
+    });
+
+    if tasks.len() < before {
+        let mut output = serde_json::to_string_pretty(&tasks)?;
+        output.push('\n');
+        fs::write(&tasks_path, output)?;
+    }
+
+    Ok(())
+}
+
+/// Remove the Zed keybinding for dictation.
+fn uninstall_keybinding() -> anyhow::Result<()> {
+    let keymap_path = dirs::config_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine config directory"))?
+        .join("zed")
+        .join("keymap.json");
+
+    if !keymap_path.exists() {
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(&keymap_path)?;
+    let mut keymap: Vec<serde_json::Value> =
+        serde_json::from_str(&strip_json_comments(&content)).unwrap_or_default();
+
+    let before = keymap.len();
+    keymap.retain(|entry| !is_dictation_keybinding(entry));
+
+    if keymap.len() < before {
+        let mut output = serde_json::to_string_pretty(&keymap)?;
+        output.push('\n');
+        fs::write(&keymap_path, output)?;
+    }
+
+    Ok(())
+}
+
 /// Install a Zed keybinding for the Toggle Dictation task.
 fn install_keybinding() -> anyhow::Result<()> {
     let keymap_path = dirs::config_dir()
@@ -148,17 +214,6 @@ fn install_keybinding() -> anyhow::Result<()> {
     // Remove any existing entry that is solely our dictation keybinding
     keymap.retain(|entry| !is_dictation_keybinding(entry));
 
-    fn is_dictation_keybinding(entry: &serde_json::Value) -> bool {
-        let Some(bindings) = entry.get("bindings").and_then(|b| b.as_object()) else {
-            return false;
-        };
-        bindings.len() == 1
-            && bindings
-                .get("cmd-shift-d")
-                .and_then(|v| v.as_array())
-                .is_some_and(|a| a.first().and_then(|s| s.as_str()) == Some("task::Spawn"))
-    }
-
     keymap.push(binding_entry);
 
     if let Some(parent) = keymap_path.parent() {
@@ -169,6 +224,18 @@ fn install_keybinding() -> anyhow::Result<()> {
     fs::write(&keymap_path, output)?;
 
     Ok(())
+}
+
+/// Check whether a keymap entry is solely our dictation keybinding.
+fn is_dictation_keybinding(entry: &serde_json::Value) -> bool {
+    let Some(bindings) = entry.get("bindings").and_then(|b| b.as_object()) else {
+        return false;
+    };
+    bindings.len() == 1
+        && bindings
+            .get("cmd-shift-d")
+            .and_then(|v| v.as_array())
+            .is_some_and(|a| a.first().and_then(|s| s.as_str()) == Some("task::Spawn"))
 }
 
 /// Strip `//` line comments from JSON content (Zed supports comments in JSON).

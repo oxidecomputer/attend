@@ -39,6 +39,11 @@ pub trait Editor: Sync {
     fn install_dictation(&self, _bin_cmd: &str) -> anyhow::Result<()> {
         anyhow::bail!("{} does not support dictation", self.name())
     }
+
+    /// Remove dictation integration.
+    fn uninstall_dictation(&self) -> anyhow::Result<()> {
+        anyhow::bail!("{} does not support dictation removal", self.name())
+    }
 }
 
 /// All registered editor backends.

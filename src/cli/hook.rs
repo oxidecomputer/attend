@@ -5,17 +5,26 @@ fn agent_value_parser() -> clap::builder::PossibleValuesParser {
     clap::builder::PossibleValuesParser::new(crate::agent::AGENTS.iter().map(|a| a.name()))
 }
 
+/// Value parser that validates editor names against registered backends.
+fn editor_value_parser() -> clap::builder::PossibleValuesParser {
+    clap::builder::PossibleValuesParser::new(crate::editor::EDITORS.iter().map(|e| e.name()))
+}
+
 /// Hook subcommands: run hooks, or manage hook installation.
 #[derive(Subcommand)]
 pub enum Hook {
     /// Run a hook.
     #[command(subcommand)]
     Run(RunHook),
-    /// Install hooks into agent settings.
+    /// Install hooks and/or editor integration.
     Install {
-        /// Agent to install for.
+        /// Agent to install hooks for (repeatable).
         #[arg(long, short, value_parser = agent_value_parser())]
-        agent: String,
+        agent: Vec<String>,
+
+        /// Editor to install dictation keybindings for (repeatable).
+        #[arg(long, value_parser = editor_value_parser())]
+        editor: Vec<String>,
 
         /// Install to a project-local settings file instead of global.
         #[arg(long, short)]
@@ -25,11 +34,15 @@ pub enum Hook {
         #[arg(long)]
         dev: bool,
     },
-    /// Remove hooks from agent settings.
+    /// Remove hooks and/or editor integration.
     Uninstall {
-        /// Agent to uninstall for.
+        /// Agent to uninstall hooks for (repeatable).
         #[arg(long, short, value_parser = agent_value_parser())]
-        agent: String,
+        agent: Vec<String>,
+
+        /// Editor to uninstall dictation keybindings for (repeatable).
+        #[arg(long, value_parser = editor_value_parser())]
+        editor: Vec<String>,
 
         /// Remove from a project-local settings file instead of global.
         #[arg(long, short)]
@@ -105,10 +118,42 @@ impl Hook {
             Hook::Run(run_hook) => run_hook.agent.run_hook(run_hook.event, None),
             Hook::Install {
                 agent,
+                editor,
                 project,
                 dev,
-            } => crate::agent::install(&agent, project, dev),
-            Hook::Uninstall { agent, project } => crate::agent::uninstall(&agent, project),
+            } => {
+                if agent.is_empty() && editor.is_empty() {
+                    anyhow::bail!("specify at least one --agent or --editor");
+                }
+                let bin_cmd = crate::agent::resolve_bin_cmd(dev)?;
+                for name in &agent {
+                    crate::agent::install(name, project.clone(), dev)?;
+                }
+                for name in &editor {
+                    let ed = crate::editor::editor_by_name(name)
+                        .ok_or_else(|| anyhow::anyhow!("unknown editor: {name}"))?;
+                    ed.install_dictation(&bin_cmd)?;
+                }
+                Ok(())
+            }
+            Hook::Uninstall {
+                agent,
+                editor,
+                project,
+            } => {
+                if agent.is_empty() && editor.is_empty() {
+                    anyhow::bail!("specify at least one --agent or --editor");
+                }
+                for name in &agent {
+                    crate::agent::uninstall(name, project.clone())?;
+                }
+                for name in &editor {
+                    let ed = crate::editor::editor_by_name(name)
+                        .ok_or_else(|| anyhow::anyhow!("unknown editor: {name}"))?;
+                    ed.uninstall_dictation()?;
+                }
+                Ok(())
+            }
         }
     }
 }

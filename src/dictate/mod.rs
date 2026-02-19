@@ -11,6 +11,7 @@ pub(crate) mod receive;
 pub(crate) mod record;
 pub(crate) mod transcribe;
 
+use std::fs;
 use std::path::PathBuf;
 
 /// Base directory for all dictation state files.
@@ -72,6 +73,80 @@ pub(crate) fn bench() -> anyhow::Result<()> {
             let mut transcriber = engine.ensure_and_load(&path)?;
             transcriber.bench(&samples);
         }
+    }
+
+    Ok(())
+}
+
+/// Show recording and system status.
+pub(crate) fn status() -> anyhow::Result<()> {
+    use transcribe::Engine;
+
+    // Recording state
+    let lock_path = record_lock_path();
+    let recording = if lock_path.exists() {
+        "recording"
+    } else {
+        "idle"
+    };
+    println!("Recording:  {recording}");
+
+    // Engine / model status
+    let engine = Engine::Parakeet;
+    let model_path = engine.default_model_path();
+    let model_status = if model_path.exists() {
+        "downloaded"
+    } else {
+        "not downloaded"
+    };
+    println!("Engine:     parakeet (model {model_status})");
+
+    // Session
+    let session = listening_session();
+    println!(
+        "Session:    {}",
+        session.as_deref().unwrap_or("none")
+    );
+
+    // Receive listener
+    let recv_lock = receive_lock_path();
+    let listener = if recv_lock.exists() {
+        if let Ok(content) = fs::read_to_string(&recv_lock) {
+            if let Ok(pid) = content.trim().parse::<i32>() {
+                if unsafe { libc::kill(pid, 0) } == 0 {
+                    "active"
+                } else {
+                    "stale lock"
+                }
+            } else {
+                "active"
+            }
+        } else {
+            "active"
+        }
+    } else {
+        "inactive"
+    };
+    println!("Listener:   {listener}");
+
+    // Pending dictation count
+    if let Some(ref sid) = session {
+        let dir = pending_dir(sid);
+        let count = fs::read_dir(&dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| {
+                        e.path()
+                            .extension()
+                            .is_some_and(|ext| ext == "md")
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        println!("Pending:    {count} dictation(s)");
+    } else {
+        println!("Pending:    -");
     }
 
     Ok(())
