@@ -116,6 +116,152 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Decision from the stop hook logic.
+#[derive(Debug, PartialEq)]
+enum StopDecision {
+    /// Approve silently — no output needed.
+    Silent,
+    /// Approve with informational reason (e.g. session moved).
+    Approve { reason: String },
+    /// Block the stop with a reason (dictation content or guidance).
+    Block { reason: String },
+}
+
+/// Pure decision logic for the stop hook.
+///
+/// Takes all external state as parameters so it can be tested without I/O.
+///
+/// `stop_hook_active` is set by Claude Code on re-invocation after a previous
+/// block. We use it as a safety valve: if we already told the agent to start
+/// a receiver and it's re-stopping, approve rather than risk an infinite
+/// block loop (e.g. if the receiver hasn't created its lock file yet).
+fn stop_decision(
+    hook_session_id: Option<&str>,
+    listening_session: Option<&str>,
+    pending_content: Option<String>,
+    receiver_alive: bool,
+    stop_hook_active: bool,
+) -> StopDecision {
+    match (listening_session, hook_session_id) {
+        // We are the active listening session — check for dictation.
+        (Some(listening_sid), Some(hook_sid)) if listening_sid == hook_sid => {}
+        // Dictation is active in a different session — inform Claude.
+        (Some(_), Some(_)) => {
+            return StopDecision::Approve {
+                reason: "Dictation has moved to a session with another agent. \
+                    Do not restart the background receiver. \
+                    If the user wants dictation in this session, they will type /attend."
+                    .to_string(),
+            };
+        }
+        // No listening session at all — approve silently.
+        _ => return StopDecision::Silent,
+    }
+
+    // We are the active session. Pending dictation always takes priority —
+    // deliver it regardless of stop_hook_active.
+    if let Some(content) = pending_content {
+        return StopDecision::Block { reason: content };
+    }
+
+    // No dictation. If a receiver is running, it will handle future delivery.
+    if receiver_alive {
+        return StopDecision::Silent;
+    }
+
+    // No receiver. On re-invocation after a previous block, approve to avoid
+    // an infinite loop (the agent already got the "start receiver" message).
+    if stop_hook_active {
+        return StopDecision::Silent;
+    }
+
+    // First attempt, no receiver — ask the agent to start one.
+    StopDecision::Block {
+        reason: "Run `attend dictate receive --wait` in the background to wait for the next dictation.".to_string(),
+    }
+}
+
+/// Handle the `Stop` hook: deliver pending dictation when the session stops.
+pub fn stop() -> anyhow::Result<()> {
+    let stdin_json = read_stdin_json();
+
+    let hook_session_id = stdin_json
+        .as_ref()
+        .and_then(|v| v.get("session_id"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let listening = state::listening_session();
+
+    // Resolve pending dictation content (only if we're the active session).
+    let is_active = matches!(
+        (&listening, &hook_session_id),
+        (Some(l), Some(h)) if l == h
+    );
+    let (pending_content, pending_files) = if is_active {
+        let session_id = listening.as_deref().unwrap();
+        let cwd_str = stdin_json
+            .as_ref()
+            .and_then(|v| v.get("cwd"))
+            .and_then(|v| v.as_str());
+        let cwd = cwd_str
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let config = crate::config::Config::load(&cwd);
+        let files = crate::dictate::receive::collect_pending(session_id);
+        let content =
+            crate::dictate::receive::read_pending(&files, &cwd, &config.include_dirs);
+        (content, files)
+    } else {
+        (None, Vec::new())
+    };
+
+    let stop_hook_active = stdin_json
+        .as_ref()
+        .and_then(|v| v.get("stop_hook_active"))
+        .is_some_and(|v| v.as_bool() == Some(true) || v.as_str() == Some("true"));
+
+    let decision = stop_decision(
+        hook_session_id.as_deref(),
+        listening.as_deref(),
+        pending_content,
+        receiver_alive(),
+        stop_hook_active,
+    );
+
+    match decision {
+        StopDecision::Silent => {}
+        StopDecision::Approve { reason } => {
+            let response = serde_json::json!({ "decision": "approve", "reason": reason });
+            println!("{}", serde_json::to_string(&response)?);
+        }
+        StopDecision::Block { reason } => {
+            // Archive pending files if we blocked with dictation content.
+            if !pending_files.is_empty() {
+                if let Some(sid) = listening.as_deref() {
+                    crate::dictate::receive::archive_pending(&pending_files, sid);
+                }
+            }
+            let response = serde_json::json!({ "decision": "block", "reason": reason });
+            println!("{}", serde_json::to_string(&response)?);
+        }
+    }
+
+    Ok(())
+}
+
+/// Check whether a background `receive --wait` process is alive.
+fn receiver_alive() -> bool {
+    let lock_path = crate::dictate::receive_lock_path();
+    let Ok(content) = fs::read_to_string(&lock_path) else {
+        return false;
+    };
+    let Ok(pid) = content.trim().parse::<i32>() else {
+        return false;
+    };
+    crate::dictate::process_alive(pid)
+}
+
 /// Build dictation skill instructions for re-emission after context compaction.
 ///
 /// Uses `claude_skill_body.md` — the same body as the installed SKILL.md,

@@ -24,8 +24,9 @@ impl Agent for Claude {
 
     fn run_hook(&self, event: HookEvent, cwd: Option<PathBuf>) -> anyhow::Result<()> {
         match event {
-            HookEvent::UserPrompt => crate::hook::run(cwd),
             HookEvent::SessionStart => crate::hook::session_start(),
+            HookEvent::UserPrompt => crate::hook::run(cwd),
+            HookEvent::Stop => crate::hook::stop(),
         }
     }
 
@@ -135,12 +136,12 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
 
     // Stop hook (dictation delivery)
     {
-        let stop_hook_script = build_stop_hook_script(bin_cmd);
+        let stop_cmd = format!("{bin_cmd} hook run claude stop");
         let stop_hook = serde_json::json!({
             "hooks": [
                 {
                     "type": "command",
-                    "command": stop_hook_script,
+                    "command": stop_cmd,
                     "timeout": 10
                 }
             ]
@@ -260,28 +261,6 @@ fn uninstall(project: Option<PathBuf>) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-/// Build the inline shell script for the Stop hook.
-fn build_stop_hook_script(bin_cmd: &str) -> String {
-    format!(
-        r#"bash -c '
-INPUT=$(cat)
-LISTENING="$HOME/.cache/attend/listening"
-[ ! -f "$LISTENING" ] && echo '\''{{\"decision\":\"proceed\"}}'\'' && exit 0
-HOOK_SID=$(echo "$INPUT" | jq -r .session_id)
-FILE_SID=$(cat "$LISTENING")
-[ "$HOOK_SID" != "$FILE_SID" ] && echo '\''{{\"decision\":\"proceed\"}}'\'' && exit 0
-content=$({bin_cmd} dictate receive 2>/dev/null)
-if [ -n "$content" ]; then
-  jq -n --arg r "$content" '\''{{\"decision\":\"block\",\"reason\":$r}}'\''
-  exit 0
-fi
-ACTIVE=$(echo "$INPUT" | jq -r .stop_hook_active)
-[ "$ACTIVE" = "true" ] && echo '\''{{\"decision\":\"proceed\"}}'\'' && exit 0
-echo '\''{{\"decision\":\"block\",\"reason\":\"Run `attend dictate receive --wait` in the background to wait for the next dictation.\"}}'\''
-'"#
-    )
 }
 
 /// Install the SKILL.md file for `/attend` discoverability.

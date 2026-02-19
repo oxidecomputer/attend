@@ -12,17 +12,24 @@ pub enum HookEvent {
     SessionStart,
     /// Fired before each user prompt is sent.
     UserPrompt,
+    /// Fired when the agent session stops.
+    Stop,
 }
 
 impl HookEvent {
     /// All defined hook events.
-    pub const ALL: &[HookEvent] = &[HookEvent::SessionStart, HookEvent::UserPrompt];
+    pub const ALL: &[HookEvent] = &[
+        HookEvent::SessionStart,
+        HookEvent::UserPrompt,
+        HookEvent::Stop,
+    ];
 
     /// The kebab-case name used on the CLI (e.g. `"session-start"`).
     pub fn cli_name(self) -> &'static str {
         match self {
             HookEvent::SessionStart => "session-start",
             HookEvent::UserPrompt => "user-prompt",
+            HookEvent::Stop => "stop",
         }
     }
 
@@ -31,6 +38,7 @@ impl HookEvent {
         match self {
             HookEvent::SessionStart => "Clear cache and emit instructions for a new session",
             HookEvent::UserPrompt => "Emit editor context for a user prompt",
+            HookEvent::Stop => "Deliver pending dictation when the session stops",
         }
     }
 
@@ -39,6 +47,7 @@ impl HookEvent {
         match name {
             "session-start" => Some(HookEvent::SessionStart),
             "user-prompt" => Some(HookEvent::UserPrompt),
+            "stop" => Some(HookEvent::Stop),
             _ => None,
         }
     }

@@ -21,7 +21,7 @@ const REDISPATCH_MSG: &str =
     "\n[Run `attend dictate receive --wait` in the background to wait for the next dictation.]";
 
 /// Collect all pending dictation files for a session, sorted by filename (timestamp).
-fn collect_pending(session_id: &str) -> Vec<PathBuf> {
+pub(crate) fn collect_pending(session_id: &str) -> Vec<PathBuf> {
     let dir = pending_dir(session_id);
     let Ok(entries) = fs::read_dir(&dir) else {
         return Vec::new();
@@ -40,7 +40,7 @@ fn collect_pending(session_id: &str) -> Vec<PathBuf> {
 /// Deserialize, filter, relativize, and render pending JSON event files.
 ///
 /// Returns `None` if no content remains after filtering.
-fn read_pending(files: &[PathBuf], cwd: &Path, include_dirs: &[PathBuf]) -> Option<String> {
+pub(crate) fn read_pending(files: &[PathBuf], cwd: &Path, include_dirs: &[PathBuf]) -> Option<String> {
     if files.is_empty() {
         return None;
     }
@@ -120,7 +120,7 @@ fn relativize_str(path: &str, cwd: &Path) -> String {
 }
 
 /// Archive pending dictation files by moving them to the archive directory.
-fn archive_pending(files: &[PathBuf], session_id: &str) {
+pub(crate) fn archive_pending(files: &[PathBuf], session_id: &str) {
     let archive = archive_dir(session_id);
     let _ = fs::create_dir_all(&archive);
 
@@ -266,8 +266,9 @@ fn run_wait(session_id: Option<String>) -> anyhow::Result<()> {
             Some(current) if current == session_id => {}
             _ => {
                 println!(
-                    "Dictation was transferred to another Claude session. \
-                     Run /attend to reactivate."
+                    "Dictation was transferred to a session with another agent. \
+                     Do not restart the background receiver. \
+                     If the user wants dictation in this session, they will type /attend."
                 );
                 return Ok(());
             }
