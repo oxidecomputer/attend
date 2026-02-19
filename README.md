@@ -27,11 +27,16 @@ experience from typing my thoughts to a coding agent. There's something very
 specific about *saying what you mean out loud* that forces me to slow down and
 consider more deeply. I invite you to see if you feel the same way.
 
-## Quick start
+## Supported editors and agents
 
-Although `attend` is designed to be extensible to multiple agents and multiple
-editors, it currently supports only [Claude
-Code](https://claude.com/product/claude-code) and [Zed](https://zed.dev).
+- Editors: [Zed](https://zed.dev)
+- Agents: [Claude Code](https://claude.com/product/claude-code)
+
+The architecture supports adding new editors and agents independently of one
+another. See [EXTENDING.md](EXTENDING.md) for how to implement new editor or
+agent integrations. Contributions welcome!
+
+## Quick start
 
 ### Installation
 
@@ -60,9 +65,10 @@ bound), as well as two named tasks they trigger:
 - `⌘ ;` toggles narration. Pressing it again sends narration to the agent and
   stops recording.
 
-You can change these after the fact and future reinstallation of Zed hooks will
-respect your preferences. To manually assign key bindings, bind the tasks
-"attend: toggle narration" and "attend: flush narration".
+You can change these after the fact within Zed, and future reinstallation of Zed
+hooks from `attend` will respect your preferences. To manually assign key
+bindings, bind the tasks "attend: toggle narration" and "attend: flush
+narration".
 
 ### Agent commands
 
@@ -83,6 +89,8 @@ To remove everything:
 ```bash
 attend uninstall
 ```
+
+Or, specify a particular `--agent` or `--editor`.
 
 ## Commands
 
@@ -108,7 +116,7 @@ typically don't run them directly — they're invoked by hooks or keybindings.
 These let you inspect your editor state directly from the terminal. Useful for
 debugging, demos, and understanding what attend sees.
 
-**`attend glance`** — print the current editor state (paths + positions):
+**`attend glance`**: print the current editor state (paths + positions):
 
 ```bash
 $ attend glance
@@ -120,7 +128,7 @@ Each line is a file path followed by comma-separated positions. A position is
 `line:col` (cursor) or `line:col-line:col` (selection). Add `--watch` for a
 live-updating view, or `--format json` for structured output.
 
-**`attend look`** — show file content at cursor/selection positions:
+**`attend look`**: show file content at cursor/selection positions:
 
 ```bash
 $ attend look src/foo.rs 5:12 19:40-24:6 src/bar.rs 10:1
@@ -140,21 +148,17 @@ Input can also come from stdin with `-`:
 attend glance | attend look -
 ```
 
-**`attend meditate`** — run as a background daemon that continuously updates the
-editor state cache without producing output.
+**`attend meditate`**: run as a background daemon that continuously updates the
+editor state cache without producing output. If you are not using narration,
+running this in the background mildly improves the accuracy of the editor
+context provided to your agent at every turn, because it keeps a more precise
+tally of which cursor or selection was most recently used by you.
 
-## Supported editors and agents
-
-- Editors: [Zed](https://zed.dev)
-- Agents: [Claude Code](https://claude.com/product/claude-code)
-
-The architecture supports adding new editors and agents independently of one
-another. See [EXTENDING.md](EXTENDING.md) for how to implement new editor or
-agent integrations.
-
-## Building and testing
+## Development
 
 ```
-cargo build --release
+cargo fmt
+cargo clippy
 cargo test
+cargo build --release
 ```
