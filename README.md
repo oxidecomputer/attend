@@ -119,9 +119,11 @@ To remove everything:
 
 ```bash
 attend uninstall
+cargo uninstall
 ```
 
-Or, specify a particular `--agent` or `--editor`.
+Or, specify a particular `--agent` or `--editor` for `attend uninstall` to
+uninstall only the integrations for that.
 
 ## Commands
 
