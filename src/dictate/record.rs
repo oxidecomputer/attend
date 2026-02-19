@@ -363,9 +363,6 @@ fn transcribe_and_write(
 /// Handle for the background editor/diff polling threads.
 struct EditorPollHandle {
     stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// When set, the editor thread resets prev_files so the current cursor
-    /// position is re-emitted as context for the next batch.
-    reset_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     editor_events: std::sync::Arc<Mutex<Vec<Event>>>,
     diff_events: std::sync::Arc<Mutex<Vec<Event>>>,
     editor_thread: Option<thread::JoinHandle<()>>,
@@ -374,15 +371,9 @@ struct EditorPollHandle {
 
 impl EditorPollHandle {
     /// Drain accumulated events without stopping threads.
-    ///
-    /// Signals the editor thread to re-emit the current cursor position,
-    /// so the next batch includes editor context even if the user hasn't
-    /// moved since the last drain.
     fn drain(&self) -> (Vec<Event>, Vec<Event>) {
         let editor = std::mem::take(&mut *self.editor_events.lock().unwrap());
         let diff = std::mem::take(&mut *self.diff_events.lock().unwrap());
-        self.reset_flag
-            .store(true, std::sync::atomic::Ordering::Relaxed);
         (editor, diff)
     }
 
@@ -413,11 +404,8 @@ fn poll_editor_and_diffs(cwd: Option<PathBuf>) -> anyhow::Result<EditorPollHandl
     let editor_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
     let diff_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
 
-    let reset_flag = Arc::new(AtomicBool::new(false));
-
     // Editor state polling thread
     let stop_ed = Arc::clone(&stop_flag);
-    let reset_ed = Arc::clone(&reset_flag);
     let ed_cwd = cwd.clone();
     let ed_events = Arc::clone(&editor_events);
     let editor_thread = thread::spawn(move || {
@@ -425,12 +413,6 @@ fn poll_editor_and_diffs(cwd: Option<PathBuf>) -> anyhow::Result<EditorPollHandl
 
         while !stop_ed.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(100));
-
-            // After a flush, reset so we re-capture the current cursor
-            // position as context for the next batch.
-            if reset_ed.swap(false, Ordering::Relaxed) {
-                prev_files = None;
-            }
 
             let state = match EditorState::current(ed_cwd.as_deref()) {
                 Ok(Some(s)) => s,
@@ -530,7 +512,6 @@ fn poll_editor_and_diffs(cwd: Option<PathBuf>) -> anyhow::Result<EditorPollHandl
 
     Ok(EditorPollHandle {
         stop_flag,
-        reset_flag,
         editor_events,
         diff_events,
         editor_thread: Some(editor_thread),
