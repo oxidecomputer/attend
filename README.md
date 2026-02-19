@@ -40,13 +40,11 @@ agent integrations. Contributions welcome!
 
 ### Installation
 
-To install `attend` from source, you'll need
+To install `attend`, you'll need
 [Rust](https://rust-lang.org/learn/get-started/):
 
 ```bash
-git clone https://github.com/oxidecomputer/attend
-cd attend
-cargo install --path .
+cargo install --git https://github.com/oxidecomputer/attend
 attend install --agent claude --editor zed
 ```
 
@@ -84,13 +82,14 @@ while you're in the codebase.
 
 Note that the agent only sees editor context (cursors, selections, file contents,
 diffs) from within its own working directory. If you navigate to files elsewhere
-in your editor, the agent won't be able to follow along. To include additional
-directories, add them to `include_dirs` in `.attend/config.toml` or
-`~/.config/attend/config.toml`:
+in your editor, the agent won't be able to follow along. You can expand this
+with `include_dirs` in the config file (see [Configuration](#configuration)).
 
-```toml
-include_dirs = ["/path/to/other/project"]
-```
+### Troubleshooting
+
+Run `attend narrate status` to check that everything is wired up correctly. It
+shows whether narration is recording, which engine and session are active,
+whether the editor integration is healthy, and whether any narration is pending.
 
 ### Transcription model
 
@@ -105,12 +104,22 @@ Two engines are available:
 | `parakeet` (default) | [Parakeet TDT 0.6B](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx) | ~1.2 GB | Better punctuation and capitalization, faster |
 | `whisper` | [Whisper Small (GGML)](https://huggingface.co/ggerganov/whisper.cpp) | ~466 MB | Lighter, English only, slower |
 
-To change the engine or model, set them in your config file
-(`~/.config/attend/config.toml` or `.attend/config.toml` in your project):
+To change the engine, see [Configuration](#configuration).
+
+## Configuration
+
+`attend` loads config from two sources, merged together:
+
+- **Project**: `.attend/config.toml` in the current directory or any parent
+  (closer files take precedence for scalar values; arrays are concatenated)
+- **Global**: `~/.config/attend/config.toml`
+
+All fields are optional:
 
 ```toml
-engine = "whisper"
-model = "/path/to/custom/model"
+engine = "parakeet"                    # transcription engine: "parakeet" or "whisper"
+model = "/path/to/custom/model"        # custom model path (auto-downloaded if omitted)
+include_dirs = ["/path/to/other/project"]  # additional dirs visible to the agent
 ```
 
 ## Uninstall
@@ -119,7 +128,7 @@ To remove everything:
 
 ```bash
 attend uninstall
-cargo uninstall
+cargo uninstall attend
 ```
 
 Or, specify a particular `--agent` or `--editor` for `attend uninstall` to
