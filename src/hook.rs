@@ -103,9 +103,11 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
     // Update session cache and emit.
     if let Some(sid) = session_id
         && let Some(cp) = session_cache_path(sid)
-        && let Ok(file) = fs::File::create(&cp)
     {
-        if let Err(e) = serde_json::to_writer(io::BufWriter::new(file), &state) {
+        if let Err(e) = state::atomic_write(&cp, |file| {
+            serde_json::to_writer(io::BufWriter::new(file), &state)
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        }) {
             tracing::warn!("Failed to write session cache: {e}");
         }
     }
@@ -146,7 +148,10 @@ fn handle_attend_activate(json: &serde_json::Value) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&path, session_id)?;
+    state::atomic_write(&path, |file| {
+        use std::io::Write;
+        file.write_all(session_id.as_bytes())
+    })?;
 
     let response = serde_json::json!({
         "additionalContext": "Dictation mode activated for this session. \

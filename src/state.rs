@@ -7,6 +7,25 @@ use serde::{Deserialize, Serialize};
 
 use crate::editor::{self, RawEditor};
 
+/// Write to a file atomically by writing to a temporary sibling first.
+///
+/// Creates `<path>.tmp`, calls the writer closure, then renames to `<path>`.
+/// This prevents readers from seeing partially-written files.
+pub(crate) fn atomic_write(
+    path: &Path,
+    f: impl FnOnce(&mut fs::File) -> io::Result<()>,
+) -> io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    let mut file = fs::File::create(&tmp)?;
+    match f(&mut file) {
+        Ok(()) => fs::rename(&tmp, path),
+        Err(e) => {
+            let _ = fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
 /// Return the platform cache directory for attend.
 pub fn cache_dir() -> Option<PathBuf> {
     Some(dirs::cache_dir()?.join("attend"))
@@ -145,15 +164,11 @@ impl EditorState {
                 return;
             }
         }
-        match fs::File::create(&cp) {
-            Ok(file) => {
-                if let Err(e) = serde_json::to_writer(io::BufWriter::new(file), self) {
-                    tracing::warn!(path = %cp.display(), "Failed to write cache: {e}");
-                }
-            }
-            Err(e) => {
-                tracing::warn!(path = %cp.display(), "Failed to create cache file: {e}");
-            }
+        if let Err(e) = atomic_write(&cp, |file| {
+            serde_json::to_writer(io::BufWriter::new(file), self)
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        }) {
+            tracing::warn!(path = %cp.display(), "Failed to write cache: {e}");
         }
     }
 
