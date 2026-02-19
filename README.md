@@ -1,22 +1,22 @@
-# attend
+# `attend`
 
 Attention is all you need, after all.
 
 When you're working with an AI coding agent in your terminal, there's a gap: the
-agent can see your files, but it can't see what *you're* doing — which file
+agent can see your files, but it can't see what *you're* doing: which file
 you're reading, where your cursor is, what you've selected. You end up
-copy-pasting code snippets, describing line numbers, or typing out context the
-agent should already have. You can stop doing all that with `attend`.
+copy-pasting code snippets, typing out line numbers, or vaguely describing
+context the agent would already have if it could see what you do. You can stop
+doing all that with `attend`.
 
 ## The experience
 
 Once installed, `attend` runs as a hook inside your coding agent. Before each
-prompt, it queries your editor for visible files, cursor positions, and
-selections, then injects that context into the conversation — but only when
-something has changed, to avoid repetition.
+prompt, it queries your editor for changes in visible files, cursor positions,
+and selections, then injects that context into the conversation.
 
-On top of that, attend supports **voice narration**: speak your thoughts while
-navigating code, and attend transcribes and delivers them as prompts. You can
+On top of that, `attend` supports **voice narration**: speak your thoughts while
+navigating code, and `attend` transcribes and delivers them as prompts. You can
 highlight code, flip between files, and narrate what you want done — all without
 leaving your editor or switching to a chat window. The agent receives your words
 interleaved with what you were looking at and what you changed, giving it the
@@ -81,6 +81,16 @@ Insofar as the agent doesn't ask for keyboard input (i.e. by presenting a plan,
 asking a multiple choice question, or requesting permission to do an action),
 you need never leave your focused editor, because you can narrate your responses
 while you're in the codebase.
+
+Note that the agent only sees editor context (cursors, selections, file contents,
+diffs) from within its own working directory. If you navigate to files elsewhere
+in your editor, the agent won't be able to follow along. To include additional
+directories, add them to `include_dirs` in `.attend/config.toml` or
+`~/.config/attend/config.toml`:
+
+```toml
+include_dirs = ["/path/to/other/project"]
+```
 
 ### Transcription model
 
