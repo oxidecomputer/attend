@@ -1,26 +1,8 @@
-use std::path::PathBuf;
-
-use clap::{Args, Subcommand};
-
-use crate::narrate::transcribe::Engine;
+use clap::Subcommand;
 
 /// Parse a human-friendly duration string (e.g. "7d", "24h", "30days").
 fn parse_duration(s: &str) -> Result<std::time::Duration, String> {
     humantime::parse_duration(s).map_err(|e| e.to_string())
-}
-
-/// Hidden args forwarded to the recording daemon.
-#[derive(Args, Clone)]
-pub(crate) struct DaemonArgs {
-    /// Transcription engine.
-    #[arg(long, value_enum, default_value_t = Engine::Parakeet)]
-    engine: Engine,
-    /// Path to model file or directory.
-    #[arg(long)]
-    model: Option<PathBuf>,
-    /// Session to deliver narration to.
-    #[arg(long)]
-    session: Option<String>,
 }
 
 /// Narration CLI subcommands.
@@ -42,10 +24,7 @@ pub enum NarrateCommand {
     },
     /// Internal: run the recording daemon (not user-facing).
     #[command(name = "_record-daemon", hide = true)]
-    RecordDaemon {
-        #[command(flatten)]
-        args: DaemonArgs,
-    },
+    RecordDaemon,
     /// Internal: benchmark model load and transcription latency.
     #[command(name = "_bench", hide = true)]
     Bench,
@@ -62,9 +41,7 @@ impl NarrateCommand {
             NarrateCommand::Stop => record::stop(),
             NarrateCommand::Status => crate::narrate::status(),
             NarrateCommand::Clean { older_than } => crate::narrate::clean(older_than),
-            NarrateCommand::RecordDaemon { args } => {
-                record::daemon(args.engine, args.model, args.session)
-            }
+            NarrateCommand::RecordDaemon => record::daemon(),
             NarrateCommand::Bench => crate::narrate::bench(),
         }
     }

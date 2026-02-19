@@ -99,25 +99,9 @@ fn flush() -> anyhow::Result<()> {
 
 /// Spawn a detached recording daemon process.
 fn spawn_daemon() -> anyhow::Result<()> {
-    // Resolve engine/model from config (closest config file wins).
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let config = Config::load(&cwd);
-    let engine = config.engine.unwrap_or(Engine::Parakeet);
-
     let exe = std::env::current_exe()?;
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("narrate").arg("_record-daemon");
-
-    // Forward resolved engine/model to daemon
-    let engine_str = match engine {
-        Engine::Whisper => "whisper",
-        Engine::Parakeet => "parakeet",
-    };
-    cmd.arg("--engine").arg(engine_str);
-
-    if let Some(ref m) = config.model {
-        cmd.arg("--model").arg(m);
-    }
 
     // Detach: redirect all stdio to /dev/null and start a new session
     // so the daemon survives if the parent's process group is killed
@@ -177,13 +161,12 @@ pub fn stop() -> anyhow::Result<()> {
 ///
 /// Acquires the record lock, captures audio + editor state + file diffs,
 /// waits for stop/flush sentinels, transcribes, merges, and writes output.
-pub fn daemon(
-    engine: Engine,
-    model: Option<PathBuf>,
-    session: Option<String>,
-) -> anyhow::Result<()> {
-    let model_path = model.unwrap_or_else(|| engine.default_model_path());
-    let session_id = resolve_session(session);
+pub fn daemon() -> anyhow::Result<()> {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let config = Config::load(&cwd);
+    let engine = config.engine.unwrap_or(Engine::Parakeet);
+    let model_path = config.model.unwrap_or_else(|| engine.default_model_path());
+    let session_id = resolve_session(None);
 
     // Ensure cache dir exists
     let cd = cache_dir();
