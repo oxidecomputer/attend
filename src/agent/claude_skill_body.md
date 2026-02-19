@@ -1,6 +1,9 @@
 Activate narration mode: run `{bin_cmd} listen` in the background (Bash with
 `run_in_background: true`, `description: "💬"`). Do nothing else.
 
+IMPORTANT: Use the exact command `{bin_cmd} listen` as written — it has been
+whitelisted during installation. Do not expand or rewrite the path.
+
 Narration input arrives through two paths:
 
 - **Stop hook** (non-blocking): delivers pending narration when you stop.
