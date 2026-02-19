@@ -38,13 +38,12 @@ pub fn session_start() -> anyhow::Result<()> {
 
 /// Handle the `UserPromptSubmit` hook: emit editor context if changed.
 ///
-/// When the dictate feature is enabled and the prompt is `/attend`,
-/// activates dictation mode instead of emitting editor context.
+/// When the prompt is `/attend`, activates dictation mode instead of
+/// emitting editor context.
 pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
     let stdin_json = read_stdin_json();
 
-    // Check for /attend activation (dictate feature)
-    #[cfg(feature = "dictate")]
+    // Check for /attend activation
     if let Some(ref json) = stdin_json
         && is_attend_prompt(json)
     {
@@ -94,7 +93,6 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
 }
 
 /// Check if the user prompt is `/attend`.
-#[cfg(feature = "dictate")]
 fn is_attend_prompt(json: &serde_json::Value) -> bool {
     json.get("prompt")
         .and_then(|v| v.as_str())
@@ -102,20 +100,20 @@ fn is_attend_prompt(json: &serde_json::Value) -> bool {
 }
 
 /// Activate dictation mode for this session.
-#[cfg(feature = "dictate")]
 fn handle_attend_activate(json: &serde_json::Value) -> anyhow::Result<()> {
     let session_id = json
         .get("session_id")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("no session_id in hook stdin"))?;
 
-    let path = crate::dictate::listening_path();
+    let Some(path) = crate::state::listening_path() else {
+        return Err(anyhow::anyhow!("cannot determine cache directory"));
+    };
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     fs::write(&path, session_id)?;
 
-    // Return JSON to tell Claude that dictation is active
     let response = serde_json::json!({
         "additionalContext": "Dictation mode activated for this session. \
             Listening for voice input.\n\n\
@@ -125,7 +123,7 @@ fn handle_attend_activate(json: &serde_json::Value) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(all(test, feature = "dictate"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

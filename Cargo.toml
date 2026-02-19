@@ -14,15 +14,11 @@ serde_json = "1"
 signal-hook = "0.3"
 which = "7"
 
-# dictate feature deps
-whisper-rs = { version = "0.13", optional = true }
-cpal = { version = "0.15", optional = true }
-rubato = { version = "0.16", optional = true }
-similar = { version = "2", optional = true }
-ureq = { version = "3", optional = true }
-
-[features]
-dictate = ["whisper-rs", "cpal", "rubato", "similar", "ureq"]
+whisper-rs = "0.13"
+cpal = "0.15"
+rubato = "0.16"
+similar = "2"
+ureq = "3"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

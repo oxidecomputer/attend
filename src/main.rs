@@ -2,7 +2,6 @@
 
 mod agent;
 mod cli;
-#[cfg(feature = "dictate")]
 mod dictate;
 mod editor;
 mod hook;

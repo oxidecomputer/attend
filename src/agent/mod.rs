@@ -3,7 +3,7 @@ mod claude;
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 
 /// Hook events that agents handle.
 #[derive(Clone, Copy)]
@@ -80,7 +80,7 @@ pub fn backend_by_name(name: &str) -> Option<&'static dyn Agent> {
 }
 
 /// Determine the binary command string for hook installation.
-fn resolve_bin_cmd(dev: bool) -> anyhow::Result<String> {
+pub(crate) fn resolve_bin_cmd(dev: bool) -> anyhow::Result<String> {
     let bin_name = std::env::args()
         .next()
         .map(|a| {
@@ -100,12 +100,9 @@ fn resolve_bin_cmd(dev: bool) -> anyhow::Result<String> {
     } else {
         match which::which(&bin_name) {
             Ok(_) => Ok(bin_name),
-            Err(_) => {
-                bail!(
-                    "'{bin_name}' not found on $PATH. \
-                     Use --dev to use absolute path instead."
-                );
-            }
+            Err(_) => Ok(std::env::current_exe()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or(bin_name)),
         }
     }
 }

@@ -8,6 +8,10 @@ use super::{Editor, QueryResult, RawEditor};
 pub struct Zed;
 
 impl Editor for Zed {
+    fn name(&self) -> &'static str {
+        "zed"
+    }
+
     fn query(&self) -> anyhow::Result<Option<QueryResult>> {
         query()
     }
@@ -22,6 +26,12 @@ impl Editor for Zed {
         } else {
             Vec::new()
         }
+    }
+
+    fn install_dictation(&self, bin_cmd: &str) -> anyhow::Result<()> {
+        install_task(bin_cmd)?;
+        install_keybinding()?;
+        Ok(())
     }
 }
 
@@ -73,6 +83,135 @@ fn find_db() -> Option<std::path::PathBuf> {
     with_mtime.into_iter().next().map(|(p, _)| p)
 }
 
+/// Install the Zed task definition for toggling dictation.
+fn install_task(bin_cmd: &str) -> anyhow::Result<()> {
+    let tasks_path = dirs::config_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine config directory"))?
+        .join("zed")
+        .join("tasks.json");
+
+    let task_entry = serde_json::json!({
+        "label": "Toggle Dictation",
+        "command": bin_cmd,
+        "args": ["dictate", "toggle"],
+        "hide": "always",
+        "reveal": "never",
+        "allow_concurrent_runs": false
+    });
+
+    let mut tasks: Vec<serde_json::Value> = if tasks_path.exists() {
+        let content = fs::read_to_string(&tasks_path)?;
+        serde_json::from_str(&strip_json_comments(&content)).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    // Remove any existing attend dictate task
+    tasks.retain(|t| {
+        t.get("label")
+            .and_then(|l| l.as_str())
+            .is_none_or(|l| l != "Toggle Dictation")
+    });
+
+    tasks.push(task_entry);
+
+    if let Some(parent) = tasks_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut output = serde_json::to_string_pretty(&tasks)?;
+    output.push('\n');
+    fs::write(&tasks_path, output)?;
+
+    Ok(())
+}
+
+/// Install a Zed keybinding for the Toggle Dictation task.
+fn install_keybinding() -> anyhow::Result<()> {
+    let keymap_path = dirs::config_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine config directory"))?
+        .join("zed")
+        .join("keymap.json");
+
+    let binding_entry = serde_json::json!({
+        "bindings": {
+            "cmd-shift-d": ["task::Spawn", {"task_name": "Toggle Dictation"}]
+        }
+    });
+
+    let mut keymap: Vec<serde_json::Value> = if keymap_path.exists() {
+        let content = fs::read_to_string(&keymap_path)?;
+        serde_json::from_str(&strip_json_comments(&content)).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    // Remove any existing entry that is solely our dictation keybinding
+    keymap.retain(|entry| !is_dictation_keybinding(entry));
+
+    fn is_dictation_keybinding(entry: &serde_json::Value) -> bool {
+        let Some(bindings) = entry.get("bindings").and_then(|b| b.as_object()) else {
+            return false;
+        };
+        bindings.len() == 1
+            && bindings
+                .get("cmd-shift-d")
+                .and_then(|v| v.as_array())
+                .is_some_and(|a| a.first().and_then(|s| s.as_str()) == Some("task::Spawn"))
+    }
+
+    keymap.push(binding_entry);
+
+    if let Some(parent) = keymap_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut output = serde_json::to_string_pretty(&keymap)?;
+    output.push('\n');
+    fs::write(&keymap_path, output)?;
+
+    Ok(())
+}
+
+/// Strip `//` line comments from JSON content (Zed supports comments in JSON).
+fn strip_json_comments(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for line in input.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        if let Some(idx) = find_line_comment(line) {
+            out.push_str(&line[..idx]);
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// Find the position of a `//` comment that's not inside a JSON string.
+fn find_line_comment(line: &str) -> Option<usize> {
+    let mut in_string = false;
+    let mut escaped = false;
+    let bytes = line.as_bytes();
+
+    for i in 0..bytes.len() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match bytes[i] {
+            b'\\' if in_string => escaped = true,
+            b'"' => in_string = !in_string,
+            b'/' if !in_string && i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
+                return Some(i);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Query active editor tabs with their byte-offset selections.
 fn query_editors(conn: &rusqlite::Connection) -> anyhow::Result<Vec<RawEditor>> {
     let mut stmt = conn
@@ -102,4 +241,63 @@ fn query_editors(conn: &rusqlite::Connection) -> anyhow::Result<Vec<RawEditor>> 
         .collect();
 
     Ok(editors)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_json_comments_full_line() {
+        let input = "// This is a comment\n{\"key\": \"value\"}\n";
+        let result = strip_json_comments(input);
+        assert_eq!(result, "{\"key\": \"value\"}\n");
+    }
+
+    #[test]
+    fn strip_json_comments_inline() {
+        let input = "{\"key\": \"value\"} // trailing comment\n";
+        let result = strip_json_comments(input);
+        assert_eq!(result, "{\"key\": \"value\"} \n");
+    }
+
+    #[test]
+    fn strip_json_comments_inside_string_preserved() {
+        let input = "{\"url\": \"https://example.com\"}\n";
+        let result = strip_json_comments(input);
+        assert_eq!(result, "{\"url\": \"https://example.com\"}\n");
+    }
+
+    #[test]
+    fn strip_json_comments_empty() {
+        let result = strip_json_comments("");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn strip_json_comments_mixed() {
+        let input = "// header comment\n{\n  // inner comment\n  \"a\": 1\n}\n";
+        let result = strip_json_comments(input);
+        assert_eq!(result, "{\n  \"a\": 1\n}\n");
+    }
+
+    #[test]
+    fn find_line_comment_none_when_absent() {
+        assert_eq!(find_line_comment("{\"key\": \"value\"}"), None);
+    }
+
+    #[test]
+    fn find_line_comment_finds_comment() {
+        assert_eq!(find_line_comment("code // comment"), Some(5));
+    }
+
+    #[test]
+    fn find_line_comment_ignores_url_in_string() {
+        assert_eq!(find_line_comment("\"url\": \"https://example.com\""), None);
+    }
+
+    #[test]
+    fn find_line_comment_after_string_with_slash() {
+        assert_eq!(find_line_comment("\"path\": \"a/b\" // comment"), Some(14));
+    }
 }

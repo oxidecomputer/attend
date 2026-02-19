@@ -8,8 +8,21 @@ use serde::{Deserialize, Serialize};
 use crate::editor::{self, RawEditor};
 
 /// Return the platform cache directory for attend.
-pub(crate) fn cache_dir() -> Option<PathBuf> {
+pub fn cache_dir() -> Option<PathBuf> {
     Some(dirs::cache_dir()?.join("attend"))
+}
+
+/// Path to the file that identifies the currently attending session.
+pub fn listening_path() -> Option<PathBuf> {
+    Some(cache_dir()?.join("listening"))
+}
+
+/// Read the session ID of the currently attending session, if any.
+pub fn listening_session() -> Option<String> {
+    std::fs::read_to_string(listening_path()?)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Path to the shared ordering cache.

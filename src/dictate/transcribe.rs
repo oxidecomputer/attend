@@ -3,7 +3,6 @@
 //! Loads a GGML Whisper model (auto-downloading on first use) and
 //! transcribes audio to text with per-word timing information.
 
-#[cfg(feature = "dictate")]
 use std::fs;
 use std::path::Path;
 
@@ -24,21 +23,9 @@ pub fn ensure_model(model_path: &Path) -> anyhow::Result<()> {
     if model_path.exists() {
         return Ok(());
     }
-
-    #[cfg(feature = "dictate")]
-    {
-        download_model(model_path)
-    }
-    #[cfg(not(feature = "dictate"))]
-    {
-        anyhow::bail!(
-            "model not found at {} (download requires `dictate` feature)",
-            model_path.display()
-        )
-    }
+    download_model(model_path)
 }
 
-#[cfg(feature = "dictate")]
 fn download_model(model_path: &Path) -> anyhow::Result<()> {
     let filename = model_path
         .file_name()
@@ -71,7 +58,6 @@ fn download_model(model_path: &Path) -> anyhow::Result<()> {
 ///
 /// Returns a `WhisperContext` ready for transcription. Call this early
 /// (e.g. in a background thread) to overlap model loading with recording.
-#[cfg(feature = "dictate")]
 pub fn preload_model(model_path: &Path) -> anyhow::Result<whisper_rs::WhisperContext> {
     ensure_model(model_path)?;
     whisper_rs::WhisperContext::new_with_params(
@@ -82,7 +68,6 @@ pub fn preload_model(model_path: &Path) -> anyhow::Result<whisper_rs::WhisperCon
 }
 
 /// Transcribe 16 kHz mono f32 audio using a preloaded model context.
-#[cfg(feature = "dictate")]
 pub fn transcribe(
     samples_16k: &[f32],
     ctx: &whisper_rs::WhisperContext,
@@ -143,7 +128,6 @@ pub fn transcribe(
 /// Benchmark model load, state creation, and transcription latency.
 ///
 /// Prints timing results to stderr.
-#[cfg(feature = "dictate")]
 pub fn bench_model(model_path: &Path, samples: &[f32]) {
     use std::time::Instant;
     use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};

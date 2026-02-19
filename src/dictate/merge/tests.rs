@@ -95,7 +95,6 @@ fn chronological_ordering() {
     assert_eq!(md, "first second\n");
 }
 
-#[cfg(feature = "dictate")]
 #[test]
 fn unified_diff_basic() {
     let old = "line1\nline2\nline3\n";

@@ -84,7 +84,6 @@ pub enum Command {
     /// Continuously watch editor state.
     Watch(Watch),
     /// Voice-driven prompt composition.
-    #[cfg(feature = "dictate")]
     #[command(subcommand)]
     Dictate(crate::dictate::DictateCommand),
     /// Show file content at editor selections.
@@ -247,7 +246,6 @@ impl Command {
     pub fn run(self, cwd: Option<PathBuf>) -> anyhow::Result<()> {
         match self {
             Command::Watch(watch) => crate::watch::run(&watch, cwd.as_deref()),
-            #[cfg(feature = "dictate")]
             Command::Dictate(cmd) => crate::dictate::run(cmd),
             Command::Hook(hook) => {
                 if cwd.is_some() {

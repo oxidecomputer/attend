@@ -68,49 +68,6 @@ impl Recording {
 /// Returns a handle that accumulates samples in the background.
 /// Call `stop()` on the handle to finish recording and get the `Recording`.
 pub fn start_capture() -> anyhow::Result<CaptureHandle> {
-    #[cfg(feature = "dictate")]
-    {
-        capture_impl()
-    }
-    #[cfg(not(feature = "dictate"))]
-    {
-        anyhow::bail!("audio capture requires the `dictate` feature")
-    }
-}
-
-/// Handle to an in-progress audio capture.
-pub struct CaptureHandle {
-    #[cfg(feature = "dictate")]
-    stream: cpal::Stream,
-    chunks: Arc<Mutex<Vec<AudioChunk>>>,
-    sample_rate: u32,
-    start_instant: Instant,
-    start_wall_clock: String,
-}
-
-impl CaptureHandle {
-    /// Stop recording and return the accumulated audio data.
-    pub fn stop(self) -> Recording {
-        // Drop the stream to stop capture
-        #[cfg(feature = "dictate")]
-        drop(self.stream);
-
-        let chunks = match Arc::try_unwrap(self.chunks) {
-            Ok(mutex) => mutex.into_inner().unwrap_or_default(),
-            Err(arc) => arc.lock().unwrap().clone(),
-        };
-
-        Recording {
-            chunks,
-            sample_rate: self.sample_rate,
-            start_instant: self.start_instant,
-            start_wall_clock: self.start_wall_clock,
-        }
-    }
-}
-
-#[cfg(feature = "dictate")]
-fn capture_impl() -> anyhow::Result<CaptureHandle> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
     let host = cpal::default_host();
@@ -165,24 +122,40 @@ fn capture_impl() -> anyhow::Result<CaptureHandle> {
     })
 }
 
+/// Handle to an in-progress audio capture.
+pub struct CaptureHandle {
+    stream: cpal::Stream,
+    chunks: Arc<Mutex<Vec<AudioChunk>>>,
+    sample_rate: u32,
+    start_instant: Instant,
+    start_wall_clock: String,
+}
+
+impl CaptureHandle {
+    /// Stop recording and return the accumulated audio data.
+    pub fn stop(self) -> Recording {
+        drop(self.stream);
+
+        let chunks = match Arc::try_unwrap(self.chunks) {
+            Ok(mutex) => mutex.into_inner().unwrap_or_default(),
+            Err(arc) => arc.lock().unwrap().clone(),
+        };
+
+        Recording {
+            chunks,
+            sample_rate: self.sample_rate,
+            start_instant: self.start_instant,
+            start_wall_clock: self.start_wall_clock,
+        }
+    }
+}
+
 /// Resample a mono f32 buffer from `from_rate` to `to_rate` (typically 16000).
 pub fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> anyhow::Result<Vec<f32>> {
     if from_rate == to_rate {
         return Ok(samples.to_vec());
     }
 
-    #[cfg(feature = "dictate")]
-    {
-        resample_impl(samples, from_rate, to_rate)
-    }
-    #[cfg(not(feature = "dictate"))]
-    {
-        anyhow::bail!("resampling requires the `dictate` feature")
-    }
-}
-
-#[cfg(feature = "dictate")]
-fn resample_impl(samples: &[f32], from_rate: u32, to_rate: u32) -> anyhow::Result<Vec<f32>> {
     use rubato::{
         Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
     };
@@ -205,7 +178,6 @@ fn resample_impl(samples: &[f32], from_rate: u32, to_rate: u32) -> anyhow::Resul
     while pos < samples.len() {
         let end = (pos + chunk_size).min(samples.len());
         let mut chunk = samples[pos..end].to_vec();
-        // Pad last chunk if needed
         if chunk.len() < chunk_size {
             chunk.resize(chunk_size, 0.0);
         }
@@ -214,7 +186,6 @@ fn resample_impl(samples: &[f32], from_rate: u32, to_rate: u32) -> anyhow::Resul
         pos += chunk_size;
     }
 
-    // Trim to expected length
     let expected = (samples.len() as f64 * ratio).ceil() as usize;
     output.truncate(expected);
 
@@ -225,19 +196,6 @@ fn resample_impl(samples: &[f32], from_rate: u32, to_rate: u32) -> anyhow::Resul
 ///
 /// `ascending`: true for start chime (low→high), false for stop (high→low).
 pub fn play_chime(ascending: bool) -> anyhow::Result<()> {
-    #[cfg(feature = "dictate")]
-    {
-        play_chime_impl(ascending)
-    }
-    #[cfg(not(feature = "dictate"))]
-    {
-        let _ = ascending;
-        Ok(())
-    }
-}
-
-#[cfg(feature = "dictate")]
-fn play_chime_impl(ascending: bool) -> anyhow::Result<()> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -275,11 +233,9 @@ fn play_chime_impl(ascending: bool) -> anyhow::Result<()> {
                     let freq = if idx < note_samples { freq1 } else { freq2 };
                     let t = idx as f32 / sample_rate;
                     let envelope = if idx < note_samples {
-                        // First note
                         let pos = idx as f32 / note_samples as f32;
                         (pos * std::f32::consts::PI).sin()
                     } else {
-                        // Second note
                         let pos = (idx - note_samples) as f32 / note_samples as f32;
                         (pos * std::f32::consts::PI).sin()
                     };

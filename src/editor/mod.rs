@@ -20,7 +20,10 @@ pub struct QueryResult {
 }
 
 /// A backend that can query an editor for open files.
-pub trait Editor {
+pub trait Editor: Sync {
+    /// CLI name (e.g., "zed").
+    fn name(&self) -> &'static str;
+
     /// Returns `Ok(None)` when the editor is not running or has no data.
     fn query(&self) -> anyhow::Result<Option<QueryResult>>;
 
@@ -31,13 +34,23 @@ pub trait Editor {
     fn watch_paths(&self) -> Vec<PathBuf> {
         Vec::new()
     }
+
+    /// Install dictation integration (task, keybinding, etc.).
+    fn install_dictation(&self, _bin_cmd: &str) -> anyhow::Result<()> {
+        anyhow::bail!("{} does not support dictation", self.name())
+    }
 }
 
 /// All registered editor backends.
-const EDITORS: &[&'static dyn Editor] = &[
+pub const EDITORS: &[&'static dyn Editor] = &[
     &zed::Zed,
     // <-- Add new editors here
 ];
+
+/// Look up an editor by CLI name.
+pub fn editor_by_name(name: &str) -> Option<&'static dyn Editor> {
+    EDITORS.iter().find(|e| e.name() == name).copied()
+}
 
 /// Collect all filesystem watch paths from every registered backend.
 #[allow(dead_code)]

@@ -108,7 +108,6 @@ impl Event {
 }
 
 /// Produce a unified diff between two strings using the `similar` crate.
-#[cfg(feature = "dictate")]
 pub fn unified_diff(old: &str, new: &str) -> String {
     use similar::{ChangeTag, TextDiff};
 
@@ -129,11 +128,6 @@ pub fn unified_diff(old: &str, new: &str) -> String {
     }
 
     out
-}
-
-#[cfg(not(feature = "dictate"))]
-pub fn unified_diff(_old: &str, _new: &str) -> String {
-    String::new()
 }
 
 /// Returns true if `text` starts with a character that should attach to

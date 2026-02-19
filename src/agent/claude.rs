@@ -125,6 +125,32 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
     existing = existing || before > ups_vec.len();
     ups_vec.push(prompt_hook);
 
+    // Stop hook (dictation delivery)
+    {
+        let stop_hook_script = build_stop_hook_script(bin_cmd);
+        let stop_hook = serde_json::json!({
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": stop_hook_script,
+                    "timeout": 10
+                }
+            ]
+        });
+
+        let stop_arr = hooks_obj
+            .entry("Stop")
+            .or_insert_with(|| serde_json::json!([]));
+        let stop_vec = stop_arr
+            .as_array_mut()
+            .context("Stop is not an array")?;
+
+        let before = stop_vec.len();
+        stop_vec.retain(|entry| !entry_has_attend_cmd(entry, Some(bin_cmd)));
+        existing = existing || before > stop_vec.len();
+        stop_vec.push(stop_hook);
+    }
+
     // Write back
     if let Some(parent) = settings_path.parent() {
         fs::create_dir_all(parent).context("cannot create settings directory")?;
@@ -133,6 +159,9 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
         serde_json::to_string_pretty(&settings).context("cannot serialize settings")?;
     output.push('\n');
     fs::write(&settings_path, output).context("cannot write settings file")?;
+
+    // SKILL.md for /attend discoverability
+    install_skill_file(project.as_deref())?;
 
     if existing {
         println!("Updated existing hooks in {}", settings_path.display());
@@ -161,7 +190,8 @@ fn uninstall(project: Option<PathBuf>) -> anyhow::Result<()> {
     };
 
     let mut removed = false;
-    for key in &["SessionStart", "UserPromptSubmit"] {
+    let hook_keys = ["SessionStart", "UserPromptSubmit", "Stop"];
+    for key in &hook_keys {
         if let Some(arr) = hooks.get_mut(*key).and_then(|v| v.as_array_mut()) {
             let before = arr.len();
             arr.retain(|entry| !entry_has_attend_cmd(entry, None));
@@ -181,5 +211,52 @@ fn uninstall(project: Option<PathBuf>) -> anyhow::Result<()> {
         println!("No attend hooks found in {}", settings_path.display());
     }
 
+    Ok(())
+}
+
+/// Build the inline shell script for the Stop hook.
+fn build_stop_hook_script(bin_cmd: &str) -> String {
+    format!(
+        r#"bash -c '
+INPUT=$(cat)
+LISTENING="$HOME/.cache/attend/listening"
+[ ! -f "$LISTENING" ] && echo '\''{{\"decision\":\"proceed\"}}'\'' && exit 0
+HOOK_SID=$(echo "$INPUT" | jq -r .session_id)
+FILE_SID=$(cat "$LISTENING")
+[ "$HOOK_SID" != "$FILE_SID" ] && echo '\''{{\"decision\":\"proceed\"}}'\'' && exit 0
+content=$({bin_cmd} dictate receive 2>/dev/null)
+if [ -n "$content" ]; then
+  jq -n --arg r "$content" '\''{{\"decision\":\"block\",\"reason\":$r}}'\''
+  exit 0
+fi
+ACTIVE=$(echo "$INPUT" | jq -r .stop_hook_active)
+[ "$ACTIVE" = "true" ] && echo '\''{{\"decision\":\"proceed\"}}'\'' && exit 0
+echo '\''{{\"decision\":\"block\",\"reason\":\"Run `attend dictate receive --wait` in the background to wait for the next dictation.\"}}'\''
+'"#
+    )
+}
+
+/// Install the SKILL.md file for `/attend` discoverability.
+fn install_skill_file(project: Option<&Path>) -> anyhow::Result<()> {
+    let base = if let Some(proj) = project {
+        proj.to_path_buf()
+    } else {
+        PathBuf::from(".")
+    };
+    let skill_dir = base.join(".claude/skills/attend");
+    fs::create_dir_all(&skill_dir)?;
+
+    let skill_content = "\
+---
+name: attend
+description: Activate dictation mode for this session
+---
+Dictation mode is handled by the UserPromptSubmit hook.
+
+When the user runs /attend, the hook activates dictation for this session
+and instructs Claude to start a background listener.
+";
+
+    fs::write(skill_dir.join("SKILL.md"), skill_content)?;
     Ok(())
 }
