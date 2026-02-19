@@ -77,10 +77,10 @@ pub fn start(
         cmd.arg("--snip-tail").arg(snip_cfg.tail.to_string());
     }
 
-    // Detach: redirect stdio to /dev/null
+    // Detach: redirect all stdio to /dev/null
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::inherit()); // keep stderr for debugging
+        .stderr(std::process::Stdio::null());
 
     cmd.spawn()?;
 
