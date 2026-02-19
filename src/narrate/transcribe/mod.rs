@@ -25,6 +25,12 @@ pub trait Transcriber: Send {
     /// Transcribe 16 kHz mono f32 samples to words with timestamps.
     fn transcribe(&mut self, samples_16k: &[f32]) -> anyhow::Result<Vec<Word>>;
 
+    /// Provide prior transcription text as context for the next `transcribe()` call.
+    ///
+    /// Backends that support prompting (Whisper) use this to improve consistency
+    /// across segment boundaries. Backends without prompt support (Parakeet) ignore it.
+    fn set_context(&mut self, _prior_text: &str) {}
+
     /// Run benchmarks for this engine. Prints results to stderr.
     fn bench(&mut self, samples: &[f32]);
 }

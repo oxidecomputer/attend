@@ -35,6 +35,7 @@ pub struct Recording {
     pub start_wall_clock: String,
 }
 
+#[allow(dead_code)]
 impl Recording {
     /// Total number of samples across all chunks.
     pub fn total_samples(&self) -> usize {
@@ -132,6 +133,19 @@ pub struct CaptureHandle {
 }
 
 impl CaptureHandle {
+    /// Take all accumulated chunks, leaving the buffer empty.
+    ///
+    /// The cpal stream keeps running — new samples accumulate into the
+    /// now-empty Vec. Use this for incremental processing during recording.
+    pub fn take_chunks(&self) -> Vec<AudioChunk> {
+        std::mem::take(&mut *self.chunks.lock().unwrap())
+    }
+
+    /// The native sample rate of the input device.
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
     /// Drain accumulated audio without stopping the capture stream.
     ///
     /// Returns a `Recording` of everything captured so far, then resets the
@@ -164,6 +178,16 @@ impl CaptureHandle {
             start_wall_clock: self.start_wall_clock,
         }
     }
+}
+
+/// Concatenate audio chunks into a single f32 buffer.
+pub fn flatten_chunks(chunks: &[AudioChunk]) -> Vec<f32> {
+    let total: usize = chunks.iter().map(|c| c.samples.len()).sum();
+    let mut out = Vec::with_capacity(total);
+    for chunk in chunks {
+        out.extend_from_slice(&chunk.samples);
+    }
+    out
 }
 
 /// Resample a mono f32 buffer from `from_rate` to `to_rate` (typically 16000).

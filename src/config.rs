@@ -21,6 +21,8 @@ pub struct Config {
     pub engine: Option<Engine>,
     /// Custom model path for the transcription engine.
     pub model: Option<PathBuf>,
+    /// Seconds of silence before splitting a recording segment (default 5.0; 0 to disable).
+    pub silence_duration: Option<f64>,
 }
 
 /// Raw TOML representation (may have missing fields).
@@ -30,6 +32,7 @@ struct RawConfig {
     include_dirs: Vec<PathBuf>,
     engine: Option<String>,
     model: Option<PathBuf>,
+    silence_duration: Option<f64>,
 }
 
 impl Config {
@@ -43,6 +46,7 @@ impl Config {
         // Scalar fields: "closest wins" (first value found takes precedence).
         let mut engine: Option<Engine> = None;
         let mut model: Option<PathBuf> = None;
+        let mut silence_duration: Option<f64> = None;
 
         // Walk upward from cwd (closest first)
         let mut dir = Some(cwd);
@@ -55,6 +59,9 @@ impl Config {
                 }
                 if model.is_none() {
                     model = raw.model;
+                }
+                if silence_duration.is_none() {
+                    silence_duration = raw.silence_duration;
                 }
             }
             dir = d.parent();
@@ -71,6 +78,9 @@ impl Config {
                 if model.is_none() {
                     model = raw.model;
                 }
+                if silence_duration.is_none() {
+                    silence_duration = raw.silence_duration;
+                }
             }
         }
 
@@ -78,6 +88,7 @@ impl Config {
             include_dirs,
             engine,
             model,
+            silence_duration,
         }
     }
 }

@@ -10,6 +10,7 @@ mod capture;
 pub(crate) mod merge;
 pub(crate) mod receive;
 pub(crate) mod record;
+mod silence;
 pub(crate) mod transcribe;
 
 use std::fs;

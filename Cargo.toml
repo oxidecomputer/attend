@@ -26,6 +26,7 @@ which = "8"
 
 whisper-rs = "0.15"
 parakeet-rs = "0.3"
+webrtc-vad = "0.4"
 cpal = "0.17"
 rubato = "1"
 audioadapter-buffers = "2"

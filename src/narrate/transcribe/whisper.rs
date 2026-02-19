@@ -12,9 +12,16 @@ pub(super) const MODEL_NAMES: &[&str] = &[
     "ggml-medium.en.bin",
 ];
 
+/// Maximum chunk length in samples (4 minutes at 16 kHz).
+const MAX_CHUNK_SAMPLES: usize = 240 * 16_000;
+
 /// Whisper transcription backend.
 pub struct WhisperTranscriber {
     ctx: whisper_rs::WhisperContext,
+    /// Persisted state for cross-call context carry-over.
+    state: Option<whisper_rs::WhisperState>,
+    /// Prior text to seed the next transcription call.
+    initial_prompt: Option<String>,
 }
 
 impl WhisperTranscriber {
@@ -25,7 +32,11 @@ impl WhisperTranscriber {
             whisper_rs::WhisperContextParameters::default(),
         )
         .map_err(|e| anyhow::anyhow!("failed to load whisper model: {e}"))?;
-        Ok(Self { ctx })
+        Ok(Self {
+            ctx,
+            state: None,
+            initial_prompt: None,
+        })
     }
 }
 
@@ -33,46 +44,75 @@ impl super::Transcriber for WhisperTranscriber {
     fn transcribe(&mut self, samples_16k: &[f32]) -> anyhow::Result<Vec<Word>> {
         use whisper_rs::{FullParams, SamplingStrategy};
 
-        let mut state = self
-            .ctx
-            .create_state()
-            .map_err(|e| anyhow::anyhow!("failed to create whisper state: {e}"))?;
-
-        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-        params.set_token_timestamps(true);
-        params.set_max_len(1);
-        params.set_print_progress(false);
-        params.set_print_realtime(false);
-        params.set_print_special(false);
-        params.set_print_timestamps(false);
-        params.set_language(Some("en"));
-        params.set_no_context(true);
-
-        state
-            .full(params, samples_16k)
-            .map_err(|e| anyhow::anyhow!("whisper transcription failed: {e}"))?;
+        // Lazily create and persist state for cross-call context carry-over.
+        if self.state.is_none() {
+            self.state = Some(
+                self.ctx
+                    .create_state()
+                    .map_err(|e| anyhow::anyhow!("failed to create whisper state: {e}"))?,
+            );
+        }
+        let state = self.state.as_mut().unwrap();
 
         let mut words = Vec::new();
 
-        for segment in state.as_iter() {
-            let text = segment
-                .to_str()
-                .map_err(|e| anyhow::anyhow!("failed to get segment text: {e}"))?
-                .trim()
-                .to_string();
-            if text.is_empty() {
-                continue;
+        // Split at 4-minute boundaries to stay within Whisper's limits.
+        let chunks: Vec<&[f32]> = if samples_16k.len() <= MAX_CHUNK_SAMPLES {
+            vec![samples_16k]
+        } else {
+            samples_16k.chunks(MAX_CHUNK_SAMPLES).collect()
+        };
+
+        for (chunk_idx, chunk) in chunks.iter().enumerate() {
+            let offset_secs = (chunk_idx * MAX_CHUNK_SAMPLES) as f64 / 16_000.0;
+
+            let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+            params.set_token_timestamps(true);
+            params.set_max_len(1);
+            params.set_print_progress(false);
+            params.set_print_realtime(false);
+            params.set_print_special(false);
+            params.set_print_timestamps(false);
+            params.set_language(Some("en"));
+            // Allow context to carry forward across chunks within the same state.
+            params.set_no_context(false);
+
+            if let Some(ref prompt) = self.initial_prompt {
+                params.set_initial_prompt(prompt);
             }
 
-            // Whisper timestamps are in centiseconds
-            words.push(Word {
-                text,
-                start_secs: segment.start_timestamp() as f64 / 100.0,
-                end_secs: segment.end_timestamp() as f64 / 100.0,
-            });
+            state
+                .full(params, chunk)
+                .map_err(|e| anyhow::anyhow!("whisper transcription failed: {e}"))?;
+
+            for segment in state.as_iter() {
+                let text = segment
+                    .to_str()
+                    .map_err(|e| anyhow::anyhow!("failed to get segment text: {e}"))?
+                    .trim()
+                    .to_string();
+                if text.is_empty() {
+                    continue;
+                }
+
+                // Whisper timestamps are in centiseconds
+                words.push(Word {
+                    text,
+                    start_secs: segment.start_timestamp() as f64 / 100.0 + offset_secs,
+                    end_secs: segment.end_timestamp() as f64 / 100.0 + offset_secs,
+                });
+            }
+
+            // Clear the initial prompt after the first chunk — subsequent chunks
+            // carry context forward via the persisted state.
+            self.initial_prompt = None;
         }
 
         Ok(words)
+    }
+
+    fn set_context(&mut self, prior_text: &str) {
+        self.initial_prompt = Some(prior_text.to_string());
     }
 
     fn bench(&mut self, samples: &[f32]) {
