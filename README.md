@@ -49,10 +49,8 @@ cargo install --git https://github.com/oxidecomputer/attend
 attend install --agent claude --editor zed
 ```
 
-The final step installs hooks that automatically provide editor context to
-Claude Code, plus keybindings for voice narration in Zed. Use `--dev` to point
-hooks at a local development build, or `--project <PATH>` for project-local
-settings.
+The final step installs the all-important hooks that provide editor context to
+Claude Code, plus keybindings to toggle voice narration from within Zed.
 
 ### Editor hotkeys
 
@@ -203,4 +201,10 @@ cargo fmt
 cargo clippy
 cargo test
 cargo build --release
+```
+
+Globally install `attend` hooks pointed at your local fork like this:
+
+```bash
+cargo run -- install --dev --agent <agent> --editor <editor>
 ```
