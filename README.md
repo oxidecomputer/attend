@@ -103,7 +103,7 @@ Two engines are available:
 
 | Engine | Default Model | Size | Notes |
 |--------|---------------|------|-------|
-| `parakeet` (default) | [Parakeet TDT 0.6B](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx) | ~1.2 GB | Better quality, multi-language, faster |
+| `parakeet` (default) | [Parakeet TDT 0.6B](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx) | ~1.2 GB | Better quality, multilingual, faster |
 | `whisper` | [Whisper Small (GGML)](https://huggingface.co/ggerganov/whisper.cpp) | ~466 MB | Smaller, English only, slower |
 
 To change the engine, see [Configuration](#configuration).
