@@ -23,8 +23,9 @@ positions... ...]`. Do not guess content from line:col numbers alone — always
 use this command when you need to know what the user is looking at. It outputs
 each position as a header (path and selections) followed by the file content
 with ❘ marking cursors and ⟦⟧ bracketing selections. Pass multiple files and
-positions in one call: `{bin_cmd} look src/foo.rs 5:12 19:40-24:6 src/bar.rs 10:1`.
-Ask for additional context using -B and -A to specify lines before or after.
+positions in one call: `{bin_cmd} look src/foo.rs 5:12 19:40-24:6 src/bar.rs
+10:1`. Ask for additional context using -B and -A to specify lines before or
+after.
 
 Editor context only includes files within the current project directory (and any
 directories listed in `include_dirs`). If the user references code or files that
