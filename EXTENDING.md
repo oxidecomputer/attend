@@ -50,9 +50,31 @@ impl Editor for Name {
 Return `Ok(None)` when the editor isn't running or has no data. See
 `src/editor/zed.rs` for a complete example using SQLite.
 
-The `QueryResult` contains:
-- `editors: Vec<RawEditor>` — each with an absolute `PathBuf` and optional
-  byte-offset selection start/end
+### `RawEditor` — one open tab
+
+| Field       | Type            | Meaning                                    |
+|-------------|-----------------|--------------------------------------------|
+| `path`      | `PathBuf`       | Absolute file path                         |
+| `sel_start` | `Option<i64>`   | Byte offset of selection/cursor start      |
+| `sel_end`   | `Option<i64>`   | Byte offset of selection/cursor end        |
+
+A cursor is represented as `sel_start == sel_end`. Return `None` for both
+when the editor doesn't expose selection data.
+
+### `Editor` trait methods
+
+| Method               | Required | Purpose                                          |
+|----------------------|----------|--------------------------------------------------|
+| `name()`             | yes      | CLI name, e.g. `"zed"`                           |
+| `query()`            | yes      | Return open tabs with byte-offset selections     |
+| `watch_paths()`      | no       | Filesystem paths to monitor for re-query         |
+| `install_dictation()`| no       | Install dictation hotkey/task integration        |
+| `uninstall_dictation()` | no    | Remove dictation integration                     |
+| `check_dictation()`  | no       | Return diagnostic warnings (empty = healthy)     |
+
+The dictation methods are optional — return the default error/empty if the
+editor doesn't support voice dictation. See `src/editor/zed.rs` for a
+complete implementation that installs Zed tasks and keybindings.
 
 ### 2. Register the backend — `src/editor/mod.rs`
 
@@ -78,6 +100,18 @@ display) works automatically since it operates on the shared `QueryResult` type.
 - [ ] `src/editor/<name>.rs` — `pub struct Name` + `impl Editor for Name`
 - [ ] `src/editor/mod.rs` — `mod <name>;` declaration
 - [ ] `src/editor/mod.rs` — add `&<name>::Name` to `EDITORS`
+
+### Notes for VS Code / Cursor contributors
+
+VS Code exposes editor state through its extension API rather than a local
+database. A VS Code backend would likely:
+
+1. Ship a lightweight VS Code extension that writes active editor state
+   (file paths, byte-offset selections) to a known file or Unix socket.
+2. Implement `query()` by reading that state file / connecting to the socket.
+3. Implement `watch_paths()` to return the state file path for live updates.
+4. For dictation, register a keybinding in the extension's `package.json`
+   that shells out to `attend dictate toggle`.
 
 ## Adding a new agent
 
