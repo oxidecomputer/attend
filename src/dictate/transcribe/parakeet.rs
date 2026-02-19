@@ -1,4 +1,9 @@
-//! Parakeet CTC (ONNX) speech-to-text backend.
+//! Parakeet TDT (ONNX) speech-to-text backend.
+//!
+//! Uses the TDT (Token-and-Duration Transducer) variant which predicts
+//! punctuation and capitalization, enabling natural sentence boundaries.
+//! The TDT decoder also correctly accounts for 8x encoder subsampling
+//! in its timestamps, unlike the CTC decoder.
 
 use std::fs;
 use std::path::Path;
@@ -9,29 +14,30 @@ use parakeet_rs::TimestampMode;
 use super::Word;
 
 /// Model variant names for benchmarking.
-pub(super) const MODEL_NAMES: &[&str] = &["parakeet-ctc-0.6b"];
+pub(super) const MODEL_NAMES: &[&str] = &["parakeet-tdt-0.6b-v3"];
 
 /// Maximum chunk length in samples (4 minutes at 16 kHz).
 const MAX_CHUNK_SAMPLES: usize = 240 * 16_000;
 
-const REPO: &str = "onnx-community/parakeet-ctc-0.6b-ONNX";
+const REPO: &str = "istupakov/parakeet-tdt-0.6b-v3-onnx";
 
-/// (local filename, repo path) pairs for required model files.
-const MODEL_FILES: &[(&str, &str)] = &[
-    ("model.onnx", "onnx/model.onnx"),
-    ("model.onnx_data", "onnx/model.onnx_data"),
-    ("tokenizer.json", "tokenizer.json"),
+/// Required model files (all at repo root).
+const MODEL_FILES: &[&str] = &[
+    "encoder-model.onnx",
+    "encoder-model.onnx.data",
+    "decoder_joint-model.onnx",
+    "vocab.txt",
 ];
 
-/// Parakeet CTC transcription backend.
+/// Parakeet TDT transcription backend.
 pub struct ParakeetTranscriber {
-    model: parakeet_rs::Parakeet,
+    model: parakeet_rs::ParakeetTDT,
 }
 
 impl ParakeetTranscriber {
-    /// Load a Parakeet model from a directory.
+    /// Load a Parakeet TDT model from a directory.
     pub fn load(dir: &Path) -> anyhow::Result<Self> {
-        let model = parakeet_rs::Parakeet::from_pretrained(
+        let model = parakeet_rs::ParakeetTDT::from_pretrained(
             dir.to_str().unwrap_or_default(),
             None,
         )?;
@@ -57,7 +63,7 @@ impl super::Transcriber for ParakeetTranscriber {
                 chunk.to_vec(),
                 16_000,
                 1,
-                Some(TimestampMode::Words),
+                Some(TimestampMode::Sentences),
             )?;
 
             for token in result.tokens {
@@ -80,16 +86,16 @@ impl super::Transcriber for ParakeetTranscriber {
         use std::time::Instant;
 
         let t0 = Instant::now();
-        let _ = self.model.transcribe_samples(samples.to_vec(), 16_000, 1, Some(TimestampMode::Words));
+        let _ = self.model.transcribe_samples(samples.to_vec(), 16_000, 1, Some(TimestampMode::Sentences));
         let transcribe_time = t0.elapsed();
 
         eprintln!("  Transcription:  {:.3}s", transcribe_time.as_secs_f64());
     }
 }
 
-/// Ensure the Parakeet model directory exists with all required files.
+/// Ensure the Parakeet TDT model directory exists with all required files.
 pub(super) fn ensure_model(dir: &Path) -> anyhow::Result<()> {
-    let all_present = MODEL_FILES.iter().all(|(local, _)| dir.join(local).exists());
+    let all_present = MODEL_FILES.iter().all(|f| dir.join(f).exists());
     if all_present {
         return Ok(());
     }
@@ -99,16 +105,16 @@ pub(super) fn ensure_model(dir: &Path) -> anyhow::Result<()> {
 fn download_model(dir: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(dir)?;
 
-    for &(local, repo_path) in MODEL_FILES {
-        let dest = dir.join(local);
+    for filename in MODEL_FILES {
+        let dest = dir.join(filename);
         if dest.exists() {
             continue;
         }
 
         let url = format!(
-            "https://huggingface.co/{REPO}/resolve/main/{repo_path}"
+            "https://huggingface.co/{REPO}/resolve/main/{filename}"
         );
-        eprintln!("Downloading {local} to {}...", dir.display());
+        eprintln!("Downloading {filename} to {}...", dir.display());
 
         let response = ureq::get(&url).call()?;
         let mut reader = response.into_body().into_reader();
@@ -120,6 +126,6 @@ fn download_model(dir: &Path) -> anyhow::Result<()> {
         fs::rename(&tmp_path, &dest)?;
     }
 
-    eprintln!("Parakeet model downloaded successfully.");
+    eprintln!("Parakeet TDT model downloaded successfully.");
     Ok(())
 }

@@ -1,6 +1,6 @@
 //! Speech-to-text transcription with selectable backend.
 //!
-//! Supports Whisper (GGML) and Parakeet CTC (ONNX) engines.
+//! Supports Whisper (GGML) and Parakeet TDT (ONNX) engines.
 //! The engine is chosen via `--engine` on the CLI; Parakeet is the default.
 
 mod parakeet;
@@ -42,7 +42,7 @@ impl Engine {
         let models = super::cache_dir().join("models");
         match self {
             Engine::Whisper => models.join("ggml-small.en.bin"),
-            Engine::Parakeet => models.join("parakeet-ctc-0.6b"),
+            Engine::Parakeet => models.join("parakeet-tdt-0.6b-v3"),
         }
     }
 
