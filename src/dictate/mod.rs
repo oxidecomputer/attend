@@ -85,7 +85,17 @@ pub(crate) fn status() -> anyhow::Result<()> {
     // Recording state
     let lock_path = record_lock_path();
     let recording = if lock_path.exists() {
-        "recording"
+        if let Ok(content) = fs::read_to_string(&lock_path)
+            && let Ok(pid) = content.trim().parse::<i32>()
+        {
+            if unsafe { libc::kill(pid, 0) } == 0 {
+                "recording"
+            } else {
+                "stale lock (daemon not running)"
+            }
+        } else {
+            "recording"
+        }
     } else {
         "idle"
     };

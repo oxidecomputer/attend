@@ -8,8 +8,8 @@
 use std::fs;
 use std::path::Path;
 
-use parakeet_rs::Transcriber as _;
 use parakeet_rs::TimestampMode;
+use parakeet_rs::Transcriber as _;
 
 use super::Word;
 
@@ -37,10 +37,8 @@ pub struct ParakeetTranscriber {
 impl ParakeetTranscriber {
     /// Load a Parakeet TDT model from a directory.
     pub fn load(dir: &Path) -> anyhow::Result<Self> {
-        let model = parakeet_rs::ParakeetTDT::from_pretrained(
-            dir.to_str().unwrap_or_default(),
-            None,
-        )?;
+        let model =
+            parakeet_rs::ParakeetTDT::from_pretrained(dir.to_str().unwrap_or_default(), None)?;
         Ok(Self { model })
     }
 }
@@ -86,7 +84,12 @@ impl super::Transcriber for ParakeetTranscriber {
         use std::time::Instant;
 
         let t0 = Instant::now();
-        let _ = self.model.transcribe_samples(samples.to_vec(), 16_000, 1, Some(TimestampMode::Sentences));
+        let _ = self.model.transcribe_samples(
+            samples.to_vec(),
+            16_000,
+            1,
+            Some(TimestampMode::Sentences),
+        );
         let transcribe_time = t0.elapsed();
 
         eprintln!("  Transcription:  {:.3}s", transcribe_time.as_secs_f64());
@@ -111,9 +114,7 @@ fn download_model(dir: &Path) -> anyhow::Result<()> {
             continue;
         }
 
-        let url = format!(
-            "https://huggingface.co/{REPO}/resolve/main/{filename}"
-        );
+        let url = format!("https://huggingface.co/{REPO}/resolve/main/{filename}");
         eprintln!("Downloading {filename} to {}...", dir.display());
 
         let response = ureq::get(&url).call()?;

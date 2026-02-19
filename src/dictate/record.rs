@@ -26,11 +26,33 @@ pub fn toggle(
     session: Option<String>,
     snip_cfg: merge::SnipConfig,
 ) -> anyhow::Result<()> {
-    if record_lock_path().exists() {
-        stop()
+    let lock = record_lock_path();
+    if lock.exists() {
+        // Check for stale lock (daemon was killed without cleanup).
+        if is_lock_stale(&lock) {
+            eprintln!("Stale record lock detected, cleaning up.");
+            let _ = fs::remove_file(&lock);
+            let _ = fs::remove_file(stop_sentinel_path());
+            start(engine, model, session, snip_cfg)
+        } else {
+            stop()
+        }
     } else {
         start(engine, model, session, snip_cfg)
     }
+}
+
+/// Check whether a lock file is stale (the owning process is no longer alive).
+fn is_lock_stale(lock_path: &Path) -> bool {
+    let Ok(content) = fs::read_to_string(lock_path) else {
+        return false;
+    };
+    let Ok(pid) = content.trim().parse::<i32>() else {
+        // No PID in the file — can't determine, assume not stale.
+        return false;
+    };
+    // kill(pid, 0) checks if the process exists without sending a signal.
+    unsafe { libc::kill(pid, 0) != 0 }
 }
 
 /// Start recording by spawning a detached daemon process.
@@ -77,10 +99,24 @@ pub fn start(
         cmd.arg("--snip-tail").arg(snip_cfg.tail.to_string());
     }
 
-    // Detach: redirect all stdio to /dev/null
+    // Detach: redirect all stdio to /dev/null and start a new session
+    // so the daemon survives if the parent's process group is killed
+    // (e.g. when Zed's task runner cleans up after toggle exits).
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: setsid() is async-signal-safe and has no preconditions.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+    }
 
     cmd.spawn()?;
 
@@ -137,6 +173,9 @@ pub fn daemon(
     // Acquire record lock (auto-removed on drop, even on error/panic)
     let _lock = lockfile::Lockfile::create(record_lock_path())
         .map_err(|e| anyhow::anyhow!("record lock already held: {e:?}"))?;
+
+    // Write our PID so the lock can be detected as stale if we're killed
+    let _ = fs::write(record_lock_path(), std::process::id().to_string());
 
     // Clean up any stale stop sentinel
     let _ = fs::remove_file(stop_sentinel_path());
@@ -376,15 +415,13 @@ fn poll_editor_and_diffs(cwd: Option<PathBuf>) -> anyhow::Result<EditorPollHandl
                     && *old_content != new_content
                 {
                     let offset_secs = start.elapsed().as_secs_f64();
-                    let diff = merge::unified_diff(old_content, &new_content);
-                    if !diff.trim().is_empty() {
-                        let display_path = relativize_path(&file.path, diff_cwd.as_deref());
-                        events.push(Event::FileDiff {
-                            offset_secs,
-                            path: display_path,
-                            diff,
-                        });
-                    }
+                    let display_path = relativize_path(&file.path, diff_cwd.as_deref());
+                    events.push(Event::FileDiff {
+                        offset_secs,
+                        path: display_path,
+                        old: old_content.clone(),
+                        new: new_content.clone(),
+                    });
                 }
 
                 file_contents.insert(file.path.clone(), new_content);

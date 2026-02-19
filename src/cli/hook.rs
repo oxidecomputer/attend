@@ -23,7 +23,7 @@ pub enum Hook {
         agent: Vec<String>,
 
         /// Editor to install dictation keybindings for (repeatable).
-        #[arg(long, value_parser = editor_value_parser())]
+        #[arg(long, short, value_parser = editor_value_parser())]
         editor: Vec<String>,
 
         /// Install to a project-local settings file instead of global.
