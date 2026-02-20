@@ -17,6 +17,14 @@ use crate::view;
 /// How often to poll for editor selection changes (ms).
 const EDITOR_POLL_MS: u64 = 100;
 
+/// Minimum dwell time before emitting a cursor-only snapshot (ms).
+///
+/// Rapid file scanning generates many low-value cursor positions. We only
+/// emit a cursor-only snapshot once the cursor has rested at a position for
+/// at least this long. Snapshots with real selections (highlights) are
+/// emitted immediately since they indicate intentional pointing.
+const CURSOR_DWELL_MS: u64 = 500;
+
 /// Spawn the editor polling thread.
 ///
 /// Returns the join handle. The thread pushes `EditorSnapshot` events into
@@ -29,9 +37,25 @@ pub(super) fn spawn(
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut prev_files: Option<Vec<state::FileEntry>> = None;
+        // Pending cursor-only snapshot awaiting dwell timeout.
+        let mut pending_cursor: Option<(Instant, Vec<state::FileEntry>)> = None;
 
         while !stop.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(EDITOR_POLL_MS));
+
+            // Flush a dwelled cursor-only snapshot if enough time has passed.
+            if let Some((changed_at, ref pending_files)) = pending_cursor
+                && changed_at.elapsed() >= Duration::from_millis(CURSOR_DWELL_MS)
+            {
+                let offset_secs = start.elapsed().as_secs_f64();
+                let rendered = render_snapshot_files(pending_files, None);
+                events.lock().unwrap().push(Event::EditorSnapshot {
+                    offset_secs,
+                    files: pending_files.clone(),
+                    rendered,
+                });
+                pending_cursor = None;
+            }
 
             let state = match EditorState::current(cwd.as_deref(), &[]) {
                 Ok(Some(s)) => s,
@@ -46,15 +70,24 @@ pub(super) fn spawn(
             let files = state.files;
             prev_files = Some(files.clone());
 
-            let offset_secs = start.elapsed().as_secs_f64();
-            // Pass None for cwd so paths stay absolute — filtering deferred to receive.
-            let rendered = render_snapshot_files(&files, None);
+            let cursor_only = files
+                .iter()
+                .all(|f| f.selections.iter().all(|s| s.is_cursor_like()));
 
-            events.lock().unwrap().push(Event::EditorSnapshot {
-                offset_secs,
-                files,
-                rendered,
-            });
+            if cursor_only {
+                // Defer emission until the cursor dwells at this position.
+                pending_cursor = Some((Instant::now(), files));
+            } else {
+                // Real selections are always intentional — emit immediately.
+                pending_cursor = None;
+                let offset_secs = start.elapsed().as_secs_f64();
+                let rendered = render_snapshot_files(&files, None);
+                events.lock().unwrap().push(Event::EditorSnapshot {
+                    offset_secs,
+                    files,
+                    rendered,
+                });
+            }
         }
     })
 }

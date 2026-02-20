@@ -377,11 +377,12 @@ fn compress_consecutive_cursor_snapshots() {
         cursor_snap(5.0, "d.rs"),
     ];
     let md = format_markdown(&mut events, SnipConfig::default());
-    // Only c.rs (last cursor before words) and d.rs (after words) should appear.
+    // c.rs (last cursor before words) should appear. d.rs (trailing cursor-only
+    // after speech) is dropped because the stop hook provides up-to-date context.
     assert!(!md.contains("a.rs"), "a.rs should be compressed away");
     assert!(!md.contains("b.rs"), "b.rs should be compressed away");
     assert!(md.contains("c.rs"), "c.rs should be kept (last in run)");
-    assert!(md.contains("d.rs"), "d.rs should be kept");
+    assert!(!md.contains("d.rs"), "d.rs dropped: stop hook has latest");
     assert!(md.contains("hello"));
 }
 

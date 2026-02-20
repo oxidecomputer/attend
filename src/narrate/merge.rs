@@ -292,6 +292,14 @@ pub fn compress_and_merge(events: &mut Vec<Event>) {
 
     compress_snapshots(events);
     merge_adjacent(events);
+
+    // Drop a trailing cursor-only snapshot when speech is present — the
+    // stop hook already provides the latest editor context, which is more
+    // up-to-date. For code-only narrations (no speech), keep everything.
+    let has_words = events.iter().any(|e| matches!(e, Event::Words { .. }));
+    if has_words && events.last().is_some_and(is_cursor_only) {
+        events.pop();
+    }
 }
 
 #[cfg(test)]
