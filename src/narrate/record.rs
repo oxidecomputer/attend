@@ -446,12 +446,19 @@ fn flush() -> anyhow::Result<()> {
 
 /// Spawn a detached recording daemon process.
 fn spawn_daemon() -> anyhow::Result<()> {
+    use std::os::unix::process::CommandExt;
+
     let exe = std::env::current_exe()?;
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("narrate").arg("_record-daemon");
 
+    // Put the child in its own process group immediately (before exec).
+    // This closes the race window where Zed's task runner kills the parent's
+    // process group before the daemon has a chance to call setsid().
+    // The daemon still calls setsid() at startup for full session isolation.
+    cmd.process_group(0);
+
     // Detach stdio so the daemon doesn't hold the parent's descriptors.
-    // The daemon calls setsid() at startup to create its own session.
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
