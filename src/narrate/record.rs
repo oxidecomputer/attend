@@ -134,10 +134,11 @@ fn spawn_daemon() -> anyhow::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        // SAFETY: setsid() is async-signal-safe and has no preconditions.
+        // SAFETY: pre_exec requires unsafe because it runs between fork and exec.
+        // setsid() is async-signal-safe and has no preconditions.
         unsafe {
             cmd.pre_exec(|| {
-                libc::setsid();
+                nix::unistd::setsid().map_err(|e| std::io::Error::from_raw_os_error(e as i32))?;
                 Ok(())
             });
         }

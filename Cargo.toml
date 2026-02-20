@@ -12,6 +12,7 @@ categories = ["command-line-utilities", "development-tools"]
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+crossterm = "0.28"
 clap_complete = "4"
 dirs = "6"
 camino = { version = "1", features = ["serde1"] }
@@ -19,8 +20,7 @@ chrono = "0.4"
 fundsp = "0.23"
 indicatif = "0.18"
 jsonc-parser = "0.29"
-libc = "0.2"
-nix = { version = "0.31", features = ["ioctl", "signal", "process"] }
+nix = { version = "0.31", features = ["signal", "process"] }
 lockfile = "0.4"
 rusqlite = { version = "0.38", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

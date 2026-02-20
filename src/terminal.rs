@@ -1,11 +1,16 @@
 //! Terminal helpers: screen management, size queries, and output fitting.
 
-use std::io::Write;
+use std::io::{self, Write};
 
-/// Fallback terminal width when ioctl is unavailable.
+use crossterm::{
+    cursor, execute,
+    terminal::{self, ClearType},
+};
+
+/// Fallback terminal width when size query fails.
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
 
-/// Fallback terminal height when ioctl is unavailable.
+/// Fallback terminal height when size query fails.
 const DEFAULT_TERMINAL_HEIGHT: usize = 24;
 
 // ---------------------------------------------------------------------------
@@ -17,16 +22,14 @@ pub(crate) struct AlternateScreen;
 
 impl AlternateScreen {
     pub(crate) fn enter() -> Self {
-        print!("\x1b[?1049h");
-        flush_stdout();
+        let _ = execute!(io::stdout(), terminal::EnterAlternateScreen);
         Self
     }
 }
 
 impl Drop for AlternateScreen {
     fn drop(&mut self) {
-        print!("\x1b[?1049l");
-        flush_stdout();
+        let _ = execute!(io::stdout(), terminal::LeaveAlternateScreen);
     }
 }
 
@@ -35,26 +38,22 @@ impl Drop for AlternateScreen {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn clear_screen() {
-    print!("\x1b[2J\x1b[H");
+    let _ = execute!(
+        io::stdout(),
+        terminal::Clear(ClearType::All),
+        cursor::MoveTo(0, 0)
+    );
 }
 
 pub(crate) fn flush_stdout() {
-    std::io::stdout().flush().ok();
+    io::stdout().flush().ok();
 }
 
 /// Query terminal dimensions (columns, rows).
 pub(crate) fn terminal_size() -> (usize, usize) {
-    #[cfg(unix)]
-    {
-        let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
-        if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) } == 0
-            && ws.ws_row > 0
-            && ws.ws_col > 0
-        {
-            return (ws.ws_col as usize, ws.ws_row as usize);
-        }
-    }
-    (DEFAULT_TERMINAL_WIDTH, DEFAULT_TERMINAL_HEIGHT)
+    terminal::size()
+        .map(|(cols, rows)| (cols as usize, rows as usize))
+        .unwrap_or((DEFAULT_TERMINAL_WIDTH, DEFAULT_TERMINAL_HEIGHT))
 }
 
 /// Truncate a line to `max_cols` visible columns, ANSI-aware.

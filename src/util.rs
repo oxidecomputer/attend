@@ -3,6 +3,7 @@
 use std::{fs, io};
 
 use camino::Utf8Path;
+use chrono::Utc;
 use serde::Serialize;
 
 /// Write to a file atomically by writing to a temporary sibling first.
@@ -26,19 +27,7 @@ pub(crate) fn atomic_write(
 
 /// Return the current UTC time as an ISO 8601 string (e.g. `2026-02-18T15:30:45Z`).
 pub fn utc_now() -> String {
-    let mut tv: libc::timeval = unsafe { std::mem::zeroed() };
-    unsafe { libc::gettimeofday(&mut tv, std::ptr::null_mut()) };
-    let time = tv.tv_sec;
-    let tm = unsafe { *libc::gmtime(&time) };
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        tm.tm_year + 1900,
-        tm.tm_mon + 1,
-        tm.tm_mday,
-        tm.tm_hour,
-        tm.tm_min,
-        tm.tm_sec,
-    )
+    Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 /// Wrapper that adds a `timestamp` field to any serializable payload.

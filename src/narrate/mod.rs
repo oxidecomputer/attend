@@ -29,11 +29,12 @@ pub(crate) use status::status;
 
 /// Check whether a process with the given PID is alive.
 ///
-/// # Safety
-/// Calls `libc::kill(pid, 0)` which checks process existence without
-/// sending a signal. This is the POSIX-specified way to probe for a process.
+/// Sends signal 0 (no-op) via `kill(2)`: returns true if the process exists
+/// and we have permission to signal it.
 pub(crate) fn process_alive(pid: i32) -> bool {
-    unsafe { libc::kill(pid, 0) == 0 }
+    use nix::sys::signal;
+    use nix::unistd::Pid;
+    signal::kill(Pid::from_raw(pid), None).is_ok()
 }
 
 /// Base directory for all narration state files.
