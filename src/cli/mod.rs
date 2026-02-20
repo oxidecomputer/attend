@@ -1,4 +1,7 @@
+mod glance;
 mod hook;
+mod install;
+mod look;
 mod narrate;
 
 pub use hook::HookEvent;
@@ -178,35 +181,7 @@ impl Command {
                 format,
                 watch,
                 interval,
-            } => {
-                if watch {
-                    crate::watch::run(
-                        crate::watch::WatchMode::Compact,
-                        dir.as_deref(),
-                        interval,
-                        &format,
-                        false,
-                        None,
-                        None,
-                    )
-                } else {
-                    if let Some(state) = crate::state::EditorState::current(dir.as_deref(), &[])? {
-                        match format {
-                            Format::Human => println!("{state}"),
-                            Format::Json => {
-                                let payload = crate::state::CompactPayload::from_state(&state);
-                                let wrapped = crate::util::Timestamped::now(payload);
-                                println!(
-                                    "{}",
-                                    serde_json::to_string_pretty(&wrapped)
-                                        .expect("serialization of known type")
-                                );
-                            }
-                        }
-                    }
-                    Ok(())
-                }
-            }
+            } => glance::run(dir, format, watch, interval),
             Command::Look {
                 dir,
                 format,
@@ -216,58 +191,7 @@ impl Command {
                 watch,
                 interval,
                 args,
-            } => {
-                if watch {
-                    crate::watch::run(
-                        crate::watch::WatchMode::View,
-                        dir.as_deref(),
-                        interval,
-                        &format,
-                        full,
-                        before,
-                        after,
-                    )
-                } else {
-                    let entries = if args.is_empty() {
-                        match crate::state::EditorState::current(dir.as_deref(), &[])? {
-                            Some(state) => state.files,
-                            None => return Ok(()),
-                        }
-                    } else if args.len() == 1 && args[0] == "-" {
-                        let mut input = String::new();
-                        std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
-                        crate::view::parse_compact(&input)?
-                    } else {
-                        crate::view::parse_compact(&args.join(" "))?
-                    };
-                    let extent = if full {
-                        crate::view::Extent::Full
-                    } else if before.is_some() || after.is_some() {
-                        crate::view::Extent::Lines {
-                            before: before.unwrap_or(0),
-                            after: after.unwrap_or(0),
-                        }
-                    } else {
-                        crate::view::Extent::Exact
-                    };
-                    match format {
-                        Format::Human => {
-                            print!("{}", crate::view::render(&entries, dir.as_deref(), extent)?);
-                        }
-                        Format::Json => {
-                            let payload =
-                                crate::view::render_json(&entries, dir.as_deref(), extent)?;
-                            let wrapped = crate::util::Timestamped::now(payload);
-                            println!(
-                                "{}",
-                                serde_json::to_string_pretty(&wrapped)
-                                    .expect("serialization of known type")
-                            );
-                        }
-                    }
-                    Ok(())
-                }
-            }
+            } => look::run(dir, format, full, before, after, watch, interval, args),
             Command::Meditate { interval } => crate::watch::run(
                 crate::watch::WatchMode::Silent,
                 None,
@@ -289,71 +213,12 @@ impl Command {
                 editor,
                 project,
                 dev,
-            } => {
-                if agent.is_empty() && editor.is_empty() {
-                    anyhow::bail!(
-                        "specify at least one --agent or --editor.\n  Available agents: {}\n  Available editors: {}",
-                        crate::agent::AGENTS
-                            .iter()
-                            .map(|a| a.name())
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                        crate::editor::EDITORS
-                            .iter()
-                            .map(|e| e.name())
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                    );
-                }
-                let bin_cmd = crate::agent::resolve_bin_cmd(dev)?;
-                for name in &agent {
-                    crate::agent::install(name, project.clone(), dev)?;
-                }
-                for name in &editor {
-                    let ed = crate::editor::editor_by_name(name)
-                        .ok_or_else(|| anyhow::anyhow!("unknown editor: {name}"))?;
-                    ed.install_narration(&bin_cmd)?;
-                }
-                crate::state::save_install_meta(&crate::state::InstallMeta {
-                    version: env!("CARGO_PKG_VERSION").to_string(),
-                    agents: agent,
-                    editors: editor,
-                    dev,
-                });
-                Ok(())
-            }
+            } => install::install(agent, editor, project, dev),
             Command::Uninstall {
                 agent,
                 editor,
                 project,
-            } => {
-                let uninstall_all = agent.is_empty() && editor.is_empty();
-                let agents: Vec<String> = if uninstall_all {
-                    crate::agent::AGENTS
-                        .iter()
-                        .map(|a| a.name().to_string())
-                        .collect()
-                } else {
-                    agent
-                };
-                let editors: Vec<String> = if uninstall_all {
-                    crate::editor::EDITORS
-                        .iter()
-                        .map(|e| e.name().to_string())
-                        .collect()
-                } else {
-                    editor
-                };
-                for name in &agents {
-                    crate::agent::uninstall(name, project.clone())?;
-                }
-                for name in &editors {
-                    let ed = crate::editor::editor_by_name(name)
-                        .ok_or_else(|| anyhow::anyhow!("unknown editor: {name}"))?;
-                    ed.uninstall_narration()?;
-                }
-                Ok(())
-            }
+            } => install::uninstall(agent, editor, project),
         }
     }
 }
