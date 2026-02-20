@@ -11,6 +11,7 @@ mod hook;
 mod json;
 mod narrate;
 mod state;
+mod util;
 mod view;
 mod watch;
 

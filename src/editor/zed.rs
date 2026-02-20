@@ -27,18 +27,6 @@ impl Editor for Zed {
         query()
     }
 
-    fn watch_paths(&self) -> Vec<std::path::PathBuf> {
-        let Some(data) = dirs::data_dir() else {
-            return Vec::new();
-        };
-        let db_dir = data.join("Zed").join("db");
-        if db_dir.is_dir() {
-            vec![db_dir]
-        } else {
-            Vec::new()
-        }
-    }
-
     fn install_narration(&self, bin_cmd: &str) -> anyhow::Result<()> {
         install_task(bin_cmd, "attend: toggle narration", &["narrate", "toggle"])?;
         install_task(bin_cmd, "attend: start narration", &["narrate", "start"])?;

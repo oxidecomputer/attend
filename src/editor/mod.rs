@@ -3,7 +3,17 @@ mod zed;
 
 use std::path::PathBuf;
 
+/// All registered editor backends.
+pub const EDITORS: &[&'static dyn Editor] = &[
+    &zed::Zed,
+    // <-- Add new editors here
+];
+
 /// A row from the editor before offset resolution.
+///
+/// Backends currently provide byte offsets for selections; future backends
+/// may provide line:col positions directly. The normalization to line:col
+/// happens in `Selection::resolve()` during `EditorState::build()`.
 pub struct RawEditor {
     /// Absolute file path.
     pub path: PathBuf,
@@ -27,14 +37,6 @@ pub trait Editor: Sync {
     /// Returns `Ok(None)` when the editor is not running or has no data.
     fn query(&self) -> anyhow::Result<Option<QueryResult>>;
 
-    /// Filesystem paths to monitor for changes. When any file under these
-    /// paths is modified, the backend should be re-queried. Returns an empty
-    /// vec if filesystem notification is not supported.
-    #[allow(dead_code)]
-    fn watch_paths(&self) -> Vec<PathBuf> {
-        Vec::new()
-    }
-
     /// Install narration integration (task, keybinding, etc.).
     fn install_narration(&self, _bin_cmd: &str) -> anyhow::Result<()> {
         anyhow::bail!("{} does not support narration", self.name())
@@ -52,21 +54,9 @@ pub trait Editor: Sync {
     }
 }
 
-/// All registered editor backends.
-pub const EDITORS: &[&'static dyn Editor] = &[
-    &zed::Zed,
-    // <-- Add new editors here
-];
-
 /// Look up an editor by CLI name.
 pub fn editor_by_name(name: &str) -> Option<&'static dyn Editor> {
     EDITORS.iter().find(|e| e.name() == name).copied()
-}
-
-/// Collect all filesystem watch paths from every registered backend.
-#[allow(dead_code)]
-pub fn all_watch_paths() -> Vec<PathBuf> {
-    EDITORS.iter().flat_map(|e| e.watch_paths()).collect()
 }
 
 /// Query all active editors for current state, merging results.

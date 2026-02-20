@@ -116,7 +116,7 @@ pub fn run(cli_cwd: Option<Utf8PathBuf>) -> anyhow::Result<()> {
         if let Some(parent) = cp.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        if let Err(e) = state::atomic_write(&cp, |file| {
+        if let Err(e) = crate::util::atomic_write(&cp, |file| {
             serde_json::to_writer(io::BufWriter::new(file), &state).map_err(io::Error::other)
         }) {
             tracing::warn!("Failed to write session cache: {e}");
@@ -305,7 +305,7 @@ fn handle_attend_activate(json: &serde_json::Value) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    state::atomic_write(&path, |file| {
+    crate::util::atomic_write(&path, |file| {
         use std::io::Write;
         file.write_all(session_id.as_bytes())
     })?;
