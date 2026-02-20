@@ -24,7 +24,7 @@ be performed as specified, please do it.
 | 5 | [Error Handling Audit](./phase-05-error-handling.md) | Done (066144d) | Phase 3 |
 | 6 | [Recording Daemon Improvements](./phase-06-daemon-improvements.md) | Done | Phases 4, 5 |
 | 7 | [Agent Trait Generalization](./phase-07-agent-generalization.md) | Done (35571a3) | Phases 3, 5 |
-| 8 | [UX Improvements](./phase-08-ux-improvements.md) | Not started | Phases 4, 6 |
+| 8 | [UX Improvements](./phase-08-ux-improvements.md) | Done (774ecae) | Phases 4, 6 |
 | 9 | [Test Hardening](./phase-09-test-hardening.md) | Not started | Phase 3 |
 | 10 | [merge.rs Deep Refactor](./phase-10-merge-refactor.md) | Not started | Phase 9 |
 | 11 | [Persistent Daemon](./phase-11-persistent-daemon.md) | Not started | Phases 6, 8 |
@@ -92,17 +92,17 @@ be performed as specified, please do it.
 - [x] 7.5 EXTENDING.md rewrite, claude asset reorg into claude/ subfolder (35571a3)
 
 ### Phase 8: UX Improvements
-- [ ] 8.1 Model download during `/attend` activation
-- [ ] 8.2 Auto-cleanup with configurable retention
-- [ ] 8.3 Cross-platform keybindings and user-selectable keybindings
-- [ ] 8.4 Elided line ranges in narration output
-- [ ] 8.5 Context line tuning for highlights
-- [ ] 8.6 Check parakeet-rs upstream for CTC timestamp fix
-- [ ] 8.7 Narration quality: reduce cursor-only noise
-- [ ] 8.8 Stop hook exit code for "no narration pending"
-- [ ] 8.9 Listener restart instructions for transient failures
-- [ ] 8.10 Research custom vocabulary / hotword list
-- [ ] 8.11 Research: agent-driven walkthrough via Zed ACP
+- [x] 8.1 Model download during `/attend` activation (f170c5c)
+- [x] 8.2 Auto-cleanup with configurable retention (f170c5c)
+- [x] 8.3 Cross-platform keybindings (f170c5c)
+- [x] 8.4 Elided line ranges in narration output (f170c5c)
+- [x] 8.5 Context line tuning for highlights (f170c5c)
+- [x] 8.6 Check parakeet-rs upstream: already on 0.3.3, no action needed
+- [x] 8.7 Narration quality: 500ms dwell threshold + trailing cursor-only removal (1c8d192)
+- [x] 8.8 Stop hook exit code: clean exit 0 with no output (c2796cb)
+- [x] 8.9 Listener restart instructions for transient failures (774ecae)
+- [x] 8.10 Research custom vocabulary: see phase-08 notes
+- [x] 8.11 Research agent-driven walkthrough via Zed ACP: see phase-08 notes
 
 ### Phase 9: Test Hardening
 - [ ] 9.1 Test documentation pass

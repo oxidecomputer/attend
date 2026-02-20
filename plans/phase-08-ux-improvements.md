@@ -74,6 +74,49 @@
 
 ---
 
+## Research Findings
+
+### 8.10 Custom Vocabulary / Hotword Biasing
+
+**Parakeet TDT**: No vocabulary biasing available in current inference path. NeMo
+has GPU-PB (Phrase Boosting) but it's Python-only; `parakeet-rs` doesn't expose
+it. Porting NeMo's boosting-tree logic into Rust is non-trivial but conceptually
+straightforward (weighted trie that rescales logits during decode).
+
+**Whisper**: `initial_prompt` is the only mechanism. Already partially used
+(`set_initial_prompt` in whisper.rs). Most effective for spelling disambiguation.
+Limited to 224 tokens. No logit-level biasing.
+
+**Practical approaches (ranked by effort/impact)**:
+1. **Domain-seeded initial prompt** (low effort): Add a config field
+   `vocabulary_hint` with project-specific terms, prepend to Whisper's initial
+   prompt as natural sentences.
+2. **Dictionary post-processing** (low effort): Phonetic mistake → correction
+   pairs (e.g., "Sarah D" → "serde"), user-configurable per project.
+3. **LLM post-correction** (moderate effort, high impact): Since output goes to
+   Claude Code anyway, a correction pass is architecturally natural.
+4. **Parakeet decoder biasing** (high effort): Upstream PR to `parakeet-rs`.
+
+### 8.11 Agent-Driven Walkthrough via Zed ACP
+
+**CLI** (`zed -a file.rs:42`): Only reliable external control today. Opens files
+at specific lines but cannot create selections, highlights, or annotations.
+
+**ACP** (v0.10.8): JSON-RPC 2.0 protocol between editor and agent. Tool calls
+have a `locations` field (path + optional line); Zed follows along in the UI.
+But this is passive reporting — no explicit editor navigation commands. Would
+require registering as an ACP agent (launched as subprocess of Zed), high
+impedance mismatch.
+
+**Extension API** (v0.7.0): Zero editor manipulation surface. No file opening,
+navigation, buffer access, selection creation, or decoration API.
+
+**Recommendation**: CLI path (`zed -a file:line`) for a v1 walkthrough feature.
+Richer interaction (highlights, annotations) requires Zed upstream changes to
+their extension or ACP APIs.
+
+---
+
 ## Verification
 
 - Manual test (8.1): delete model directory, run `/attend` in a Claude session -> see download progress, then narration works
