@@ -2,10 +2,20 @@ use anyhow::Context;
 
 use crate::state::{FileEntry, Selection};
 
-/// Parse compact format into FileEntry list.
+/// Parse the compact file+position format into a `Vec<FileEntry>`.
+///
+/// Used for both CLI arguments (`attend look src/foo.rs 5:12`) and stdin
+/// piping (`attend look -`). The format is the same in both cases:
+///
+/// ```text
+/// path [line:col | line:col-line:col] ... [path ...]
+/// ```
 ///
 /// Tokens matching `\d+:\d+(-\d+:\d+)?` (with optional trailing comma) are
-/// positions; everything else starts a new file path.
+/// positions; everything else starts a new file path. Double-quoted strings
+/// are treated as a single path token (for paths containing spaces). An
+/// unquoted path with no positions followed by another non-position token
+/// triggers a concatenation heuristic for space-containing paths.
 pub fn parse_compact(input: &str) -> anyhow::Result<Vec<FileEntry>> {
     let tokens = tokenize(input);
     let mut entries: Vec<FileEntry> = Vec::new();

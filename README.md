@@ -26,14 +26,20 @@ slow down and consider more deeply.
 
 I invite you to see if you feel the same way.
 
-## Supported editors and agents
+## Supported editors, agents, and platforms
 
 - Editors: [Zed](https://zed.dev)
 - Agents: [Claude Code](https://claude.com/product/claude-code)
+- Platforms: anything Unix-esque should work; Windows is not supported currently
 
 The architecture supports adding new editors and agents independently of one
 another. See [EXTENDING.md](EXTENDING.md) for how to implement new editor or
 agent integrations. Contributions welcome!
+
+## Platform requirements
+
+`attend` requires a Unix platform (macOS or Linux). Windows is not currently
+supported.
 
 ## Quick start
 
@@ -67,6 +73,10 @@ narration".
 
 Alternatively, if you use a hotkey manager that can assgn commands to keys, you
 can bind *global* hotkeys to `attend narrate start` and `attend narrate toggle`.
+On macOS, you can [bind a global keyboard shortcut to a script using the
+Shortcuts
+app](https://support.apple.com/guide/shortcuts-mac/launch-a-shortcut-from-another-app-apd163eb9f95/mac).
+Your favorite Linux distribution almost certainly has some way to do this too.
 
 ### Agent integration
 
