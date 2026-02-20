@@ -48,7 +48,7 @@ pub(super) fn parse(hook_type: HookType) -> HookInput {
         HookType::Stop => HookKind::Stop {
             stop_hook_active: raw.stop_hook_active,
         },
-        HookType::ToolUse => {
+        HookType::PreToolUse | HookType::PostToolUse => {
             let bash_command = raw
                 .tool_name
                 .as_deref()

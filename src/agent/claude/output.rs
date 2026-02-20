@@ -41,41 +41,89 @@ pub(super) fn attend_activate(_session_id: &SessionId) -> anyhow::Result<()> {
 }
 
 /// Emit hook decision as JSON for Claude Code.
+///
+/// Output format varies by hook type:
+/// - **PreToolUse**: `hookSpecificOutput` with `permissionDecision` (allow/deny)
+///   and `additionalContext` for content that Claude should see.
+/// - **PostToolUse**: top-level `decision`/`reason` with
+///   `hookSpecificOutput.additionalContext` for supplementary context.
+/// - **Stop**: top-level `decision: "block"` with `reason` (shown to Claude).
 pub(super) fn attend_result(decision: &HookDecision, hook_type: HookType) -> anyhow::Result<()> {
     match decision {
         HookDecision::Silent => {}
-        HookDecision::PendingNarration { content } => {
-            let reason = if matches!(hook_type, HookType::ToolUse) {
+        HookDecision::PendingNarration { content, effect } => {
+            let narration = if matches!(hook_type, HookType::PreToolUse | HookType::PostToolUse) {
                 format!(
-                    "{content}\n\
+                    "<narration>\n{content}\n</narration>\n\
                      <system-instruction>\n\
                      {}\n\
                      </system-instruction>",
                     include_str!("../messages/narration_pause.txt")
                 )
             } else {
-                content.clone()
+                format!("<narration>\n{content}\n</narration>")
             };
-            let response = serde_json::json!({
-                "decision": "block",
-                "reason": reason
-            });
+            let response = render_decision(hook_type, effect, &narration);
             println!("{}", serde_json::to_string(&response)?);
         }
         HookDecision::Guidance { reason, effect } => {
-            let action = match effect {
-                GuidanceEffect::Block => "block",
-                GuidanceEffect::Approve => "approve",
-            };
             let message = guidance_message(reason);
-            let response = serde_json::json!({
-                "decision": action,
-                "reason": message
-            });
+            let wrapped = format!("<system-instruction>\n{message}\n</system-instruction>");
+            let response = render_decision(hook_type, effect, &wrapped);
             println!("{}", serde_json::to_string(&response)?);
         }
     }
     Ok(())
+}
+
+/// Render a hook decision in the format appropriate for the hook type.
+fn render_decision(
+    hook_type: HookType,
+    effect: &GuidanceEffect,
+    content: &str,
+) -> serde_json::Value {
+    match hook_type {
+        // PreToolUse: hookSpecificOutput with permissionDecision.
+        // additionalContext reaches Claude; permissionDecisionReason
+        // reaches Claude on deny, user-only on allow.
+        HookType::PreToolUse => {
+            let decision = match effect {
+                GuidanceEffect::Block => "deny",
+                GuidanceEffect::Approve => "allow",
+            };
+            serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": decision,
+                    "additionalContext": content
+                }
+            })
+        }
+        // PostToolUse: top-level decision + hookSpecificOutput.additionalContext.
+        HookType::PostToolUse => match effect {
+            GuidanceEffect::Block => serde_json::json!({
+                "decision": "block",
+                "reason": content
+            }),
+            GuidanceEffect::Approve => serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PostToolUse",
+                    "additionalContext": content
+                }
+            }),
+        },
+        // Stop: top-level decision/reason. reason reaches Claude on block.
+        // No additionalContext available — approve is silent.
+        HookType::Stop => match effect {
+            GuidanceEffect::Block => serde_json::json!({
+                "decision": "block",
+                "reason": content
+            }),
+            GuidanceEffect::Approve => serde_json::json!({}),
+        },
+        // SessionStart and UserPrompt don't use attend_result.
+        _ => serde_json::json!({}),
+    }
 }
 
 /// Map a guidance reason to an agent-facing message string.
@@ -83,6 +131,9 @@ fn guidance_message(reason: &GuidanceReason) -> &'static str {
     match reason {
         GuidanceReason::SessionMoved => include_str!("../messages/guidance_session_moved.txt"),
         GuidanceReason::StartReceiver => include_str!("../messages/guidance_start_receiver.txt"),
+        GuidanceReason::NarrationReady => {
+            include_str!("../messages/guidance_narration_ready.txt")
+        }
         GuidanceReason::ListenerAlreadyActive => {
             include_str!("../messages/guidance_listener_active.txt")
         }

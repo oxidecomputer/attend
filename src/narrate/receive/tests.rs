@@ -32,8 +32,8 @@ fn read_pending_single_json() {
     let cwd = Utf8Path::new("/project");
     let result = read_pending(&[path], cwd, &[]).unwrap();
     assert!(result.contains("hello world"));
-    assert!(result.starts_with("<narration>"));
-    assert!(result.ends_with("</narration>"));
+    // read_pending returns raw markdown; <narration> tags are applied at render time.
+    assert!(!result.contains("<narration>"));
 }
 
 #[test]
@@ -160,8 +160,9 @@ fn relativize_events_strips_prefix() {
     }
 }
 
+/// read_pending returns raw markdown without narration tags.
 #[test]
-fn narration_tags_wrapping() {
+fn read_pending_returns_raw_markdown() {
     let dir = tempfile::tempdir().unwrap();
     let events = vec![Event::Words {
         offset_secs: 0.0,
@@ -172,9 +173,8 @@ fn narration_tags_wrapping() {
 
     let cwd = Utf8Path::new("/project");
     let result = read_pending(&[path], cwd, &[]).unwrap();
-    assert!(result.starts_with("<narration>\n"));
-    assert!(result.ends_with("\n</narration>"));
     assert!(result.contains("test message"));
+    assert!(!result.contains("<narration>"));
 }
 
 #[test]

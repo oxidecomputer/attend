@@ -56,9 +56,13 @@ impl HookEvent {
                 let agent = resolve_agent(&agent)?;
                 crate::hook::check_narration(agent, crate::hook::HookType::Stop)
             }
-            HookEvent::PreToolUse { agent } | HookEvent::PostToolUse { agent } => {
+            HookEvent::PreToolUse { agent } => {
                 let agent = resolve_agent(&agent)?;
-                crate::hook::check_narration(agent, crate::hook::HookType::ToolUse)
+                crate::hook::check_narration(agent, crate::hook::HookType::PreToolUse)
+            }
+            HookEvent::PostToolUse { agent } => {
+                let agent = resolve_agent(&agent)?;
+                crate::hook::check_narration(agent, crate::hook::HookType::PostToolUse)
             }
         }
     }

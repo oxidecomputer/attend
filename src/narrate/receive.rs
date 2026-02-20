@@ -81,7 +81,7 @@ pub(crate) fn read_pending(
         return None;
     }
 
-    Some(format!("<narration>\n{trimmed}\n</narration>"))
+    Some(trimmed.to_string())
 }
 
 /// Filter events to only include files under `cwd` or any `include_dirs`.
@@ -154,7 +154,7 @@ pub(crate) fn archive_pending(files: &[PathBuf], session_id: &SessionId) {
 
 /// Prune archived narrations older than the configured retention period.
 /// No-op if retention is `"forever"` or the archive doesn't exist.
-fn auto_prune(config: &Config) {
+pub(crate) fn auto_prune(config: &Config) {
     if let Some(retention) = config.retention_duration() {
         let archive_root = super::cache_dir().join("archive");
         if archive_root.exists() {
@@ -284,7 +284,7 @@ fn run_once(session_id: Option<SessionId>) -> anyhow::Result<()> {
 
     let files = collect_pending(&session_id);
     if let Some(content) = read_pending(&files, &cwd, &config.include_dirs) {
-        print!("{content}");
+        println!("{content}");
         archive_pending(&files, &session_id);
         auto_prune(&config);
     }
@@ -352,13 +352,13 @@ fn run_wait(session_id: Option<SessionId>) -> anyhow::Result<()> {
             _ => return Ok(()),
         }
 
-        // Check for pending narration
+        // Check for pending narration. The receiver is poke-only: it
+        // detects that narration is pending and exits, prompting the agent
+        // to restart the listener. The PreToolUse hook delivers the actual
+        // content when the agent calls `attend listen` again.
         let files = collect_pending(&session_id);
-        if let Some(content) = read_pending(&files, &cwd, &config.include_dirs) {
-            print!("{content}");
+        if !files.is_empty() {
             println!("{REDISPATCH_MSG}");
-            archive_pending(&files, &session_id);
-            auto_prune(&config);
             return Ok(());
         }
 

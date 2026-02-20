@@ -52,9 +52,13 @@ fn stop_active_with_pending_narration() {
         false,
         false,
     );
-    assert!(
-        matches!(d, HookDecision::PendingNarration { ref content } if content.contains("hello"))
-    );
+    assert!(matches!(
+        d,
+        HookDecision::PendingNarration {
+            ref content,
+            effect: GuidanceEffect::Block,
+        } if content.contains("hello")
+    ));
 }
 
 /// Pending narration takes priority over a running receiver.
@@ -68,9 +72,13 @@ fn stop_active_pending_takes_priority_over_receiver() {
         true,
         false,
     );
-    assert!(
-        matches!(d, HookDecision::PendingNarration { ref content } if content.contains("hello"))
-    );
+    assert!(matches!(
+        d,
+        HookDecision::PendingNarration {
+            ref content,
+            effect: GuidanceEffect::Block,
+        } if content.contains("hello")
+    ));
 }
 
 /// Pending narration takes priority even on re-invocation.
@@ -84,9 +92,13 @@ fn stop_active_pending_takes_priority_over_reentry() {
         false,
         true,
     );
-    assert!(
-        matches!(d, HookDecision::PendingNarration { ref content } if content.contains("hello"))
-    );
+    assert!(matches!(
+        d,
+        HookDecision::PendingNarration {
+            ref content,
+            effect: GuidanceEffect::Block,
+        } if content.contains("hello")
+    ));
 }
 
 /// Receiver alive, no pending: approve silently.

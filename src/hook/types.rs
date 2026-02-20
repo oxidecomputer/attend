@@ -11,7 +11,8 @@ pub enum HookType {
     SessionStart,
     UserPrompt,
     Stop,
-    ToolUse,
+    PreToolUse,
+    PostToolUse,
 }
 
 /// Parsed input from an agent hook invocation.
@@ -51,8 +52,13 @@ pub enum HookKind {
 pub enum HookDecision {
     /// No output needed.
     Silent,
-    /// Pending narration to deliver. Blocks the current action.
-    PendingNarration { content: String },
+    /// Pending narration to deliver. Effect controls whether the current
+    /// action is blocked (default for non-listen tools) or approved (for
+    /// `attend listen`, so the receiver starts in the same round trip).
+    PendingNarration {
+        content: String,
+        effect: GuidanceEffect,
+    },
     /// Non-narration guidance for the agent. The `effect` field (block/approve)
     /// is decided by business logic upstream — the agent renderer should not
     /// transform one into the other.
@@ -72,6 +78,10 @@ pub enum GuidanceReason {
     SessionMoved,
     /// No background receiver is running: agent should start one.
     StartReceiver,
+    /// Narration is pending but the current hook cannot deliver content
+    /// directly (e.g. Stop hook has no `additionalContext`). The agent
+    /// should start a receiver so PreToolUse can deliver the narration.
+    NarrationReady,
     /// A listener is already active for this session.
     ListenerAlreadyActive,
 }

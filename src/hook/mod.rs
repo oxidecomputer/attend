@@ -153,8 +153,10 @@ pub fn check_narration(agent: &dyn Agent, hook_type: HookType) -> anyhow::Result
 
     // ToolUse hooks: gate `attend listen` to avoid unnecessary round trips.
     // - Stolen session → block immediately (prevents steal-back bounce)
-    // - Active session + no receiver running → approve (let it start)
-    // - Active session + receiver already running → block with guidance
+    // - Active session + pending narration → deliver as approve (receiver
+    //   starts in the same round trip)
+    // - Active session + no pending + receiver running → block with guidance
+    // - Active session + no pending + no receiver → approve (let it start)
     let is_stolen = matches!(
         (&listening, &input.session_id),
         (Some(_), Some(_)) if !is_active
@@ -166,6 +168,25 @@ pub fn check_narration(agent: &dyn Agent, hook_type: HookType) -> anyhow::Result
         );
     }
     if is_active && is_attend_listen(&input) {
+        // Check for pending narration: deliver via hook and approve the
+        // listen command so the receiver starts in the same round trip.
+        let session_id = listening.as_ref().unwrap();
+        let cwd = resolve_cwd(&input);
+        let config = crate::config::Config::load(&cwd);
+        let files = crate::narrate::receive::collect_pending(session_id);
+        if let Some(content) =
+            crate::narrate::receive::read_pending(&files, &cwd, &config.include_dirs)
+        {
+            crate::narrate::receive::archive_pending(&files, session_id);
+            crate::narrate::receive::auto_prune(&config);
+            return agent.attend_result(
+                &HookDecision::PendingNarration {
+                    content,
+                    effect: GuidanceEffect::Approve,
+                },
+                hook_type,
+            );
+        }
         if receiver_alive() {
             return agent.attend_result(
                 &HookDecision::block(GuidanceReason::ListenerAlreadyActive),
@@ -176,10 +197,7 @@ pub fn check_narration(agent: &dyn Agent, hook_type: HookType) -> anyhow::Result
     }
     let (pending_content, pending_files) = if is_active {
         let session_id = listening.as_ref().unwrap();
-        let cwd = input.cwd.clone().unwrap_or_else(|| {
-            Utf8PathBuf::try_from(std::env::current_dir().unwrap_or_default())
-                .unwrap_or_else(|_| Utf8PathBuf::from("."))
-        });
+        let cwd = resolve_cwd(&input);
         let config = crate::config::Config::load(&cwd);
         let files = crate::narrate::receive::collect_pending(session_id);
         let content = crate::narrate::receive::read_pending(&files, &cwd, &config.include_dirs);
@@ -199,10 +217,21 @@ pub fn check_narration(agent: &dyn Agent, hook_type: HookType) -> anyhow::Result
         stop_hook_active,
     );
 
+    // Stop hook cannot deliver narration content directly (no
+    // `additionalContext` — `reason` is shown to the user). Convert
+    // PendingNarration → NarrationReady guidance so the agent starts a
+    // receiver, which triggers PreToolUse delivery.  The pending files
+    // are intentionally NOT archived here; PreToolUse will consume them.
+    if matches!(hook_type, HookType::Stop)
+        && matches!(decision, HookDecision::PendingNarration { .. })
+    {
+        decision = HookDecision::block(GuidanceReason::NarrationReady);
+    }
+
     // hook_decision returns Block for all non-Silent guidance. Convert to
     // Approve where the hook type warrants it:
     // - SessionMoved on Stop → Approve (let Claude stop, just inject guidance)
-    // - StartReceiver on ToolUse → Approve (let tool through, inject nudge)
+    // - StartReceiver on PreToolUse/PostToolUse → Approve (let tool through, inject nudge)
     if matches!(hook_type, HookType::Stop)
         && matches!(
             decision,
@@ -214,7 +243,7 @@ pub fn check_narration(agent: &dyn Agent, hook_type: HookType) -> anyhow::Result
     {
         decision = HookDecision::approve(GuidanceReason::SessionMoved);
     }
-    if matches!(hook_type, HookType::ToolUse)
+    if matches!(hook_type, HookType::PreToolUse | HookType::PostToolUse)
         && matches!(
             decision,
             HookDecision::Guidance {
@@ -251,9 +280,21 @@ pub fn check_narration(agent: &dyn Agent, hook_type: HookType) -> anyhow::Result
         && let Some(ref sid) = listening
     {
         crate::narrate::receive::archive_pending(&pending_files, sid);
+        let cwd = resolve_cwd(&input);
+        let config = crate::config::Config::load(&cwd);
+        crate::narrate::receive::auto_prune(&config);
     }
 
     agent.attend_result(&decision, hook_type)
+}
+
+/// Resolve the working directory from hook input, falling back to the
+/// process working directory.
+fn resolve_cwd(input: &HookInput) -> Utf8PathBuf {
+    input.cwd.clone().unwrap_or_else(|| {
+        Utf8PathBuf::try_from(std::env::current_dir().unwrap_or_default())
+            .unwrap_or_else(|_| Utf8PathBuf::from("."))
+    })
 }
 
 #[cfg(test)]

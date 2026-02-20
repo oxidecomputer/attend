@@ -31,7 +31,10 @@ pub(super) fn hook_decision(
     // We are the active session. Pending narration always takes priority —
     // deliver it regardless of stop_hook_active.
     if let Some(content) = pending_content {
-        return HookDecision::PendingNarration { content };
+        return HookDecision::PendingNarration {
+            content,
+            effect: super::types::GuidanceEffect::Block,
+        };
     }
 
     // No narration. If a receiver is running, it will handle future delivery.
