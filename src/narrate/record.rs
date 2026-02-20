@@ -21,6 +21,7 @@ use super::{
     stop_sentinel_path,
 };
 use crate::config::Config;
+use crate::state::SessionId;
 use crate::util::utc_now;
 
 /// Target sample rate for transcription engines (Whisper, Parakeet).
@@ -294,7 +295,7 @@ pub fn daemon() -> anyhow::Result<()> {
                 editor_snapshots,
                 file_diffs,
                 time_base_secs,
-                &session_id,
+                session_id.as_ref(),
             )?;
             break;
         }
@@ -316,7 +317,7 @@ pub fn daemon() -> anyhow::Result<()> {
                 editor_snapshots,
                 file_diffs,
                 time_base_secs,
-                &session_id,
+                session_id.as_ref(),
             )?;
 
             time_base_secs += elapsed;
@@ -397,7 +398,7 @@ fn transcribe_and_write(
     editor_snapshots: Vec<Event>,
     file_diffs: Vec<Event>,
     time_base_secs: f64,
-    session_id: &Option<String>,
+    session_id: Option<&SessionId>,
 ) -> anyhow::Result<()> {
     let mut all_words = pre_transcribed;
 

@@ -4,10 +4,12 @@ use camino::{Utf8Path, Utf8PathBuf};
 
 use super::*;
 use crate::narrate::merge::{Event, RenderedFile};
+use crate::state::SessionId;
 
 #[test]
 fn collect_pending_empty_dir() {
-    let files = collect_pending("nonexistent-session");
+    let sid = SessionId::from("nonexistent-session");
+    let files = collect_pending(&sid);
     assert!(files.is_empty());
 }
 

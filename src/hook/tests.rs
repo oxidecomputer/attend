@@ -1,16 +1,25 @@
+use crate::state::SessionId;
+
 use super::*;
+
+/// Helper to build an `Option<&SessionId>` from a literal.
+fn sid(s: &str) -> SessionId {
+    SessionId::from(s)
+}
 
 // --- stop_decision tests ---
 
 #[test]
 fn stop_no_listening_session() {
-    let d = stop_decision(Some("abc"), None, None, false, false);
+    let hook = sid("abc");
+    let d = stop_decision(Some(&hook), None, None, false, false);
     assert_eq!(d, StopDecision::Silent);
 }
 
 #[test]
 fn stop_no_hook_session_id() {
-    let d = stop_decision(None, Some("abc"), None, false, false);
+    let listening = sid("abc");
+    let d = stop_decision(None, Some(&listening), None, false, false);
     assert_eq!(d, StopDecision::Silent);
 }
 
@@ -22,13 +31,17 @@ fn stop_neither_session() {
 
 #[test]
 fn stop_session_moved() {
-    let d = stop_decision(Some("mine"), Some("other"), None, false, false);
+    let hook = sid("mine");
+    let listening = sid("other");
+    let d = stop_decision(Some(&hook), Some(&listening), None, false, false);
     assert!(matches!(d, StopDecision::Approve { reason } if reason.contains("moved")));
 }
 
 #[test]
 fn stop_session_moved_says_no_restart() {
-    let d = stop_decision(Some("mine"), Some("other"), None, false, false);
+    let hook = sid("mine");
+    let listening = sid("other");
+    let d = stop_decision(Some(&hook), Some(&listening), None, false, false);
     if let StopDecision::Approve { reason } = d {
         assert!(reason.contains("Do not restart"));
         assert!(reason.contains("/attend"));
@@ -39,9 +52,10 @@ fn stop_session_moved_says_no_restart() {
 
 #[test]
 fn stop_active_with_pending_narration() {
+    let s = sid("abc");
     let d = stop_decision(
-        Some("abc"),
-        Some("abc"),
+        Some(&s),
+        Some(&s),
         Some("<narration>hello</narration>".into()),
         false,
         false,
@@ -51,9 +65,10 @@ fn stop_active_with_pending_narration() {
 
 #[test]
 fn stop_active_pending_takes_priority_over_receiver() {
+    let s = sid("abc");
     let d = stop_decision(
-        Some("abc"),
-        Some("abc"),
+        Some(&s),
+        Some(&s),
         Some("<narration>hello</narration>".into()),
         true,
         false,
@@ -64,9 +79,10 @@ fn stop_active_pending_takes_priority_over_receiver() {
 #[test]
 fn stop_active_pending_takes_priority_over_reentry() {
     // Even on re-invocation, pending narration must be delivered.
+    let s = sid("abc");
     let d = stop_decision(
-        Some("abc"),
-        Some("abc"),
+        Some(&s),
+        Some(&s),
         Some("<narration>hello</narration>".into()),
         false,
         true,
@@ -76,13 +92,15 @@ fn stop_active_pending_takes_priority_over_reentry() {
 
 #[test]
 fn stop_active_receiver_alive_no_pending() {
-    let d = stop_decision(Some("abc"), Some("abc"), None, true, false);
+    let s = sid("abc");
+    let d = stop_decision(Some(&s), Some(&s), None, true, false);
     assert_eq!(d, StopDecision::Silent);
 }
 
 #[test]
 fn stop_active_no_receiver_no_pending() {
-    let d = stop_decision(Some("abc"), Some("abc"), None, false, false);
+    let s = sid("abc");
+    let d = stop_decision(Some(&s), Some(&s), None, false, false);
     assert!(matches!(d, StopDecision::Block { reason } if reason.contains("listen")));
 }
 
@@ -90,13 +108,15 @@ fn stop_active_no_receiver_no_pending() {
 fn stop_active_reentry_no_receiver_approves() {
     // Re-invocation after a previous block: approve even if receiver isn't
     // alive yet, to avoid an infinite block loop.
-    let d = stop_decision(Some("abc"), Some("abc"), None, false, true);
+    let s = sid("abc");
+    let d = stop_decision(Some(&s), Some(&s), None, false, true);
     assert_eq!(d, StopDecision::Silent);
 }
 
 #[test]
 fn stop_active_reentry_receiver_alive_approves() {
-    let d = stop_decision(Some("abc"), Some("abc"), None, true, true);
+    let s = sid("abc");
+    let d = stop_decision(Some(&s), Some(&s), None, true, true);
     assert_eq!(d, StopDecision::Silent);
 }
 

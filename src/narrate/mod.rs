@@ -17,6 +17,8 @@ pub(crate) mod transcribe;
 
 use camino::Utf8PathBuf;
 
+use crate::state::SessionId;
+
 pub(crate) use clean::clean;
 #[cfg(test)]
 pub(crate) use clean::clean_archive_dir;
@@ -60,18 +62,19 @@ pub(crate) fn receive_lock_path() -> Utf8PathBuf {
 ///
 /// Each narration is stored as `<timestamp>.json` inside
 /// `<cache_dir>/attend/pending/<session_id>/` (platform cache directory).
-pub(crate) fn pending_dir(session_id: &str) -> Utf8PathBuf {
-    cache_dir().join("pending").join(session_id)
+pub(crate) fn pending_dir(session_id: &SessionId) -> Utf8PathBuf {
+    cache_dir().join("pending").join(session_id.as_str())
 }
 
 /// Directory where archived narration files are stored.
-pub(crate) fn archive_dir(session_id: &str) -> Utf8PathBuf {
-    cache_dir().join("archive").join(session_id)
+pub(crate) fn archive_dir(session_id: &SessionId) -> Utf8PathBuf {
+    cache_dir().join("archive").join(session_id.as_str())
 }
 
 /// Resolve the session ID from flag, listening file, or None.
-pub(crate) fn resolve_session(flag: Option<String>) -> Option<String> {
-    flag.or_else(crate::state::listening_session)
+pub(crate) fn resolve_session(flag: Option<String>) -> Option<SessionId> {
+    flag.map(SessionId::from)
+        .or_else(crate::state::listening_session)
 }
 
 /// Run model benchmarks for all engines and model variants.

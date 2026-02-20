@@ -38,7 +38,10 @@ pub(crate) fn status() -> anyhow::Result<()> {
 
     // Session
     let session = crate::state::listening_session();
-    println!("Session:    {}", session.as_deref().unwrap_or("none"));
+    println!(
+        "Session:    {}",
+        session.as_ref().map_or("none", |s| s.as_str())
+    );
 
     // Receive listener
     let recv_lock = receive_lock_path();

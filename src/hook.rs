@@ -3,10 +3,10 @@ use std::io::{self, Read};
 
 use camino::Utf8PathBuf;
 
-use crate::state;
+use crate::state::{self, SessionId};
 
 /// Per-session cache: tracks what was last emitted to a given session for deduplication.
-fn session_cache_path(session_id: &str) -> Option<Utf8PathBuf> {
+fn session_cache_path(session_id: &SessionId) -> Option<Utf8PathBuf> {
     Some(state::cache_dir()?.join(format!("cache-{session_id}.json")))
 }
 
@@ -28,13 +28,14 @@ fn read_stdin_json() -> Option<serde_json::Value> {
 /// installed agents and editors.
 pub fn session_start() -> anyhow::Result<()> {
     let stdin_json = read_stdin_json();
-    let session_id = stdin_json
+    let session_id: Option<SessionId> = stdin_json
         .as_ref()
         .and_then(|v| v.get("session_id"))
-        .and_then(|v| v.as_str());
+        .and_then(|v| v.as_str())
+        .map(SessionId::from);
 
     // Delete session cache file
-    if let Some(sid) = session_id
+    if let Some(ref sid) = session_id
         && let Some(cp) = session_cache_path(sid)
     {
         let _ = fs::remove_file(cp);
@@ -53,9 +54,7 @@ pub fn session_start() -> anyhow::Result<()> {
     // If this session is actively listening for narration, re-emit the
     // narration skill instructions so the agent restarts its background
     // receiver after context compaction or clear.
-    if let Some(sid) = session_id
-        && state::listening_session().as_deref() == Some(sid)
-    {
+    if session_id.is_some() && state::listening_session() == session_id {
         print!("{}", narration_instructions(&bin));
     }
 
@@ -76,10 +75,11 @@ pub fn run(cli_cwd: Option<Utf8PathBuf>) -> anyhow::Result<()> {
         return handle_attend_activate(json);
     }
 
-    let session_id = stdin_json
+    let session_id: Option<SessionId> = stdin_json
         .as_ref()
         .and_then(|v| v.get("session_id"))
-        .and_then(|v| v.as_str());
+        .and_then(|v| v.as_str())
+        .map(SessionId::from);
     let stdin_cwd = stdin_json
         .as_ref()
         .and_then(|v| v.get("cwd"))
@@ -95,6 +95,7 @@ pub fn run(cli_cwd: Option<Utf8PathBuf>) -> anyhow::Result<()> {
 
     // Per-session cache: what this session last saw, used for deduplication.
     let session_previous = session_id
+        .as_ref()
         .and_then(session_cache_path)
         .and_then(|cp| fs::read_to_string(&cp).ok())
         .and_then(|s| serde_json::from_str::<state::EditorState>(&s).ok());
@@ -110,7 +111,7 @@ pub fn run(cli_cwd: Option<Utf8PathBuf>) -> anyhow::Result<()> {
     }
 
     // Update session cache and emit.
-    if let Some(sid) = session_id
+    if let Some(ref sid) = session_id
         && let Some(cp) = session_cache_path(sid)
     {
         if let Some(parent) = cp.parent() {
@@ -147,8 +148,8 @@ enum StopDecision {
 /// a receiver and it's re-stopping, approve rather than risk an infinite
 /// block loop (e.g. if the receiver hasn't created its lock file yet).
 fn stop_decision(
-    hook_session_id: Option<&str>,
-    listening_session: Option<&str>,
+    hook_session_id: Option<&SessionId>,
+    listening_session: Option<&SessionId>,
     pending_content: Option<String>,
     receiver_alive: bool,
     stop_hook_active: bool,
@@ -196,11 +197,11 @@ fn stop_decision(
 pub fn stop() -> anyhow::Result<()> {
     let stdin_json = read_stdin_json();
 
-    let hook_session_id = stdin_json
+    let hook_session_id: Option<SessionId> = stdin_json
         .as_ref()
         .and_then(|v| v.get("session_id"))
         .and_then(|v| v.as_str())
-        .map(String::from);
+        .map(SessionId::from);
 
     let listening = state::listening_session();
 
@@ -210,7 +211,7 @@ pub fn stop() -> anyhow::Result<()> {
         (Some(l), Some(h)) if l == h
     );
     let (pending_content, pending_files) = if is_active {
-        let session_id = listening.as_deref().unwrap();
+        let session_id = listening.as_ref().unwrap();
         let cwd_str = stdin_json
             .as_ref()
             .and_then(|v| v.get("cwd"))
@@ -233,8 +234,8 @@ pub fn stop() -> anyhow::Result<()> {
         .is_some_and(|v| v.as_bool() == Some(true) || v.as_str() == Some("true"));
 
     let decision = stop_decision(
-        hook_session_id.as_deref(),
-        listening.as_deref(),
+        hook_session_id.as_ref(),
+        listening.as_ref(),
         pending_content,
         receiver_alive(),
         stop_hook_active,
@@ -249,7 +250,7 @@ pub fn stop() -> anyhow::Result<()> {
         StopDecision::Block { reason } => {
             // Archive pending files if we blocked with narration content.
             if !pending_files.is_empty()
-                && let Some(sid) = listening.as_deref()
+                && let Some(ref sid) = listening
             {
                 crate::narrate::receive::archive_pending(&pending_files, sid);
             }
@@ -294,10 +295,11 @@ fn is_attend_prompt(json: &serde_json::Value) -> bool {
 
 /// Activate narration mode for this session.
 fn handle_attend_activate(json: &serde_json::Value) -> anyhow::Result<()> {
-    let session_id = json
+    let session_id: SessionId = json
         .get("session_id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("no session_id in hook stdin"))?;
+        .ok_or_else(|| anyhow::anyhow!("no session_id in hook stdin"))?
+        .into();
 
     let Some(path) = crate::state::listening_path() else {
         return Err(anyhow::anyhow!("cannot determine cache directory"));
@@ -307,7 +309,7 @@ fn handle_attend_activate(json: &serde_json::Value) -> anyhow::Result<()> {
     }
     crate::util::atomic_write(&path, |file| {
         use std::io::Write;
-        file.write_all(session_id.as_bytes())
+        file.write_all(session_id.as_str().as_bytes())
     })?;
 
     let response = serde_json::json!({

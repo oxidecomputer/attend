@@ -17,6 +17,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use super::merge::{self, Event, SnipConfig};
 use super::{archive_dir, cache_dir, pending_dir, receive_lock_path, resolve_session};
 use crate::config::Config;
+use crate::state::SessionId;
 
 /// How often to poll for pending narration when waiting (ms).
 const NARRATION_POLL_MS: u64 = 500;
@@ -26,7 +27,7 @@ const REDISPATCH_MSG: &str =
     "\n[Run `attend listen` in the background to wait for the next narration.]";
 
 /// Collect all pending narration files for a session, sorted by filename (timestamp).
-pub(crate) fn collect_pending(session_id: &str) -> Vec<PathBuf> {
+pub(crate) fn collect_pending(session_id: &SessionId) -> Vec<PathBuf> {
     let dir = pending_dir(session_id);
     let Ok(entries) = fs::read_dir(&dir) else {
         return Vec::new();
@@ -129,7 +130,7 @@ fn relativize_str(path: &str, cwd: &Utf8Path) -> String {
 }
 
 /// Archive pending narration files by moving them to the archive directory.
-pub(crate) fn archive_pending(files: &[PathBuf], session_id: &str) {
+pub(crate) fn archive_pending(files: &[PathBuf], session_id: &SessionId) {
     let archive = archive_dir(session_id);
     let _ = fs::create_dir_all(&archive);
 
@@ -140,7 +141,7 @@ pub(crate) fn archive_pending(files: &[PathBuf], session_id: &str) {
         }
     }
 
-    // Clean up the pending dir if empty
+    // Clean up the pending directory if empty.
     let dir = pending_dir(session_id);
     let _ = fs::remove_dir(&dir); // only succeeds if empty
 }
@@ -204,7 +205,7 @@ pub fn run(wait: bool, session_flag: Option<String>) -> anyhow::Result<()> {
 }
 
 /// One-shot check: print pending narrations if any exist, then exit.
-fn run_once(session_id: Option<String>) -> anyhow::Result<()> {
+fn run_once(session_id: Option<SessionId>) -> anyhow::Result<()> {
     let cwd = Utf8PathBuf::try_from(std::env::current_dir()?).map_err(|e| {
         anyhow::anyhow!(
             "non-UTF-8 working directory: {}",
@@ -250,7 +251,7 @@ fn run_once(session_id: Option<String>) -> anyhow::Result<()> {
 }
 
 /// Polling wait: hold a lock, poll for narration, detect session steal.
-fn run_wait(session_id: Option<String>) -> anyhow::Result<()> {
+fn run_wait(session_id: Option<SessionId>) -> anyhow::Result<()> {
     let session_id = match session_id {
         Some(s) => s,
         None => {
