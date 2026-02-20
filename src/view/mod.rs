@@ -6,7 +6,6 @@ use std::io::IsTerminal;
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Serialize;
 
-use crate::json::split_selections;
 use crate::state::FileEntry;
 use crate::state::resolve::relativize;
 use crate::state::{Line, Position, Selection};
@@ -249,7 +248,7 @@ pub fn render_json(
                 Mode::Markers,
             );
             let all_sels: Vec<_> = group.sels.iter().map(|s| **s).collect();
-            let (cursors, selections) = split_selections(&all_sels);
+            let (cursors, selections) = Selection::split(&all_sels);
             groups.push(ViewGroup {
                 cursors,
                 selections,

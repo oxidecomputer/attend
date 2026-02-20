@@ -8,7 +8,6 @@ mod cli;
 mod config;
 mod editor;
 mod hook;
-mod json;
 mod narrate;
 mod state;
 mod util;

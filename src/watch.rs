@@ -223,7 +223,7 @@ fn refresh(
                 let output = match format {
                     Format::Human => format!("{s}"),
                     Format::Json => {
-                        let payload = crate::json::CompactPayload::from_state(s);
+                        let payload = crate::state::CompactPayload::from_state(s);
                         let wrapped = crate::util::Timestamped::now(payload);
                         if is_tty {
                             serde_json::to_string_pretty(&wrapped)

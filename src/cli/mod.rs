@@ -194,7 +194,7 @@ impl Command {
                         match format {
                             Format::Human => println!("{state}"),
                             Format::Json => {
-                                let payload = crate::json::CompactPayload::from_state(&state);
+                                let payload = crate::state::CompactPayload::from_state(&state);
                                 let wrapped = crate::util::Timestamped::now(payload);
                                 println!(
                                     "{}",

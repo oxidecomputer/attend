@@ -142,6 +142,20 @@ impl Selection {
             self.to_string()
         }
     }
+
+    /// Split a slice of selections into cursor positions and range selections.
+    pub fn split(sels: &[Self]) -> (Vec<Position>, Vec<Self>) {
+        let mut cursors = Vec::new();
+        let mut ranges = Vec::new();
+        for sel in sels {
+            if sel.is_cursor_like() {
+                cursors.push(sel.start);
+            } else {
+                ranges.push(*sel);
+            }
+        }
+        (cursors, ranges)
+    }
 }
 
 impl fmt::Display for Position {
