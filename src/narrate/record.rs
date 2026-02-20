@@ -124,22 +124,11 @@ fn spawn_daemon() -> anyhow::Result<()> {
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("narrate").arg("_record-daemon");
 
-    // Detach: redirect all stdio to /dev/null and start a new session
-    // so the daemon survives if the parent's process group is killed
-    // (e.g. when Zed's task runner cleans up after toggle exits).
+    // Detach stdio so the daemon doesn't hold the parent's descriptors.
+    // The daemon calls setsid() at startup to create its own session.
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-
-    use std::os::unix::process::CommandExt;
-    // SAFETY: pre_exec requires unsafe because it runs between fork and exec.
-    // setsid() is async-signal-safe and has no preconditions.
-    unsafe {
-        cmd.pre_exec(|| {
-            nix::unistd::setsid().map_err(|e| std::io::Error::from_raw_os_error(e as i32))?;
-            Ok(())
-        });
-    }
 
     cmd.spawn()?;
 
@@ -185,6 +174,11 @@ pub fn stop() -> anyhow::Result<()> {
 /// segments are transcribed on the fly and their audio is freed. At stop/flush,
 /// only the current in-progress segment needs transcription.
 pub fn daemon() -> anyhow::Result<()> {
+    // Create a new session so the daemon survives if the parent's process
+    // group is killed (e.g. Zed's task runner cleaning up after toggle exits).
+    #[cfg(unix)]
+    let _ = nix::unistd::setsid();
+
     let cwd = camino::Utf8PathBuf::try_from(std::env::current_dir().unwrap_or_default())
         .unwrap_or_else(|_| camino::Utf8PathBuf::from("."));
     let config = Config::load(&cwd);
