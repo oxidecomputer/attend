@@ -14,7 +14,8 @@ use std::time::Duration;
 
 use camino::{Utf8Path, Utf8PathBuf};
 
-use super::merge::{self, Event, SnipConfig};
+use super::merge::Event;
+use super::render::{self, SnipConfig};
 use super::{archive_dir, cache_dir, pending_dir, receive_lock_path, resolve_session};
 use crate::config::Config;
 use crate::state::SessionId;
@@ -70,7 +71,7 @@ pub(crate) fn read_pending(
         return None;
     }
 
-    let markdown = merge::render_markdown(&all_events, SnipConfig::default());
+    let markdown = render::render_markdown(&all_events, SnipConfig::default());
     let trimmed = markdown.trim();
     if trimmed.is_empty() {
         return None;
@@ -225,7 +226,7 @@ fn run_once(session_id: Option<SessionId>) -> anyhow::Result<()> {
                 if let Ok(mut events) = serde_json::from_str::<Vec<Event>>(&content) {
                     filter_events(&mut events, &cwd, &config.include_dirs);
                     relativize_events(&mut events, &cwd);
-                    let markdown = merge::render_markdown(&events, SnipConfig::default());
+                    let markdown = render::render_markdown(&events, SnipConfig::default());
                     let trimmed = markdown.trim();
                     if !trimmed.is_empty() {
                         print!("<narration>\n{trimmed}\n</narration>");

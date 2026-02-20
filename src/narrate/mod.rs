@@ -11,6 +11,7 @@ mod clean;
 pub(crate) mod merge;
 pub(crate) mod receive;
 pub(crate) mod record;
+pub(crate) mod render;
 mod silence;
 mod status;
 pub(crate) mod transcribe;

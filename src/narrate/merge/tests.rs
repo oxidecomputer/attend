@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::narrate::render::{SnipConfig, format_markdown};
+
 #[test]
 fn words_only() {
     let mut events = vec![
@@ -237,39 +239,6 @@ fn content_without_trailing_newline() {
 }
 
 #[test]
-fn clean_whisper_space_before_period() {
-    assert_eq!(clean_whisper_text("test ."), "test.");
-}
-
-#[test]
-fn clean_whisper_contraction() {
-    assert_eq!(clean_whisper_text("I 'm going"), "I'm going");
-}
-
-#[test]
-fn clean_whisper_comma() {
-    assert_eq!(clean_whisper_text("Now , let"), "Now, let");
-}
-
-#[test]
-fn clean_whisper_multiple() {
-    assert_eq!(
-        clean_whisper_text("Hello , I 'm here . Great !"),
-        "Hello, I'm here. Great!"
-    );
-}
-
-#[test]
-fn clean_whisper_no_change() {
-    assert_eq!(clean_whisper_text("no changes here"), "no changes here");
-}
-
-#[test]
-fn clean_whisper_preserves_spaces() {
-    assert_eq!(clean_whisper_text("a b c"), "a b c");
-}
-
-#[test]
 fn whisper_cleanup_intra_segment() {
     // Within a single segment, spaces before punctuation are cleaned
     let mut events = vec![Event::Words {
@@ -327,54 +296,6 @@ fn noise_markers_filtered() {
     ];
     let md = format_markdown(&mut events, SnipConfig::default());
     assert_eq!(md, "hello world\n");
-}
-
-#[test]
-fn noise_marker_parenthesized() {
-    assert!(is_noise_marker("[music]"));
-    assert!(is_noise_marker("(buzzing)"));
-    assert!(is_noise_marker("  [typing sounds]  "));
-    assert!(!is_noise_marker("hello"));
-    assert!(!is_noise_marker("[not closed"));
-}
-
-#[test]
-fn snip_below_threshold_unchanged() {
-    let text = "line1\nline2\nline3\n";
-    let cfg = SnipConfig {
-        threshold: 5,
-        head: 2,
-        tail: 1,
-    };
-    assert_eq!(snip(text, cfg), text);
-}
-
-#[test]
-fn snip_above_threshold_collapses() {
-    // 6 lines, threshold 5 → snip with head=2, tail=1
-    let text = "a\nb\nc\nd\ne\nf\n";
-    let cfg = SnipConfig {
-        threshold: 5,
-        head: 2,
-        tail: 1,
-    };
-    let result = snip(text, cfg);
-    assert_eq!(result, "a\nb\n// ... (3 lines omitted)\nf\n");
-}
-
-#[test]
-fn snip_at_exact_threshold_unchanged() {
-    let text = (1..=5)
-        .map(|i| format!("line{i}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
-    let cfg = SnipConfig {
-        threshold: 5,
-        head: 2,
-        tail: 1,
-    };
-    assert_eq!(snip(&text, cfg), text);
 }
 
 #[test]
