@@ -6,11 +6,12 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+use camino::{Utf8Path, Utf8PathBuf};
 
 use super::merge::{Event, RenderedFile};
 use crate::state::{self, EditorState};
@@ -57,7 +58,7 @@ impl CaptureHandle {
 /// Start background threads for editor polling and file diff tracking.
 ///
 /// Pass `None` for `cwd` to keep paths absolute (filtering deferred to receive).
-pub(crate) fn start(cwd: Option<PathBuf>) -> anyhow::Result<CaptureHandle> {
+pub(crate) fn start(cwd: Option<Utf8PathBuf>) -> anyhow::Result<CaptureHandle> {
     let stop_flag = Arc::new(AtomicBool::new(false));
     let start = Instant::now();
 
@@ -104,8 +105,8 @@ pub(crate) fn start(cwd: Option<PathBuf>) -> anyhow::Result<CaptureHandle> {
     let diff_cwd = cwd;
     let df_events = Arc::clone(&diff_events);
     let diff_thread = thread::spawn(move || {
-        let mut file_contents: HashMap<PathBuf, String> = HashMap::new();
-        let mut file_mtimes: HashMap<PathBuf, std::time::SystemTime> = HashMap::new();
+        let mut file_contents: HashMap<Utf8PathBuf, String> = HashMap::new();
+        let mut file_mtimes: HashMap<Utf8PathBuf, std::time::SystemTime> = HashMap::new();
 
         // Snapshot initial state of recently active files
         if let Ok(Some(state)) = EditorState::current(diff_cwd.as_deref(), &[]) {
@@ -158,7 +159,7 @@ pub(crate) fn start(cwd: Option<PathBuf>) -> anyhow::Result<CaptureHandle> {
                 {
                     let offset_secs = start.elapsed().as_secs_f64();
                     // Keep absolute path — filtering deferred to receive.
-                    let display_path = file.path.to_string_lossy().to_string();
+                    let display_path = file.path.as_str().to_string();
                     df_events.lock().unwrap().push(Event::FileDiff {
                         offset_secs,
                         path: display_path,
@@ -182,7 +183,7 @@ pub(crate) fn start(cwd: Option<PathBuf>) -> anyhow::Result<CaptureHandle> {
 }
 
 /// Render file entries into `RenderedFile` entries with relative paths.
-fn render_snapshot_files(files: &[state::FileEntry], cwd: Option<&Path>) -> Vec<RenderedFile> {
+fn render_snapshot_files(files: &[state::FileEntry], cwd: Option<&Utf8Path>) -> Vec<RenderedFile> {
     let mut rendered = Vec::new();
 
     for file in files {

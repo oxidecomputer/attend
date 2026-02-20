@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+use camino::{Utf8Path, Utf8PathBuf};
 use proptest::prelude::*;
 
 use super::{EditorState, FileEntry, Position, Selection};
@@ -51,7 +52,7 @@ fn arb_selection() -> impl Strategy<Value = Selection> {
 fn arb_file_entry() -> impl Strategy<Value = FileEntry> {
     ("[a-e]\\.rs", prop::collection::vec(arb_selection(), 0..4)).prop_map(|(path, selections)| {
         FileEntry {
-            path: PathBuf::from(path),
+            path: Utf8PathBuf::from(path),
             selections,
         }
     })
@@ -116,8 +117,8 @@ fn arb_raw_pairs(content_len: usize) -> impl Strategy<Value = Vec<(i64, i64)>> {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Collect (path, sorted multiset of (start, end)) for comparison.
-fn file_multiset(files: &[FileEntry]) -> HashMap<PathBuf, Vec<(Position, Position)>> {
-    let mut map: HashMap<PathBuf, Vec<(Position, Position)>> = HashMap::new();
+fn file_multiset(files: &[FileEntry]) -> HashMap<Utf8PathBuf, Vec<(Position, Position)>> {
+    let mut map: HashMap<Utf8PathBuf, Vec<(Position, Position)>> = HashMap::new();
     for f in files {
         let mut sels: Vec<_> = f.selections.iter().map(|s| (s.start, s.end)).collect();
         sels.sort_by(|a, b| a.0.line.cmp(&b.0.line).then(a.0.col.cmp(&b.0.col)));
@@ -150,7 +151,7 @@ proptest! {
         current in arb_editor_state(),
         previous in arb_editor_state(),
     ) {
-        let prev_map: HashMap<&Path, &Vec<Selection>> = previous
+        let prev_map: HashMap<&Utf8Path, &Vec<Selection>> = previous
             .files.iter().map(|f| (f.path.as_path(), &f.selections)).collect();
         let mut state = current;
         state.reorder_relative_to(&previous);
@@ -174,23 +175,23 @@ proptest! {
         current in arb_editor_state(),
         previous in arb_editor_state(),
     ) {
-        let prev_map: HashMap<&Path, (usize, &Vec<Selection>)> = previous
+        let prev_map: HashMap<&Utf8Path, (usize, &Vec<Selection>)> = previous
             .files.iter().enumerate()
             .map(|(i, f)| (f.path.as_path(), (i, &f.selections))).collect();
 
-        let input_order: Vec<PathBuf> = current.files.iter().map(|f| f.path.clone()).collect();
+        let input_order: Vec<Utf8PathBuf> = current.files.iter().map(|f| f.path.clone()).collect();
         let mut state = current;
         state.reorder_relative_to(&previous);
 
         // Touched files: should maintain relative input order
-        let touched: Vec<&Path> = state.files.iter()
+        let touched: Vec<&Utf8Path> = state.files.iter()
             .filter(|f| {
                 prev_map.get(f.path.as_path())
                     .is_none_or(|(_, prev_sels)| *prev_sels != &f.selections)
             })
             .map(|f| f.path.as_path())
             .collect();
-        let touched_input_order: Vec<&Path> = input_order.iter()
+        let touched_input_order: Vec<&Utf8Path> = input_order.iter()
             .filter(|p| touched.contains(&p.as_path()))
             .map(|p| p.as_path())
             .collect();
@@ -234,8 +235,8 @@ proptest! {
             cwd: None,
         };
         alpha.reorder_relative_to(&cached);
-        let expected_paths: Vec<&Path> = cached.files.iter().map(|f| f.path.as_path()).collect();
-        let actual_paths: Vec<&Path> = alpha.files.iter().map(|f| f.path.as_path()).collect();
+        let expected_paths: Vec<&Utf8Path> = cached.files.iter().map(|f| f.path.as_path()).collect();
+        let actual_paths: Vec<&Utf8Path> = alpha.files.iter().map(|f| f.path.as_path()).collect();
         prop_assert_eq!(actual_paths, expected_paths);
     }
 }
@@ -283,7 +284,7 @@ proptest! {
         current in arb_editor_state(),
         previous in arb_editor_state(),
     ) {
-        let before_sels: HashMap<PathBuf, Vec<(Position, Position)>> = current.files.iter()
+        let before_sels: HashMap<Utf8PathBuf, Vec<(Position, Position)>> = current.files.iter()
             .map(|f| (f.path.clone(), f.selections.iter()
                 .map(|s| (s.start, s.end)).collect()))
             .collect();
@@ -308,7 +309,7 @@ proptest! {
         current in arb_editor_state(),
         previous in arb_editor_state(),
     ) {
-        let prev_map: HashMap<&Path, &Vec<Selection>> = previous
+        let prev_map: HashMap<&Utf8Path, &Vec<Selection>> = previous
             .files.iter().map(|f| (f.path.as_path(), &f.selections)).collect();
         let mut state = current;
         state.reorder_relative_to(&previous);
@@ -419,19 +420,24 @@ proptest! {
 // ── Integration test helpers ────────────────────────────────────────────────
 
 /// Create a file with the given content in a directory, returning its path.
-fn write_temp_file(dir: &Path, name: &str, content: &str) -> PathBuf {
+fn write_temp_file(dir: &Path, name: &str, content: &str) -> Utf8PathBuf {
     let path = dir.join(name);
     fs::write(&path, content).unwrap();
-    path
+    Utf8PathBuf::try_from(path).unwrap()
 }
 
 /// Construct a raw editor row (bypassing the database).
-fn make_editor(path: &Path, sel: Option<(i64, i64)>) -> RawEditor {
+fn make_editor(path: &Utf8Path, sel: Option<(i64, i64)>) -> RawEditor {
     RawEditor {
-        path: path.to_path_buf(),
+        path: path.as_std_path().to_path_buf(),
         sel_start: sel.map(|(s, _)| s),
         sel_end: sel.map(|(_, e)| e),
     }
+}
+
+/// Convert a std::path::Path to Utf8Path (panics on non-UTF-8).
+fn to_utf8(p: &Path) -> &Utf8Path {
+    Utf8Path::from_path(p).expect("path should be UTF-8")
 }
 
 /// Simulate one hook invocation: build state, optionally reorder, check for changes.
@@ -439,7 +445,7 @@ fn make_editor(path: &Path, sel: Option<(i64, i64)>) -> RawEditor {
 /// Between invocations, tests should round-trip the state through [`round_trip`]
 /// to match what `hook::run` does with its cache file.
 fn simulate(editors: Vec<RawEditor>, cwd: &Path, previous: &EditorState) -> (EditorState, bool) {
-    let mut state = EditorState::build(editors, Some(cwd), &[]).unwrap();
+    let mut state = EditorState::build(editors, Some(to_utf8(cwd)), &[]).unwrap();
     state.reorder_relative_to(previous);
     let changed = *previous != state;
     (state, changed)

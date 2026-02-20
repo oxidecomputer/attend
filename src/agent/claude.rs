@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
+use camino::Utf8PathBuf;
 
 use super::{Agent, HookEvent};
 
@@ -18,7 +19,7 @@ impl Agent for Claude {
         "claude"
     }
 
-    fn run_hook(&self, event: HookEvent, cwd: Option<PathBuf>) -> anyhow::Result<()> {
+    fn run_hook(&self, event: HookEvent, cwd: Option<Utf8PathBuf>) -> anyhow::Result<()> {
         match event {
             HookEvent::SessionStart => crate::hook::session_start(),
             HookEvent::UserPrompt => crate::hook::run(cwd),
@@ -26,11 +27,11 @@ impl Agent for Claude {
         }
     }
 
-    fn install(&self, bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
+    fn install(&self, bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
         install(bin_cmd, project)
     }
 
-    fn uninstall(&self, project: Option<PathBuf>) -> anyhow::Result<()> {
+    fn uninstall(&self, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
         uninstall(project)
     }
 }
@@ -60,8 +61,8 @@ fn settings_path(project: Option<&Path>) -> anyhow::Result<PathBuf> {
 }
 
 /// Install hooks into Claude Code settings.
-fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
-    let settings_path = settings_path(project.as_deref())?;
+fn install(bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
+    let settings_path = settings_path(project.as_deref().map(|p| p.as_std_path()))?;
 
     // Read existing settings or start fresh
     let mut settings: serde_json::Value = if settings_path.exists() {
@@ -172,7 +173,9 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
         let look_pattern = format!("Bash({bin_cmd} look:*)");
         let listen_pattern = format!("Bash({bin_cmd} listen:*)");
         // Remove stale attend entries, then add current
-        allow_vec.retain(|v| v.as_str().map(|s| !s.contains("attend")).unwrap_or(true));
+        allow_vec.retain(|v: &serde_json::Value| {
+            v.as_str().map(|s| !s.contains("attend")).unwrap_or(true)
+        });
         allow_vec.push(serde_json::Value::String(look_pattern));
         allow_vec.push(serde_json::Value::String(listen_pattern));
     }
@@ -187,7 +190,7 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
     fs::write(&settings_path, output).context("cannot write settings file")?;
 
     // SKILL.md for /attend discoverability
-    install_skill_file(bin_cmd, project.as_deref())?;
+    install_skill_file(bin_cmd, project.as_deref().map(|p| p.as_std_path()))?;
 
     if existing {
         println!("Updated existing hooks in {}", settings_path.display());
@@ -198,8 +201,8 @@ fn install(bin_cmd: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
 }
 
 /// Remove hooks from Claude Code settings.
-fn uninstall(project: Option<PathBuf>) -> anyhow::Result<()> {
-    let settings_path = settings_path(project.as_deref())?;
+fn uninstall(project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
+    let settings_path = settings_path(project.as_deref().map(|p| p.as_std_path()))?;
 
     if !settings_path.exists() {
         println!("No settings file found at {}", settings_path.display());

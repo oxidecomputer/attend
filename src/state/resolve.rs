@@ -1,10 +1,11 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{self, BufRead};
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::str::FromStr;
 use std::{fmt, fs};
+
+use camino::Utf8Path;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -307,13 +308,13 @@ impl Selection {
 }
 
 /// Make `path` relative to `cwd`, or return it unchanged if outside cwd.
-pub(crate) fn relativize<'a>(path: &'a Path, cwd: Option<&Path>) -> Cow<'a, str> {
+pub(crate) fn relativize<'a>(path: &'a Utf8Path, cwd: Option<&Utf8Path>) -> &'a str {
     let Some(cwd) = cwd else {
-        return path.to_string_lossy();
+        return path.as_str();
     };
     match path.strip_prefix(cwd) {
-        Ok(rel) if rel.as_os_str().is_empty() => Cow::Borrowed("."),
-        Ok(rel) => rel.to_string_lossy(),
-        Err(_) => path.to_string_lossy(),
+        Ok(rel) if rel.as_str().is_empty() => ".",
+        Ok(rel) => rel.as_str(),
+        Err(_) => path.as_str(),
     }
 }

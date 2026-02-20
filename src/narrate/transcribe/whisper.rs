@@ -1,7 +1,8 @@
 //! Whisper (GGML) speech-to-text backend.
 
 use std::fs;
-use std::path::Path;
+
+use camino::Utf8Path;
 
 use super::Word;
 
@@ -35,9 +36,9 @@ pub struct WhisperTranscriber {
 
 impl WhisperTranscriber {
     /// Load a Whisper model from disk.
-    pub fn load(model_path: &Path) -> anyhow::Result<Self> {
+    pub fn load(model_path: &Utf8Path) -> anyhow::Result<Self> {
         let ctx = whisper_rs::WhisperContext::new_with_params(
-            model_path.to_str().unwrap_or_default(),
+            model_path.as_str(),
             whisper_rs::WhisperContextParameters::default(),
         )
         .map_err(|e| anyhow::anyhow!("failed to load whisper model: {e}"))?;
@@ -168,21 +169,20 @@ impl super::Transcriber for WhisperTranscriber {
 }
 
 /// Ensure the Whisper model exists at the given path, downloading if needed.
-pub(super) fn ensure_model(model_path: &Path) -> anyhow::Result<()> {
+pub(super) fn ensure_model(model_path: &Utf8Path) -> anyhow::Result<()> {
     if model_path.exists() {
         return Ok(());
     }
     download_model(model_path)
 }
 
-fn download_model(model_path: &Path) -> anyhow::Result<()> {
+fn download_model(model_path: &Utf8Path) -> anyhow::Result<()> {
     let filename = model_path
         .file_name()
-        .and_then(|f| f.to_str())
         .ok_or_else(|| anyhow::anyhow!("invalid model path"))?;
     let url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}");
 
-    tracing::info!(path = %model_path.display(), "Downloading Whisper model...");
+    tracing::info!(path = %model_path, "Downloading Whisper model...");
 
     if let Some(parent) = model_path.parent() {
         fs::create_dir_all(parent)?;

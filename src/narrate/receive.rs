@@ -8,9 +8,11 @@
 //! in `<narration>` tags.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
+
+use camino::{Utf8Path, Utf8PathBuf};
 
 use super::merge::{self, Event, SnipConfig};
 use super::{archive_dir, cache_dir, pending_dir, receive_lock_path, resolve_session};
@@ -45,8 +47,8 @@ pub(crate) fn collect_pending(session_id: &str) -> Vec<PathBuf> {
 /// Returns `None` if no content remains after filtering.
 pub(crate) fn read_pending(
     files: &[PathBuf],
-    cwd: &Path,
-    include_dirs: &[PathBuf],
+    cwd: &Utf8Path,
+    include_dirs: &[Utf8PathBuf],
 ) -> Option<String> {
     if files.is_empty() {
         return None;
@@ -77,14 +79,14 @@ pub(crate) fn read_pending(
 }
 
 /// Filter events to only include files under `cwd` or any `include_dirs`.
-fn filter_events(events: &mut Vec<Event>, cwd: &Path, include_dirs: &[PathBuf]) {
+fn filter_events(events: &mut Vec<Event>, cwd: &Utf8Path, include_dirs: &[Utf8PathBuf]) {
     events.retain_mut(|event| match event {
         Event::Words { .. } => true,
         Event::EditorSnapshot {
             rendered, files, ..
         } => {
             rendered.retain(|r| path_included(&r.path, cwd, include_dirs));
-            files.retain(|f| path_included(&f.path.to_string_lossy(), cwd, include_dirs));
+            files.retain(|f| path_included(f.path.as_str(), cwd, include_dirs));
             !rendered.is_empty()
         }
         Event::FileDiff { path, .. } => path_included(path, cwd, include_dirs),
@@ -92,8 +94,8 @@ fn filter_events(events: &mut Vec<Event>, cwd: &Path, include_dirs: &[PathBuf]) 
 }
 
 /// Check if a path (as string) is under `cwd` or any of the `include_dirs`.
-fn path_included(path: &str, cwd: &Path, include_dirs: &[PathBuf]) -> bool {
-    let p = Path::new(path);
+fn path_included(path: &str, cwd: &Utf8Path, include_dirs: &[Utf8PathBuf]) -> bool {
+    let p = Utf8Path::new(path);
     if p.starts_with(cwd) {
         return true;
     }
@@ -101,7 +103,7 @@ fn path_included(path: &str, cwd: &Path, include_dirs: &[PathBuf]) -> bool {
 }
 
 /// Rewrite absolute paths to be relative to `cwd`.
-fn relativize_events(events: &mut [Event], cwd: &Path) {
+fn relativize_events(events: &mut [Event], cwd: &Utf8Path) {
     for event in events.iter_mut() {
         match event {
             Event::EditorSnapshot { rendered, .. } => {
@@ -118,12 +120,12 @@ fn relativize_events(events: &mut [Event], cwd: &Path) {
 }
 
 /// Strip a cwd prefix from a path string, returning the relative form.
-fn relativize_str(path: &str, cwd: &Path) -> String {
-    let p = Path::new(path);
-    if let Ok(rel) = p.strip_prefix(cwd) {
-        return rel.to_string_lossy().to_string();
+fn relativize_str(path: &str, cwd: &Utf8Path) -> String {
+    let p = Utf8Path::new(path);
+    match p.strip_prefix(cwd) {
+        Ok(rel) => rel.as_str().to_string(),
+        Err(_) => path.to_string(),
     }
-    path.to_string()
 }
 
 /// Archive pending narration files by moving them to the archive directory.
@@ -132,9 +134,9 @@ pub(crate) fn archive_pending(files: &[PathBuf], session_id: &str) {
     let _ = fs::create_dir_all(&archive);
 
     for path in files {
-        if let Some(filename) = path.file_name() {
+        if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
             let dest = archive.join(filename);
-            let _ = fs::rename(path, &dest);
+            let _ = fs::rename(path, dest.as_std_path());
         }
     }
 
@@ -144,7 +146,7 @@ pub(crate) fn archive_pending(files: &[PathBuf], session_id: &str) {
 }
 
 /// Try to acquire an exclusive lock file. Returns the path on success.
-fn try_lock(lock_path: &Path) -> Option<LockGuard> {
+fn try_lock(lock_path: &Utf8Path) -> Option<LockGuard> {
     if let Some(parent) = lock_path.parent() {
         let _ = fs::create_dir_all(parent);
     }
@@ -178,7 +180,7 @@ fn try_lock(lock_path: &Path) -> Option<LockGuard> {
 
 /// RAII guard that removes the lock file on drop.
 struct LockGuard {
-    path: PathBuf,
+    path: Utf8PathBuf,
 }
 
 impl Drop for LockGuard {
@@ -203,7 +205,12 @@ pub fn run(wait: bool, session_flag: Option<String>) -> anyhow::Result<()> {
 
 /// One-shot check: print pending narrations if any exist, then exit.
 fn run_once(session_id: Option<String>) -> anyhow::Result<()> {
-    let cwd = std::env::current_dir()?;
+    let cwd = Utf8PathBuf::try_from(std::env::current_dir()?).map_err(|e| {
+        anyhow::anyhow!(
+            "non-UTF-8 working directory: {}",
+            e.into_path_buf().display()
+        )
+    })?;
     let config = Config::load(&cwd);
 
     let session_id = match session_id {
@@ -251,7 +258,12 @@ fn run_wait(session_id: Option<String>) -> anyhow::Result<()> {
         }
     };
 
-    let cwd = std::env::current_dir()?;
+    let cwd = Utf8PathBuf::try_from(std::env::current_dir()?).map_err(|e| {
+        anyhow::anyhow!(
+            "non-UTF-8 working directory: {}",
+            e.into_path_buf().display()
+        )
+    })?;
     let config = Config::load(&cwd);
 
     // Acquire exclusive lock

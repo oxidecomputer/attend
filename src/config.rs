@@ -5,34 +5,26 @@
 //! - **Hierarchical**: walk from `cwd` upward, collecting `.attend/config.toml`
 //!   at each directory level (closer files take precedence; arrays are concatenated).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
 
 use crate::narrate::transcribe::Engine;
 
 /// Attend configuration.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize)]
 pub struct Config {
     /// Additional directories to include beyond the project root.
     /// Files in these directories will not be filtered out of dictation/editor context.
-    pub include_dirs: Vec<PathBuf>,
+    #[serde(default)]
+    pub include_dirs: Vec<Utf8PathBuf>,
     /// Transcription engine (`parakeet` or `whisper`).
     pub engine: Option<Engine>,
     /// Custom model path for the transcription engine.
-    pub model: Option<PathBuf>,
+    pub model: Option<Utf8PathBuf>,
     /// Seconds of silence before splitting a recording segment (default 5.0; 0 to disable).
     pub silence_duration: Option<f64>,
-}
-
-/// Raw TOML representation (may have missing fields).
-#[derive(Debug, Default, Deserialize)]
-struct RawConfig {
-    #[serde(default)]
-    include_dirs: Vec<PathBuf>,
-    engine: Option<String>,
-    model: Option<PathBuf>,
-    silence_duration: Option<f64>,
 }
 
 impl Config {
@@ -41,28 +33,15 @@ impl Config {
     /// directories appear later, so they effectively take precedence for ordering).
     ///
     /// Missing files are silently ignored.
-    pub fn load(cwd: &Path) -> Self {
-        let mut include_dirs = Vec::new();
-        // Scalar fields: "closest wins" (first value found takes precedence).
-        let mut engine: Option<Engine> = None;
-        let mut model: Option<PathBuf> = None;
-        let mut silence_duration: Option<f64> = None;
+    pub fn load(cwd: &Utf8Path) -> Self {
+        let mut result = Config::default();
 
         // Walk upward from cwd (closest first)
         let mut dir = Some(cwd);
         while let Some(d) = dir {
             let cfg_path = d.join(".attend").join("config.toml");
-            if let Some(raw) = load_file(&cfg_path) {
-                include_dirs.extend(raw.include_dirs);
-                if engine.is_none() {
-                    engine = raw.engine.as_deref().and_then(parse_engine);
-                }
-                if model.is_none() {
-                    model = raw.model;
-                }
-                if silence_duration.is_none() {
-                    silence_duration = raw.silence_duration;
-                }
+            if let Some(layer) = load_file(cfg_path.as_std_path()) {
+                result.merge(layer);
             }
             dir = d.parent();
         }
@@ -70,42 +49,39 @@ impl Config {
         // Global config
         if let Some(global_dir) = dirs::config_dir() {
             let cfg_path = global_dir.join("attend").join("config.toml");
-            if let Some(raw) = load_file(&cfg_path) {
-                include_dirs.extend(raw.include_dirs);
-                if engine.is_none() {
-                    engine = raw.engine.as_deref().and_then(parse_engine);
-                }
-                if model.is_none() {
-                    model = raw.model;
-                }
-                if silence_duration.is_none() {
-                    silence_duration = raw.silence_duration;
-                }
+            if let Some(layer) = load_file(&cfg_path) {
+                result.merge(layer);
             }
         }
 
-        Config {
-            include_dirs,
-            engine,
-            model,
-            silence_duration,
+        result
+    }
+
+    /// Merge another config layer into this one.
+    ///
+    /// Arrays are concatenated. Scalar fields use "first wins" semantics:
+    /// the existing value is kept if already set, otherwise the new value is taken.
+    pub fn merge(&mut self, other: Config) {
+        self.include_dirs.extend(other.include_dirs);
+        if self.engine.is_none() {
+            self.engine = other.engine;
+        }
+        if self.model.is_none() {
+            self.model = other.model;
+        }
+        if self.silence_duration.is_none() {
+            self.silence_duration = other.silence_duration;
         }
     }
 }
 
 /// Try to load and parse a single config file. Returns `None` on any failure.
-fn load_file(path: &Path) -> Option<RawConfig> {
+fn load_file(path: &Path) -> Option<Config> {
     let content = std::fs::read_to_string(path).ok()?;
-    toml::from_str(&content).ok()
-}
-
-/// Parse an engine name string into an `Engine` variant.
-fn parse_engine(s: &str) -> Option<Engine> {
-    match s {
-        "parakeet" => Some(Engine::Parakeet),
-        "whisper" => Some(Engine::Whisper),
-        _ => {
-            tracing::warn!(engine = s, "Unknown engine in config, ignoring");
+    match toml::from_str(&content) {
+        Ok(config) => Some(config),
+        Err(e) => {
+            tracing::warn!(path = %path.display(), "Failed to parse config: {e}");
             None
         }
     }

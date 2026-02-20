@@ -1,9 +1,10 @@
 use std::io::{IsTerminal, Write};
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
+
+use camino::Utf8Path;
 
 use crate::cli::Format;
 use crate::state::EditorState;
@@ -37,7 +38,7 @@ pub enum WatchMode {
 /// Entry point for the watch loop (used by Glance --watch, Look --watch, and Meditate).
 pub fn run(
     mode: WatchMode,
-    dir: Option<&Path>,
+    dir: Option<&Utf8Path>,
     interval: Option<f64>,
     format: &Format,
     full: bool,
@@ -139,7 +140,7 @@ impl Drop for AlternateScreen {
 #[allow(clippy::too_many_arguments)]
 fn run_poll(
     mode: WatchMode,
-    dir: Option<&Path>,
+    dir: Option<&Utf8Path>,
     interval: Option<f64>,
     format: &Format,
     full: bool,
@@ -192,7 +193,7 @@ fn sleep_interruptible(duration: Duration, interrupted: &AtomicBool, resized: &A
 #[allow(clippy::too_many_arguments)]
 fn refresh(
     mode: WatchMode,
-    dir: Option<&Path>,
+    dir: Option<&Utf8Path>,
     format: &Format,
     full: bool,
     before: Option<usize>,

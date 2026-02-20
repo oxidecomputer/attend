@@ -6,9 +6,10 @@
 //! merges all streams, and writes the result as a pending narration file.
 
 use std::fs;
-use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
+
+use camino::Utf8Path;
 
 use super::audio::{self, AudioChunk};
 use super::capture;
@@ -62,7 +63,7 @@ pub fn toggle() -> anyhow::Result<()> {
 }
 
 /// Check whether a lock file is stale (the owning process is no longer alive).
-pub(crate) fn is_lock_stale(lock_path: &Path) -> bool {
+pub(crate) fn is_lock_stale(lock_path: &Utf8Path) -> bool {
     let Ok(content) = fs::read_to_string(lock_path) else {
         return false;
     };
@@ -185,7 +186,8 @@ pub fn stop() -> anyhow::Result<()> {
 /// segments are transcribed on the fly and their audio is freed. At stop/flush,
 /// only the current in-progress segment needs transcription.
 pub fn daemon() -> anyhow::Result<()> {
-    let cwd = std::env::current_dir().unwrap_or_default();
+    let cwd = camino::Utf8PathBuf::try_from(std::env::current_dir().unwrap_or_default())
+        .unwrap_or_else(|_| camino::Utf8PathBuf::from("."));
     let config = Config::load(&cwd);
     let engine = config.engine.unwrap_or(Engine::Parakeet);
     let model_path = config.model.unwrap_or_else(|| engine.default_model_path());
@@ -466,11 +468,11 @@ fn transcribe_and_write(
         fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{ts}.json"));
         fs::write(&path, &json)?;
-        tracing::info!(path = %path.display(), "Narration written");
+        tracing::info!(path = %path, "Narration written");
     } else {
         let path = cache_dir().join("narration.json");
         fs::write(&path, &json)?;
-        tracing::info!(path = %path.display(), "Narration written");
+        tracing::info!(path = %path, "Narration written");
     }
 
     Ok(())

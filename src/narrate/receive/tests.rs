@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use camino::{Utf8Path, Utf8PathBuf};
+
 use super::*;
 use crate::narrate::merge::{Event, RenderedFile};
 
@@ -11,7 +13,7 @@ fn collect_pending_empty_dir() {
 
 #[test]
 fn read_pending_empty() {
-    let cwd = Path::new("/project");
+    let cwd = Utf8Path::new("/project");
     assert!(read_pending(&[], cwd, &[]).is_none());
 }
 
@@ -25,7 +27,7 @@ fn read_pending_single_json() {
     let path = dir.path().join("2026-02-18T10-00-00Z.json");
     fs::write(&path, serde_json::to_string(&events).unwrap()).unwrap();
 
-    let cwd = Path::new("/project");
+    let cwd = Utf8Path::new("/project");
     let result = read_pending(&[path], cwd, &[]).unwrap();
     assert!(result.contains("hello world"));
     assert!(result.starts_with("<narration>"));
@@ -60,7 +62,7 @@ fn read_pending_filters_by_cwd() {
     let path = dir.path().join("test.json");
     fs::write(&path, serde_json::to_string(&events).unwrap()).unwrap();
 
-    let cwd = Path::new("/project");
+    let cwd = Utf8Path::new("/project");
     let result = read_pending(&[path], cwd, &[]).unwrap();
     assert!(
         result.contains("src/main.rs"),
@@ -87,19 +89,19 @@ fn read_pending_includes_extra_dirs() {
     let path = dir.path().join("test.json");
     fs::write(&path, serde_json::to_string(&events).unwrap()).unwrap();
 
-    let cwd = Path::new("/project");
+    let cwd = Utf8Path::new("/project");
     // Without include_dirs, the file is filtered out
-    assert!(read_pending(&[path.clone()], cwd, &[]).is_none());
+    assert!(read_pending(std::slice::from_ref(&path), cwd, &[]).is_none());
 
     // With include_dirs, the file passes
-    let include = vec![PathBuf::from("/shared")];
+    let include = vec![Utf8PathBuf::from("/shared")];
     let result = read_pending(&[path], cwd, &include).unwrap();
     assert!(result.contains("/shared/utils.rs"));
 }
 
 #[test]
 fn filter_events_keeps_words() {
-    let cwd = Path::new("/project");
+    let cwd = Utf8Path::new("/project");
     let mut events = vec![Event::Words {
         offset_secs: 0.0,
         text: "hello".to_string(),
@@ -110,7 +112,7 @@ fn filter_events_keeps_words() {
 
 #[test]
 fn filter_events_drops_outside_diff() {
-    let cwd = Path::new("/project");
+    let cwd = Utf8Path::new("/project");
     let mut events = vec![Event::FileDiff {
         offset_secs: 0.0,
         path: "/other/file.rs".to_string(),
@@ -123,7 +125,7 @@ fn filter_events_drops_outside_diff() {
 
 #[test]
 fn relativize_events_strips_prefix() {
-    let cwd = Path::new("/project");
+    let cwd = Utf8Path::new("/project");
     let mut events = vec![
         Event::EditorSnapshot {
             offset_secs: 0.0,
@@ -166,7 +168,7 @@ fn narration_tags_wrapping() {
     let path = dir.path().join("test.json");
     fs::write(&path, serde_json::to_string(&events).unwrap()).unwrap();
 
-    let cwd = Path::new("/project");
+    let cwd = Utf8Path::new("/project");
     let result = read_pending(&[path], cwd, &[]).unwrap();
     assert!(result.starts_with("<narration>\n"));
     assert!(result.ends_with("\n</narration>"));
@@ -176,7 +178,7 @@ fn narration_tags_wrapping() {
 #[test]
 fn lock_guard_cleanup() {
     let dir = tempfile::tempdir().unwrap();
-    let lock_path = dir.path().join("test.lock");
+    let lock_path = Utf8PathBuf::try_from(dir.path().join("test.lock")).unwrap();
 
     {
         let _guard = try_lock(&lock_path).expect("should acquire lock");
@@ -190,7 +192,7 @@ fn lock_guard_cleanup() {
     assert!(!lock_path.exists());
 }
 
-// -- Integration: collect → read → archive cycle --
+// -- Integration: collect -> read -> archive cycle --
 
 #[test]
 fn collect_read_archive_round_trip() {
@@ -220,7 +222,7 @@ fn collect_read_archive_round_trip() {
     assert_eq!(files.len(), 2);
 
     // Read should merge into a single narration block.
-    let cwd = Path::new("/project");
+    let cwd = Utf8Path::new("/project");
     let content = read_pending(&files, cwd, &[]).unwrap();
     assert!(content.contains("first dictation"));
     assert!(content.contains("second dictation"));

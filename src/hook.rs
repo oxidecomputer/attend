@@ -1,11 +1,12 @@
 use std::fs;
 use std::io::{self, Read};
-use std::path::PathBuf;
+
+use camino::Utf8PathBuf;
 
 use crate::state;
 
 /// Per-session cache: tracks what was last emitted to a given session for deduplication.
-fn session_cache_path(session_id: &str) -> Option<PathBuf> {
+fn session_cache_path(session_id: &str) -> Option<Utf8PathBuf> {
     Some(state::cache_dir()?.join(format!("cache-{session_id}.json")))
 }
 
@@ -65,7 +66,7 @@ pub fn session_start() -> anyhow::Result<()> {
 ///
 /// When the prompt is `/attend`, activates narration mode instead of
 /// emitting editor context.
-pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
+pub fn run(cli_cwd: Option<Utf8PathBuf>) -> anyhow::Result<()> {
     let stdin_json = read_stdin_json();
 
     // Check for /attend activation
@@ -83,11 +84,12 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
         .as_ref()
         .and_then(|v| v.get("cwd"))
         .and_then(|v| v.as_str())
-        .map(PathBuf::from);
+        .map(Utf8PathBuf::from);
 
-    let cwd = cli_cwd
-        .or(stdin_cwd)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let cwd = cli_cwd.or(stdin_cwd).unwrap_or_else(|| {
+        Utf8PathBuf::try_from(std::env::current_dir().unwrap_or_default())
+            .unwrap_or_else(|_| Utf8PathBuf::from("."))
+    });
 
     let config = crate::config::Config::load(&cwd);
 
@@ -213,9 +215,10 @@ pub fn stop() -> anyhow::Result<()> {
             .as_ref()
             .and_then(|v| v.get("cwd"))
             .and_then(|v| v.as_str());
-        let cwd = cwd_str
-            .map(PathBuf::from)
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let cwd = cwd_str.map(Utf8PathBuf::from).unwrap_or_else(|| {
+            Utf8PathBuf::try_from(std::env::current_dir().unwrap_or_default())
+                .unwrap_or_else(|_| Utf8PathBuf::from("."))
+        });
         let config = crate::config::Config::load(&cwd);
         let files = crate::narrate::receive::collect_pending(session_id);
         let content = crate::narrate::receive::read_pending(&files, &cwd, &config.include_dirs);

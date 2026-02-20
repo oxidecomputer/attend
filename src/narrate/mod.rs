@@ -14,8 +14,9 @@ mod silence;
 pub(crate) mod transcribe;
 
 use std::fs;
-use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
+
+use camino::Utf8PathBuf;
 
 /// Check whether a process with the given PID is alive.
 ///
@@ -27,27 +28,27 @@ pub(crate) fn process_alive(pid: i32) -> bool {
 }
 
 /// Base directory for all narration state files.
-fn cache_dir() -> PathBuf {
+fn cache_dir() -> Utf8PathBuf {
     crate::state::cache_dir().expect("cannot determine cache directory")
 }
 
 /// Path to the record lock file.
-pub(crate) fn record_lock_path() -> PathBuf {
+pub(crate) fn record_lock_path() -> Utf8PathBuf {
     cache_dir().join("record.lock")
 }
 
 /// Path to the stop sentinel file.
-pub(crate) fn stop_sentinel_path() -> PathBuf {
+pub(crate) fn stop_sentinel_path() -> Utf8PathBuf {
     cache_dir().join("stop")
 }
 
 /// Path to the flush sentinel file.
-pub(crate) fn flush_sentinel_path() -> PathBuf {
+pub(crate) fn flush_sentinel_path() -> Utf8PathBuf {
     cache_dir().join("flush")
 }
 
 /// Path to the receive lock file.
-pub(crate) fn receive_lock_path() -> PathBuf {
+pub(crate) fn receive_lock_path() -> Utf8PathBuf {
     cache_dir().join("receive.lock")
 }
 
@@ -55,12 +56,12 @@ pub(crate) fn receive_lock_path() -> PathBuf {
 ///
 /// Each narration is stored as `<timestamp>.json` inside
 /// `~/.cache/attend/pending/<session_id>/`.
-pub(crate) fn pending_dir(session_id: &str) -> PathBuf {
+pub(crate) fn pending_dir(session_id: &str) -> Utf8PathBuf {
     cache_dir().join("pending").join(session_id)
 }
 
 /// Directory where archived narration files are stored.
-pub(crate) fn archive_dir(session_id: &str) -> PathBuf {
+pub(crate) fn archive_dir(session_id: &str) -> Utf8PathBuf {
     cache_dir().join("archive").join(session_id)
 }
 
@@ -185,7 +186,7 @@ pub(crate) fn clean(older_than: Duration) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let removed = clean_archive_dir(&archive_root, older_than);
+    let removed = clean_archive_dir(archive_root.as_std_path(), older_than);
 
     let age = humantime::format_duration(older_than);
     println!("Removed {removed} archived narration(s) older than {age}.");

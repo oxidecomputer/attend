@@ -65,7 +65,7 @@ impl CompactPayload {
             .files
             .iter()
             .map(|entry| {
-                let path = relativize(&entry.path, state.cwd.as_deref()).into_owned();
+                let path = relativize(&entry.path, state.cwd.as_deref()).to_string();
                 let (cursors, selections) = split_selections(&entry.selections);
                 CompactFile {
                     path,

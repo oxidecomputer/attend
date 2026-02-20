@@ -6,7 +6,7 @@
 mod parakeet;
 mod whisper;
 
-use std::path::{Path, PathBuf};
+use camino::{Utf8Path, Utf8PathBuf};
 
 /// A single transcribed word with its timing.
 #[derive(Debug, Clone)]
@@ -36,7 +36,10 @@ pub trait Transcriber: Send {
 }
 
 /// CLI-selectable transcription engine.
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, serde::Deserialize, serde::Serialize,
+)]
+#[serde(rename_all = "lowercase")]
 pub enum Engine {
     Whisper,
     Parakeet,
@@ -44,7 +47,7 @@ pub enum Engine {
 
 impl Engine {
     /// Default model path for this engine.
-    pub fn default_model_path(&self) -> PathBuf {
+    pub fn default_model_path(&self) -> Utf8PathBuf {
         let models = super::cache_dir().join("models");
         match self {
             Engine::Whisper => models.join("ggml-small.en.bin"),
@@ -53,7 +56,7 @@ impl Engine {
     }
 
     /// Ensure the model exists (downloading if needed) and load it.
-    pub fn preload(&self, path: &Path) -> anyhow::Result<Box<dyn Transcriber>> {
+    pub fn preload(&self, path: &Utf8Path) -> anyhow::Result<Box<dyn Transcriber>> {
         match self {
             Engine::Whisper => {
                 whisper::ensure_model(path)?;
@@ -75,7 +78,7 @@ impl Engine {
     }
 
     /// Ensure a model variant and load it (for benchmarking).
-    pub fn ensure_and_load(&self, path: &Path) -> anyhow::Result<Box<dyn Transcriber>> {
+    pub fn ensure_and_load(&self, path: &Utf8Path) -> anyhow::Result<Box<dyn Transcriber>> {
         self.preload(path)
     }
 }

@@ -2,7 +2,8 @@ mod annotate;
 mod parse;
 
 use std::io::IsTerminal;
-use std::path::Path;
+
+use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::json::{self, ViewFile, ViewGroup, ViewPayload};
 use crate::state::FileEntry;
@@ -74,14 +75,18 @@ pub enum Extent {
 ///
 /// Overlapping context ranges are merged into a single group with
 /// comma-separated position headers.
-pub fn render(entries: &[FileEntry], cwd: Option<&Path>, extent: Extent) -> anyhow::Result<String> {
+pub fn render(
+    entries: &[FileEntry],
+    cwd: Option<&Utf8Path>,
+    extent: Extent,
+) -> anyhow::Result<String> {
     render_with_mode(entries, cwd, Mode::detect(), extent)
 }
 
 /// Inner render with an explicit mode (used by tests to force Markers/Color).
 fn render_with_mode(
     entries: &[FileEntry],
-    cwd: Option<&Path>,
+    cwd: Option<&Utf8Path>,
     mode: Mode,
     extent: Extent,
 ) -> anyhow::Result<String> {
@@ -98,7 +103,12 @@ fn render_with_mode(
         } else {
             let base = match cwd {
                 Some(c) => c.to_path_buf(),
-                None => std::env::current_dir()?,
+                None => Utf8PathBuf::try_from(std::env::current_dir()?).map_err(|e| {
+                    anyhow::anyhow!(
+                        "non-UTF-8 working directory: {}",
+                        e.into_path_buf().display()
+                    )
+                })?,
             };
             base.join(&entry.path)
         };
@@ -157,7 +167,7 @@ fn render_with_mode(
 /// Build a structured JSON payload for view output.
 pub fn render_json(
     entries: &[FileEntry],
-    cwd: Option<&Path>,
+    cwd: Option<&Utf8Path>,
     extent: Extent,
 ) -> anyhow::Result<ViewPayload> {
     let mut files = Vec::new();
@@ -168,12 +178,17 @@ pub fn render_json(
         } else {
             let base = match cwd {
                 Some(c) => c.to_path_buf(),
-                None => std::env::current_dir()?,
+                None => Utf8PathBuf::try_from(std::env::current_dir()?).map_err(|e| {
+                    anyhow::anyhow!(
+                        "non-UTF-8 working directory: {}",
+                        e.into_path_buf().display()
+                    )
+                })?,
             };
             base.join(&entry.path)
         };
 
-        let display_path = relativize(&abs_path, cwd).into_owned();
+        let display_path = relativize(&abs_path, cwd).to_string();
 
         let content = match std::fs::read_to_string(&abs_path) {
             Ok(c) => c,

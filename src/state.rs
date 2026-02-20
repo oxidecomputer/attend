@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::path::{Path, PathBuf};
 use std::{fs, io};
 
+use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::editor::{self, RawEditor};
@@ -12,7 +12,7 @@ use crate::editor::{self, RawEditor};
 /// Creates `<path>.tmp`, calls the writer closure, then renames to `<path>`.
 /// This prevents readers from seeing partially-written files.
 pub(crate) fn atomic_write(
-    path: &Path,
+    path: &Utf8Path,
     f: impl FnOnce(&mut fs::File) -> io::Result<()>,
 ) -> io::Result<()> {
     let tmp = path.with_extension("tmp");
@@ -27,12 +27,14 @@ pub(crate) fn atomic_write(
 }
 
 /// Return the platform cache directory for attend.
-pub fn cache_dir() -> Option<PathBuf> {
-    Some(dirs::cache_dir()?.join("attend"))
+pub fn cache_dir() -> Option<Utf8PathBuf> {
+    let dir = dirs::cache_dir()?;
+    let dir = Utf8PathBuf::try_from(dir).ok()?;
+    Some(dir.join("attend"))
 }
 
 /// Path to the file that identifies the currently attending session.
-pub fn listening_path() -> Option<PathBuf> {
+pub fn listening_path() -> Option<Utf8PathBuf> {
     Some(cache_dir()?.join("listening"))
 }
 
@@ -45,7 +47,7 @@ pub fn listening_session() -> Option<String> {
 }
 
 /// Path to the installed version/components file.
-pub(crate) fn version_path() -> Option<PathBuf> {
+pub(crate) fn version_path() -> Option<Utf8PathBuf> {
     Some(cache_dir()?.join("version.json"))
 }
 
@@ -79,7 +81,7 @@ pub(crate) fn save_install_meta(meta: &InstallMeta) {
 }
 
 /// Path to the shared ordering cache.
-fn shared_cache_path() -> Option<PathBuf> {
+fn shared_cache_path() -> Option<Utf8PathBuf> {
     Some(cache_dir()?.join("latest.json"))
 }
 
@@ -97,7 +99,7 @@ pub struct EditorState {
     pub files: Vec<FileEntry>,
     /// Working directory, used by Display for relativization.
     #[serde(skip)]
-    pub cwd: Option<PathBuf>,
+    pub cwd: Option<Utf8PathBuf>,
 }
 
 impl PartialEq for EditorState {
@@ -110,14 +112,14 @@ impl PartialEq for EditorState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileEntry {
     /// Absolute file path.
-    pub path: PathBuf,
+    pub path: Utf8PathBuf,
     /// Cursor positions and selections in this file.
     pub selections: Vec<Selection>,
 }
 
 impl fmt::Display for FileEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let path = self.path.display().to_string();
+        let path = self.path.as_str();
         if path.contains(' ') {
             write!(f, "\"{path}\"")?;
         } else {
@@ -165,7 +167,10 @@ impl fmt::Display for EditorState {
 impl EditorState {
     /// Load current editor state from all active editors, reordering
     /// by recency relative to the shared cache, and update the cache.
-    pub fn current(cwd: Option<&Path>, include_dirs: &[PathBuf]) -> anyhow::Result<Option<Self>> {
+    pub fn current(
+        cwd: Option<&Utf8Path>,
+        include_dirs: &[Utf8PathBuf],
+    ) -> anyhow::Result<Option<Self>> {
         let result = match editor::query()? {
             Some(r) => r,
             None => return Ok(None),
@@ -195,13 +200,13 @@ impl EditorState {
         if let Some(parent) = cp.parent()
             && let Err(e) = fs::create_dir_all(parent)
         {
-            tracing::warn!(path = %parent.display(), "Failed to create cache directory: {e}");
+            tracing::warn!(path = %parent, "Failed to create cache directory: {e}");
             return;
         }
         if let Err(e) = atomic_write(&cp, |file| {
             serde_json::to_writer(io::BufWriter::new(file), self).map_err(io::Error::other)
         }) {
-            tracing::warn!(path = %cp.display(), "Failed to write cache: {e}");
+            tracing::warn!(path = %cp, "Failed to write cache: {e}");
         }
     }
 
@@ -211,21 +216,31 @@ impl EditorState {
     /// Pass `None` for `cwd` to include all files (no filtering).
     pub fn build(
         raw_editors: Vec<RawEditor>,
-        cwd: Option<&Path>,
-        include_dirs: &[PathBuf],
+        cwd: Option<&Utf8Path>,
+        include_dirs: &[Utf8PathBuf],
     ) -> anyhow::Result<Self> {
+        // Convert RawEditor paths to UTF-8, skipping non-UTF-8 entries.
+        let utf8_editors: Vec<(Utf8PathBuf, Option<i64>, Option<i64>)> = raw_editors
+            .into_iter()
+            .filter_map(|ed| {
+                Utf8PathBuf::try_from(ed.path)
+                    .ok()
+                    .map(|p| (p, ed.sel_start, ed.sel_end))
+            })
+            .collect();
+
         // Group by path, merging selections across panes/workspaces
-        let mut files_map: BTreeMap<&Path, Vec<(i64, i64)>> = BTreeMap::new();
-        for ed in &raw_editors {
+        let mut files_map: BTreeMap<&Utf8Path, Vec<(i64, i64)>> = BTreeMap::new();
+        for (path, sel_start, sel_end) in &utf8_editors {
             if let Some(cwd) = cwd
-                && !ed.path.starts_with(cwd)
-                && !include_dirs.iter().any(|d| ed.path.starts_with(d))
+                && !path.starts_with(cwd)
+                && !include_dirs.iter().any(|d| path.starts_with(d))
             {
                 continue;
             }
-            let entry = files_map.entry(&ed.path).or_default();
-            if let (Some(start), Some(end)) = (ed.sel_start, ed.sel_end) {
-                entry.push((start, end));
+            let entry = files_map.entry(path.as_path()).or_default();
+            if let (Some(start), Some(end)) = (sel_start, sel_end) {
+                entry.push((*start, *end));
             }
         }
 
@@ -234,7 +249,7 @@ impl EditorState {
             let selections = if raw_sels.is_empty() {
                 Vec::new()
             } else {
-                Selection::resolve(path, raw_sels)?
+                Selection::resolve(path.as_std_path(), raw_sels)?
             };
             files.push(FileEntry {
                 path: path.to_path_buf(),
@@ -244,7 +259,7 @@ impl EditorState {
 
         Ok(EditorState {
             files,
-            cwd: cwd.map(Path::to_path_buf),
+            cwd: cwd.map(Utf8Path::to_path_buf),
         })
     }
 
@@ -257,7 +272,7 @@ impl EditorState {
     ///   selections keep their cached order.
     pub fn reorder_relative_to(&mut self, previous: &EditorState) {
         // Map previous path → (index, &selections)
-        let prev_map: HashMap<&Path, (usize, &Vec<Selection>)> = previous
+        let prev_map: HashMap<&Utf8Path, (usize, &Vec<Selection>)> = previous
             .files
             .iter()
             .enumerate()

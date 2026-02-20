@@ -6,7 +6,8 @@
 //! in its timestamps, unlike the CTC decoder.
 
 use std::fs;
-use std::path::Path;
+
+use camino::Utf8Path;
 
 use parakeet_rs::TimestampMode;
 use parakeet_rs::Transcriber as _;
@@ -42,9 +43,8 @@ pub struct ParakeetTranscriber {
 
 impl ParakeetTranscriber {
     /// Load a Parakeet TDT model from a directory.
-    pub fn load(dir: &Path) -> anyhow::Result<Self> {
-        let model =
-            parakeet_rs::ParakeetTDT::from_pretrained(dir.to_str().unwrap_or_default(), None)?;
+    pub fn load(dir: &Utf8Path) -> anyhow::Result<Self> {
+        let model = parakeet_rs::ParakeetTDT::from_pretrained(dir.as_str(), None)?;
         Ok(Self { model })
     }
 }
@@ -106,7 +106,7 @@ impl super::Transcriber for ParakeetTranscriber {
 }
 
 /// Ensure the Parakeet TDT model directory exists with all required files.
-pub(super) fn ensure_model(dir: &Path) -> anyhow::Result<()> {
+pub(super) fn ensure_model(dir: &Utf8Path) -> anyhow::Result<()> {
     let all_present = MODEL_FILES.iter().all(|f| dir.join(f).exists());
     if all_present {
         return Ok(());
@@ -114,7 +114,7 @@ pub(super) fn ensure_model(dir: &Path) -> anyhow::Result<()> {
     download_model(dir)
 }
 
-fn download_model(dir: &Path) -> anyhow::Result<()> {
+fn download_model(dir: &Utf8Path) -> anyhow::Result<()> {
     fs::create_dir_all(dir)?;
 
     for filename in MODEL_FILES {
@@ -124,7 +124,7 @@ fn download_model(dir: &Path) -> anyhow::Result<()> {
         }
 
         let url = format!("https://huggingface.co/{REPO}/resolve/main/{filename}");
-        tracing::info!(filename, dir = %dir.display(), "Downloading Parakeet model file...");
+        tracing::info!(filename, dir = %dir, "Downloading Parakeet model file...");
 
         let response = ureq::get(&url).call()?;
         let mut reader = response.into_body().into_reader();

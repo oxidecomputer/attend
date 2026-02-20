@@ -4,8 +4,7 @@ mod narrate;
 pub use hook::HookEvent;
 pub use narrate::NarrateCommand;
 
-use std::path::PathBuf;
-
+use camino::Utf8PathBuf;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 
 /// Top-level CLI definition.
@@ -40,7 +39,7 @@ pub enum Command {
     Glance {
         /// Resolve paths relative to this directory and show relative paths.
         #[arg(long, short)]
-        dir: Option<PathBuf>,
+        dir: Option<Utf8PathBuf>,
 
         /// Output format.
         #[arg(long, short, default_value = "human")]
@@ -59,7 +58,7 @@ pub enum Command {
     Look {
         /// Resolve paths relative to this directory and show relative paths.
         #[arg(long, short)]
-        dir: Option<PathBuf>,
+        dir: Option<Utf8PathBuf>,
 
         /// Output format.
         #[arg(long, short, default_value = "human")]
@@ -110,7 +109,7 @@ pub enum Command {
 
         /// Install to a project-local settings file instead of global.
         #[arg(long, short)]
-        project: Option<PathBuf>,
+        project: Option<Utf8PathBuf>,
 
         /// Use absolute path to current binary instead of $PATH lookup.
         #[arg(long)]
@@ -130,7 +129,7 @@ pub enum Command {
 
         /// Remove from a project-local settings file instead of global.
         #[arg(long, short)]
-        project: Option<PathBuf>,
+        project: Option<Utf8PathBuf>,
     },
     /// Generate shell completions and print to stdout.
     #[command(display_order = 8)]

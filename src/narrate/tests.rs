@@ -1,5 +1,7 @@
 use std::io::Write;
 
+use camino::Utf8PathBuf;
+
 use super::*;
 
 // -- process_alive tests --
@@ -24,7 +26,7 @@ fn process_alive_dead_pid() {
 #[test]
 fn is_lock_stale_with_live_pid() {
     let dir = tempfile::tempdir().unwrap();
-    let lock = dir.path().join("test.lock");
+    let lock = Utf8PathBuf::try_from(dir.path().join("test.lock")).unwrap();
     let pid = std::process::id();
     std::fs::write(&lock, pid.to_string()).unwrap();
     assert!(!record::is_lock_stale(&lock));
@@ -33,7 +35,7 @@ fn is_lock_stale_with_live_pid() {
 #[test]
 fn is_lock_stale_with_dead_pid() {
     let dir = tempfile::tempdir().unwrap();
-    let lock = dir.path().join("test.lock");
+    let lock = Utf8PathBuf::try_from(dir.path().join("test.lock")).unwrap();
     std::fs::write(&lock, i32::MAX.to_string()).unwrap();
     assert!(record::is_lock_stale(&lock));
 }
@@ -41,14 +43,14 @@ fn is_lock_stale_with_dead_pid() {
 #[test]
 fn is_lock_stale_no_file() {
     let dir = tempfile::tempdir().unwrap();
-    let lock = dir.path().join("nonexistent.lock");
+    let lock = Utf8PathBuf::try_from(dir.path().join("nonexistent.lock")).unwrap();
     assert!(!record::is_lock_stale(&lock));
 }
 
 #[test]
 fn is_lock_stale_invalid_content() {
     let dir = tempfile::tempdir().unwrap();
-    let lock = dir.path().join("test.lock");
+    let lock = Utf8PathBuf::try_from(dir.path().join("test.lock")).unwrap();
     std::fs::write(&lock, "not-a-number").unwrap();
     assert!(!record::is_lock_stale(&lock));
 }

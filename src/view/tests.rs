@@ -12,25 +12,30 @@ fn main() {
 }
 ";
 
-/// Create a temp directory and write a file into it, returning (dir, path).
-fn setup(name: &str, content: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+/// Create a temp directory and write a file into it, returning (dir, Utf8PathBuf).
+fn setup(name: &str, content: &str) -> (tempfile::TempDir, Utf8PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(name);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).unwrap();
     }
     std::fs::write(&path, content).unwrap();
-    (dir, path)
+    (dir, Utf8PathBuf::try_from(path).unwrap())
+}
+
+/// Convert a tempdir path to Utf8Path.
+fn utf8_dir(dir: &tempfile::TempDir) -> &Utf8Path {
+    Utf8Path::from_path(dir.path()).expect("tempdir should be UTF-8")
 }
 
 /// Render in Markers mode (deterministic, no ANSI escapes).
-fn render_markers(entries: &[FileEntry], cwd: Option<&Path>) -> anyhow::Result<String> {
+fn render_markers(entries: &[FileEntry], cwd: Option<&Utf8Path>) -> anyhow::Result<String> {
     render_with_mode(entries, cwd, Mode::Markers, Extent::Exact)
 }
 
 fn render_ctx(
     entries: &[FileEntry],
-    cwd: Option<&Path>,
+    cwd: Option<&Utf8Path>,
     context: Extent,
 ) -> anyhow::Result<String> {
     render_with_mode(entries, cwd, Mode::Markers, context)
@@ -46,7 +51,7 @@ fn cursor_on_line() {
             end: Position::of(3, 9).unwrap(),
         }],
     }];
-    let result = render_markers(&entries, Some(dir.path())).unwrap();
+    let result = render_markers(&entries, Some(utf8_dir(&dir))).unwrap();
     insta::assert_snapshot!(result, @"
     main.rs
       3:9
@@ -64,7 +69,7 @@ fn multi_line_selection() {
             end: Position::of(4, 15).unwrap(),
         }],
     }];
-    let result = render_markers(&entries, Some(dir.path())).unwrap();
+    let result = render_markers(&entries, Some(utf8_dir(&dir))).unwrap();
     insta::assert_snapshot!(result, @"
     main.rs
       2:5-4:15
@@ -84,7 +89,7 @@ fn single_line_partial_selection() {
             end: Position::of(3, 15).unwrap(),
         }],
     }];
-    let result = render_markers(&entries, Some(dir.path())).unwrap();
+    let result = render_markers(&entries, Some(utf8_dir(&dir))).unwrap();
     insta::assert_snapshot!(result, @"
     main.rs
       3:9-3:15
@@ -108,7 +113,7 @@ fn multiple_selections_one_file() {
             },
         ],
     }];
-    let result = render_markers(&entries, Some(dir.path())).unwrap();
+    let result = render_markers(&entries, Some(utf8_dir(&dir))).unwrap();
     insta::assert_snapshot!(result, @"
     main.rs
       1:1
@@ -121,8 +126,8 @@ fn multiple_selections_one_file() {
 #[test]
 fn multiple_files() {
     let dir = tempfile::tempdir().unwrap();
-    let p1 = dir.path().join("one.rs");
-    let p2 = dir.path().join("two.rs");
+    let p1 = Utf8PathBuf::try_from(dir.path().join("one.rs")).unwrap();
+    let p2 = Utf8PathBuf::try_from(dir.path().join("two.rs")).unwrap();
     std::fs::write(&p1, "line one\nline two\n").unwrap();
     std::fs::write(&p2, "alpha\nbeta\ngamma\n").unwrap();
     let entries = vec![
@@ -141,7 +146,7 @@ fn multiple_files() {
             }],
         },
     ];
-    let result = render_markers(&entries, Some(dir.path())).unwrap();
+    let result = render_markers(&entries, Some(utf8_dir(&dir))).unwrap();
     insta::assert_snapshot!(result, @r"
         one.rs
           1:5
@@ -164,7 +169,7 @@ fn selection_at_line_start() {
             end: Position::of(2, 5).unwrap(),
         }],
     }];
-    let result = render_markers(&entries, Some(dir.path())).unwrap();
+    let result = render_markers(&entries, Some(utf8_dir(&dir))).unwrap();
     insta::assert_snapshot!(result, @r"
         main.rs
           1:1-2:5
@@ -183,7 +188,7 @@ fn selection_at_line_end() {
             end: Position::of(1, 12).unwrap(),
         }],
     }];
-    let result = render_markers(&entries, Some(dir.path())).unwrap();
+    let result = render_markers(&entries, Some(utf8_dir(&dir))).unwrap();
     insta::assert_snapshot!(result, @r"
         main.rs
           1:12
@@ -201,7 +206,8 @@ fn color_mode_cursor() {
             end: Position::of(1, 3).unwrap(),
         }],
     }];
-    let result = render_with_mode(&entries, Some(dir.path()), Mode::Color, Extent::Exact).unwrap();
+    let result =
+        render_with_mode(&entries, Some(utf8_dir(&dir)), Mode::Color, Extent::Exact).unwrap();
     // Bold path, dim position, inverse cursor char
     assert!(result.contains(ansi::BOLD));
     assert!(result.contains(ansi::DIM));
@@ -220,7 +226,8 @@ fn color_mode_selection() {
             end: Position::of(1, 8).unwrap(),
         }],
     }];
-    let result = render_with_mode(&entries, Some(dir.path()), Mode::Color, Extent::Exact).unwrap();
+    let result =
+        render_with_mode(&entries, Some(utf8_dir(&dir)), Mode::Color, Extent::Exact).unwrap();
     // Inverse around the selected text
     assert!(result.contains(&format!("{}llo w{}", ansi::INVERSE, ansi::RESET)));
 }
@@ -262,9 +269,9 @@ fn parse_display_roundtrip() {
 fn parse_compact_basic() {
     let entries = parse_compact("src/foo.rs 5:12 19:40-24:6 src/bar.rs 10:1").unwrap();
     assert_eq!(entries.len(), 2);
-    assert_eq!(entries[0].path.to_str().unwrap(), "src/foo.rs");
+    assert_eq!(entries[0].path.as_str(), "src/foo.rs");
     assert_eq!(entries[0].selections.len(), 2);
-    assert_eq!(entries[1].path.to_str().unwrap(), "src/bar.rs");
+    assert_eq!(entries[1].path.as_str(), "src/bar.rs");
     assert_eq!(entries[1].selections.len(), 1);
 }
 
@@ -280,7 +287,7 @@ fn parse_compact_with_commas() {
 fn parse_compact_quoted_path() {
     let entries = parse_compact(r#""path with spaces/foo.rs" 5:12"#).unwrap();
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].path.to_str().unwrap(), "path with spaces/foo.rs");
+    assert_eq!(entries[0].path.as_str(), "path with spaces/foo.rs");
     assert_eq!(entries[0].selections.len(), 1);
 }
 
@@ -288,7 +295,7 @@ fn parse_compact_quoted_path() {
 fn parse_compact_concatenation_heuristic() {
     let entries = parse_compact("path with spaces/foo.rs 5:12").unwrap();
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].path.to_str().unwrap(), "path with spaces/foo.rs");
+    assert_eq!(entries[0].path.as_str(), "path with spaces/foo.rs");
     assert_eq!(entries[0].selections.len(), 1);
 }
 
@@ -302,7 +309,7 @@ fn render_with_cwd() {
             end: Position::of(1, 3).unwrap(),
         }],
     }];
-    let result = render_markers(&entries, Some(dir.path())).unwrap();
+    let result = render_markers(&entries, Some(utf8_dir(&dir))).unwrap();
     insta::assert_snapshot!(result, @r"
         test.rs
           1:3
@@ -324,7 +331,7 @@ fn context_before_after() {
         before: 1,
         after: 1,
     };
-    let result = render_ctx(&entries, Some(dir.path()), ctx).unwrap();
+    let result = render_ctx(&entries, Some(utf8_dir(&dir)), ctx).unwrap();
     insta::assert_snapshot!(result, @"
     main.rs
       3:9
@@ -348,7 +355,7 @@ fn context_clamps_to_file_bounds() {
         before: 5,
         after: 1,
     };
-    let result = render_ctx(&entries, Some(dir.path()), ctx).unwrap();
+    let result = render_ctx(&entries, Some(utf8_dir(&dir)), ctx).unwrap();
     insta::assert_snapshot!(result, @r"
         main.rs
           1:1
@@ -371,7 +378,7 @@ fn context_around_selection() {
         before: 1,
         after: 1,
     };
-    let result = render_ctx(&entries, Some(dir.path()), ctx).unwrap();
+    let result = render_ctx(&entries, Some(utf8_dir(&dir)), ctx).unwrap();
     insta::assert_snapshot!(result, @"
     main.rs
       3:5-4:9
@@ -403,7 +410,7 @@ fn merged_overlapping_contexts() {
         before: 1,
         after: 1,
     };
-    let result = render_ctx(&entries, Some(dir.path()), ctx).unwrap();
+    let result = render_ctx(&entries, Some(utf8_dir(&dir)), ctx).unwrap();
     insta::assert_snapshot!(result, @r"
         main.rs
           2:5, 4:9
@@ -432,7 +439,7 @@ fn separate_non_overlapping_contexts() {
             },
         ],
     }];
-    let result = render_markers(&entries, Some(dir.path())).unwrap();
+    let result = render_markers(&entries, Some(utf8_dir(&dir))).unwrap();
     insta::assert_snapshot!(result, @r"
         main.rs
           1:1
@@ -453,7 +460,7 @@ fn cursor_like_display() {
             end: Position::of(3, 10).unwrap(),
         }],
     }];
-    let result = render_markers(&entries, Some(dir.path())).unwrap();
+    let result = render_markers(&entries, Some(utf8_dir(&dir))).unwrap();
     // Header shows "3:9" not "3:9-3:10"
     insta::assert_snapshot!(result, @"
     main.rs
@@ -472,7 +479,7 @@ fn full_file_cursor() {
             end: Position::of(2, 2).unwrap(),
         }],
     }];
-    let result = render_ctx(&entries, Some(dir.path()), Extent::Full).unwrap();
+    let result = render_ctx(&entries, Some(utf8_dir(&dir)), Extent::Full).unwrap();
     insta::assert_snapshot!(result, @r"
         small.rs
             aaa
@@ -491,7 +498,7 @@ fn full_file_selection() {
             end: Position::of(3, 3).unwrap(),
         }],
     }];
-    let result = render_ctx(&entries, Some(dir.path()), Extent::Full).unwrap();
+    let result = render_ctx(&entries, Some(utf8_dir(&dir)), Extent::Full).unwrap();
     insta::assert_snapshot!(result, @r"
         small.rs
             aaa
@@ -538,8 +545,8 @@ fn setup_entry(
     dir: &tempfile::TempDir,
     content: &str,
     sels: Vec<Selection>,
-) -> (std::path::PathBuf, Vec<FileEntry>) {
-    let path = dir.path().join("test.txt");
+) -> (Utf8PathBuf, Vec<FileEntry>) {
+    let path = Utf8PathBuf::try_from(dir.path().join("test.txt")).unwrap();
     std::fs::write(&path, content).unwrap();
     let entries = vec![FileEntry {
         path: path.clone(),
@@ -646,7 +653,7 @@ proptest! {
             .iter()
             .map(|e| {
                 let sels: Vec<String> = e.selections.iter().map(|s| s.to_string()).collect();
-                format!("{} {}", e.path.display(), sels.join(" "))
+                format!("{} {}", e.path, sels.join(" "))
             })
             .collect::<Vec<_>>()
             .join(" ");
@@ -874,7 +881,7 @@ proptest! {
     ) {
         let dir = tempfile::tempdir().unwrap();
         let (_path, entries) = setup_entry(&dir, &content, sels);
-        let _ = render_with_mode(&entries, Some(dir.path()), mode, extent);
+        let _ = render_with_mode(&entries, Some(utf8_dir(&dir)), mode, extent);
     }
 
     #[test]
@@ -884,7 +891,7 @@ proptest! {
     ) {
         let dir = tempfile::tempdir().unwrap();
         let (_path, entries) = setup_entry(&dir, &content, sels);
-        let result = render_with_mode(&entries, Some(dir.path()), Mode::Markers, extent).unwrap();
+        let result = render_with_mode(&entries, Some(utf8_dir(&dir)), Mode::Markers, extent).unwrap();
         prop_assert!(
             !result.contains('\x1b'),
             "Markers output must not contain ANSI escapes"
@@ -898,7 +905,7 @@ proptest! {
     ) {
         let dir = tempfile::tempdir().unwrap();
         let (_path, entries) = setup_entry(&dir, &content, sels);
-        let result = render_with_mode(&entries, Some(dir.path()), Mode::Color, extent).unwrap();
+        let result = render_with_mode(&entries, Some(utf8_dir(&dir)), Mode::Color, extent).unwrap();
         prop_assert!(!result.contains(CURSOR), "Color output must not contain ❘");
         prop_assert!(!result.contains(SEL_OPEN), "Color output must not contain ⟦");
         prop_assert!(!result.contains(SEL_CLOSE), "Color output must not contain ⟧");
@@ -912,7 +919,7 @@ proptest! {
     ) {
         let dir = tempfile::tempdir().unwrap();
         let (_path, entries) = setup_entry(&dir, &content, sels);
-        let result = render_with_mode(&entries, Some(dir.path()), mode, extent).unwrap();
+        let result = render_with_mode(&entries, Some(utf8_dir(&dir)), mode, extent).unwrap();
         if !result.is_empty() {
             prop_assert!(result.ends_with('\n'), "non-empty output must end with newline");
         }
@@ -925,7 +932,7 @@ proptest! {
     ) {
         let dir = tempfile::tempdir().unwrap();
         let (_path, entries) = setup_entry(&dir, &content, sels);
-        let result = render_with_mode(&entries, Some(dir.path()), Mode::Markers, extent).unwrap();
+        let result = render_with_mode(&entries, Some(utf8_dir(&dir)), Mode::Markers, extent).unwrap();
         for line in result.lines() {
             let is_empty = line.is_empty();
             let is_path = !line.starts_with(' '); // unindented
@@ -946,8 +953,8 @@ proptest! {
     ) {
         let dir = tempfile::tempdir().unwrap();
         let (_path, entries) = setup_entry(&dir, &content, sels);
-        let markers = render_with_mode(&entries, Some(dir.path()), Mode::Markers, extent).unwrap();
-        let color = render_with_mode(&entries, Some(dir.path()), Mode::Color, extent).unwrap();
+        let markers = render_with_mode(&entries, Some(utf8_dir(&dir)), Mode::Markers, extent).unwrap();
+        let color = render_with_mode(&entries, Some(utf8_dir(&dir)), Mode::Color, extent).unwrap();
         let m_lines = markers.lines().count();
         let c_lines = color.lines().count();
         prop_assert_eq!(
@@ -970,7 +977,7 @@ proptest! {
     ) {
         let dir = tempfile::tempdir().unwrap();
         let (_path, entries) = setup_entry(&dir, &content, sels);
-        let result = render_with_mode(&entries, Some(dir.path()), Mode::Markers, Extent::Full).unwrap();
+        let result = render_with_mode(&entries, Some(utf8_dir(&dir)), Mode::Markers, Extent::Full).unwrap();
         let file_lines: Vec<&str> = content.lines().collect();
         // Same dedent the renderer applies.
         let trim = file_lines.iter()
@@ -1018,7 +1025,7 @@ proptest! {
     ) {
         let dir = tempfile::tempdir().unwrap();
         let (_path, entries) = setup_entry(&dir, &content, sels);
-        let result = render_with_mode(&entries, Some(dir.path()), Mode::Markers, extent).unwrap();
+        let result = render_with_mode(&entries, Some(utf8_dir(&dir)), Mode::Markers, extent).unwrap();
         let mut depth: i64 = 0;
         for c in result.chars() {
             if c == SEL_OPEN {
@@ -1055,7 +1062,7 @@ proptest! {
         };
         let dir = tempfile::tempdir().unwrap();
         let (_path, entries) = setup_entry(&dir, &content, vec![sel]);
-        let result = render_with_mode(&entries, Some(dir.path()), Mode::Markers, Extent::Exact).unwrap();
+        let result = render_with_mode(&entries, Some(utf8_dir(&dir)), Mode::Markers, Extent::Exact).unwrap();
 
         // The renderer dedents by the common leading whitespace of the snippet.
         // For Exact with a single line, that's this line's leading whitespace.
@@ -1113,7 +1120,7 @@ proptest! {
         };
         let dir = tempfile::tempdir().unwrap();
         let (_path, entries) = setup_entry(&dir, &content, vec![sel]);
-        let result = render_with_mode(&entries, Some(dir.path()), Mode::Markers, Extent::Exact).unwrap();
+        let result = render_with_mode(&entries, Some(utf8_dir(&dir)), Mode::Markers, Extent::Exact).unwrap();
 
         // Account for dedent.
         let trim = line.len() - line.trim_start().len();
@@ -1142,7 +1149,7 @@ proptest! {
     ) {
         let dir = tempfile::tempdir().unwrap();
         let (_path, entries) = setup_entry(&dir, &content, sels);
-        let result = render_with_mode(&entries, Some(dir.path()), Mode::Color, extent).unwrap();
+        let result = render_with_mode(&entries, Some(utf8_dir(&dir)), Mode::Color, extent).unwrap();
         for line in result.lines() {
             // Count INVERSE/RESET pairs to check depth ends at 0
             let mut depth: i64 = 0;
@@ -1230,7 +1237,7 @@ proptest! {
         let file_lines: Vec<&str> = content.lines().collect();
         let dir = tempfile::tempdir().unwrap();
         let (_path, entries) = setup_entry(&dir, &content, sels.clone());
-        let result = render_with_mode(&entries, Some(dir.path()), Mode::Markers, Extent::Full).unwrap();
+        let result = render_with_mode(&entries, Some(utf8_dir(&dir)), Mode::Markers, Extent::Full).unwrap();
 
         let expected_cursors = sels
             .iter()
@@ -1251,7 +1258,7 @@ proptest! {
         let file_lines: Vec<&str> = content.lines().collect();
         let dir = tempfile::tempdir().unwrap();
         let (_path, entries) = setup_entry(&dir, &content, sels.clone());
-        let result = render_with_mode(&entries, Some(dir.path()), Mode::Markers, Extent::Full).unwrap();
+        let result = render_with_mode(&entries, Some(utf8_dir(&dir)), Mode::Markers, Extent::Full).unwrap();
 
         let expected_brackets = sels
             .iter()
@@ -1279,7 +1286,7 @@ proptest! {
     ) {
         let dir = tempfile::tempdir().unwrap();
         let (_path, entries) = setup_entry(&dir, &content, sels);
-        let result = render_with_mode(&entries, Some(dir.path()), Mode::Markers, Extent::Full).unwrap();
+        let result = render_with_mode(&entries, Some(utf8_dir(&dir)), Mode::Markers, Extent::Full).unwrap();
         for line in result.lines() {
             let is_header = line.starts_with("  ") && !line.starts_with("    ");
             prop_assert!(
@@ -1297,7 +1304,7 @@ proptest! {
         let file_line_count = content.lines().count();
         let dir = tempfile::tempdir().unwrap();
         let (_path, entries) = setup_entry(&dir, &content, sels);
-        let result = render_with_mode(&entries, Some(dir.path()), Mode::Markers, Extent::Full).unwrap();
+        let result = render_with_mode(&entries, Some(utf8_dir(&dir)), Mode::Markers, Extent::Full).unwrap();
         let content_lines = result.lines().filter(|l| l.starts_with("    ")).count();
         prop_assert_eq!(
             content_lines,
