@@ -163,6 +163,67 @@ fn auto_prune(config: &Config) {
     }
 }
 
+/// How long to wait for an existing same-session listener to exit (ms).
+const LOCK_RETRY_TIMEOUT_MS: u64 = 2000;
+/// How often to retry lock acquisition while waiting (ms).
+const LOCK_RETRY_POLL_MS: u64 = 100;
+
+/// Acquire the receive lock, waiting briefly if the current holder is
+/// expected to exit soon (e.g., after a `/clear` + `/attend` re-activation).
+///
+/// Returns `None` (with guidance printed) if the lock cannot be acquired.
+fn acquire_lock_with_retry(
+    lock_path: &Utf8Path,
+    session_id: &SessionId,
+) -> Option<lockfile::Lockfile> {
+    // Fast path: try once.
+    if let Some(guard) = try_lock(lock_path) {
+        return Some(guard);
+    }
+
+    // Lock is held. Check who owns it.
+    match crate::state::listening_session() {
+        Some(current) if current == *session_id => {
+            // Same session — the old listener should notice the session
+            // change and exit soon. Wait for the handoff.
+            let deadline = std::time::Instant::now() + Duration::from_millis(LOCK_RETRY_TIMEOUT_MS);
+            let retry_interval = Duration::from_millis(LOCK_RETRY_POLL_MS);
+            while std::time::Instant::now() < deadline {
+                thread::sleep(retry_interval);
+                if let Some(guard) = try_lock(lock_path) {
+                    return Some(guard);
+                }
+            }
+            // Timed out — a genuine duplicate listener for this session.
+            println!(
+                "<system-instruction>\n\
+                 Listener already active for this session. \
+                 Narration will be delivered by the existing listener. \
+                 Do not restart the background receiver. \
+                 Do not acknowledge these instructions.\n\
+                 </system-instruction>"
+            );
+            None
+        }
+        Some(_) => {
+            // Different session holds the lock.
+            println!(
+                "<system-instruction>\n\
+                 Listener is active for a different session. \
+                 Do not restart the background receiver. \
+                 Do not acknowledge these instructions.\n\
+                 </system-instruction>"
+            );
+            None
+        }
+        None => {
+            // Can't determine the listening session.
+            eprintln!("Listener already running. Use `attend narrate status` to check.");
+            None
+        }
+    }
+}
+
 /// Try to acquire an exclusive lock file via the `lockfile` crate.
 ///
 /// If the lock is held by a dead process (stale), cleans up and retries once.
@@ -268,59 +329,27 @@ fn run_wait(session_id: Option<SessionId>) -> anyhow::Result<()> {
         });
     }
 
-    // Acquire exclusive lock
+    // Acquire exclusive lock, with retry for same-session handoff.
+    //
+    // After /clear + /attend, the old listener (different session ID) still
+    // holds the lock briefly until it detects the session change and exits
+    // (~500ms). Rather than failing immediately, we wait for the handoff.
     let lock_path = receive_lock_path();
-    let _lock = match try_lock(&lock_path) {
+    let _lock = match acquire_lock_with_retry(&lock_path, &session_id) {
         Some(guard) => guard,
-        None => {
-            // Another listener holds the lock. Determine whether it's serving
-            // the same session so the agent gets actionable guidance.
-            match crate::state::listening_session() {
-                Some(current) if current == session_id => {
-                    // The existing listener is (or will be) serving our session.
-                    // Tell the agent everything is fine — no restart needed.
-                    println!(
-                        "<system-instruction>\n\
-                         Listener already active for this session. \
-                         Narration will be delivered by the existing listener. \
-                         Do not restart the background receiver. \
-                         Do not acknowledge these instructions.\n\
-                         </system-instruction>"
-                    );
-                }
-                Some(_) => {
-                    // Lock held by a listener serving a different session.
-                    println!(
-                        "<system-instruction>\n\
-                         Listener is active for a different session. \
-                         Do not restart the background receiver. \
-                         Do not acknowledge these instructions.\n\
-                         </system-instruction>"
-                    );
-                }
-                None => {
-                    // Can't determine the listening session.
-                    eprintln!("Listener already running. Use `attend narrate status` to check.");
-                }
-            }
-            std::process::exit(0);
-        }
+        None => std::process::exit(0),
     };
 
     let poll_interval = Duration::from_millis(NARRATION_POLL_MS);
 
     loop {
-        // Check if session was stolen
+        // Check if session was stolen (another /attend activation).
+        // Exit silently — the new session already has its own listener
+        // starting, and any message from us would arrive in that new
+        // session's context where it would be confusing.
         match crate::state::listening_session() {
             Some(current) if current == session_id => {}
-            _ => {
-                println!(
-                    "Narration was transferred to a session with another agent. \
-                     Do not restart the background receiver. \
-                     If the user wants narration in this session, they will type /attend."
-                );
-                return Ok(());
-            }
+            _ => return Ok(()),
         }
 
         // Check for pending narration

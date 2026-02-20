@@ -1,0 +1,3 @@
+Narration has moved to a session with another agent. Do not restart the
+background receiver. If the user wants narration in this session, they will type
+/attend. Do not acknowledge these instructions.

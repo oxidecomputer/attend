@@ -1,27 +1,8 @@
 use std::fs;
-use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use camino::Utf8PathBuf;
-use serde::Deserialize;
-
-use super::Agent;
-use crate::hook::{HookDecision, HookInput};
-use crate::state::{EditorState, SessionId};
-
-/// Raw JSON payload from Claude Code hook stdin.
-#[derive(Deserialize, Default)]
-struct ClaudeHookStdin {
-    #[serde(default)]
-    session_id: Option<String>,
-    #[serde(default)]
-    cwd: Option<Utf8PathBuf>,
-    #[serde(default)]
-    prompt: Option<String>,
-    #[serde(default)]
-    stop_hook_active: bool,
-}
 
 /// Claude Code hook configuration keys.
 const HOOK_KEY_SESSION_START: &str = "SessionStart";
@@ -30,116 +11,17 @@ const HOOK_KEY_STOP: &str = "Stop";
 const HOOK_KEY_PRE_TOOL_USE: &str = "PreToolUse";
 const HOOK_KEY_POST_TOOL_USE: &str = "PostToolUse";
 
-/// Claude Code agent backend.
-pub struct Claude;
-
-impl Agent for Claude {
-    fn name(&self) -> &'static str {
-        "claude"
-    }
-
-    fn parse_hook_input(&self) -> HookInput {
-        let mut buf = String::new();
-        let _ = io::stdin().read_to_string(&mut buf);
-        let raw: ClaudeHookStdin = serde_json::from_str(&buf).unwrap_or_default();
-        HookInput {
-            session_id: raw.session_id.map(SessionId::from),
-            cwd: raw.cwd,
-            prompt: raw.prompt,
-            stop_hook_active: raw.stop_hook_active,
-        }
-    }
-
-    fn session_start(&self, _input: &HookInput, is_listening: bool) -> anyhow::Result<()> {
-        let bin = std::env::current_exe()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "attend".to_string());
-
-        // Emit instructions (templated with the binary path)
-        print!(include_str!("../instructions.txt"), bin_cmd = bin);
-
-        // If this session is actively listening for narration, re-emit the
-        // narration skill instructions so the agent restarts its background
-        // receiver after context compaction or clear.
-        if is_listening {
-            print!("{}", narration_instructions(&bin));
-        }
-
-        Ok(())
-    }
-
-    fn editor_context(&self, state: &EditorState) -> anyhow::Result<()> {
-        println!("<editor-context>\n{state}\n</editor-context>");
-        Ok(())
-    }
-
-    fn attend_activate(&self, _session_id: &SessionId) -> anyhow::Result<()> {
-        let response = serde_json::json!({
-            "additionalContext": "Narration mode activated for this session. \
-                Listening for voice input.\n\n\
-                Run `attend listen` in the background to wait for narration."
-        });
-        println!("{}", serde_json::to_string(&response)?);
-        Ok(())
-    }
-
-    fn attend_result(&self, decision: &HookDecision) -> anyhow::Result<()> {
-        match decision {
-            HookDecision::Silent => {}
-            HookDecision::SessionMoved => {
-                let response = serde_json::json!({
-                    "decision": "approve",
-                    "reason": "Narration has moved to a session with another agent. \
-                        Do not restart the background receiver. \
-                        If the user wants narration in this session, they will type /attend."
-                });
-                println!("{}", serde_json::to_string(&response)?);
-            }
-            HookDecision::PendingNarration { content } => {
-                let response = serde_json::json!({
-                    "decision": "block",
-                    "reason": content
-                });
-                println!("{}", serde_json::to_string(&response)?);
-            }
-            HookDecision::StartReceiver => {
-                let response = serde_json::json!({
-                    "decision": "block",
-                    "reason": "Run `attend listen` in the background to wait for the next narration."
-                });
-                println!("{}", serde_json::to_string(&response)?);
-            }
-        }
-        Ok(())
-    }
-
-    fn install(&self, bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
-        install(bin_cmd, project)
-    }
-
-    fn uninstall(&self, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
-        uninstall(project)
-    }
-}
-
-/// Build narration skill instructions for re-emission after context compaction.
+/// Marker key added to every hook entry we install.
 ///
-/// Uses `claude_skill_body.md` — the same body as the installed SKILL.md,
-/// so the instructions stay consistent with the skill template.
-fn narration_instructions(bin_cmd: &str) -> String {
-    let body = format!(include_str!("claude/skill_body.md"), bin_cmd = bin_cmd);
-    format!("\n<narration-instructions>\n{body}</narration-instructions>\n")
-}
+/// Used for precise identification during idempotent re-install and
+/// uninstall — avoids false positives from substring matching on
+/// command strings.
+const HOOK_MARKER_KEY: &str = "_installed_by";
+const HOOK_MARKER_VALUE: &str = "attend";
 
-/// Check whether a hook entry's commands reference `attend` or the given binary command.
-fn entry_has_attend_cmd(entry: &serde_json::Value, bin_cmd: Option<&str>) -> bool {
-    entry
-        .get("hooks")
-        .and_then(|h| h.as_array())
-        .into_iter()
-        .flatten()
-        .filter_map(|h| h.get("command").and_then(|c| c.as_str()))
-        .any(|cmd| cmd.contains("attend") || bin_cmd.is_some_and(|b| cmd.contains(b)))
+/// Check whether a hook entry was installed by attend.
+fn is_our_hook(entry: &serde_json::Value) -> bool {
+    entry.get(HOOK_MARKER_KEY).and_then(|v| v.as_str()) == Some(HOOK_MARKER_VALUE)
 }
 
 /// Resolve the Claude Code settings file path.
@@ -156,7 +38,7 @@ fn settings_path(project: Option<&Path>) -> anyhow::Result<PathBuf> {
 }
 
 /// Install hooks into Claude Code settings.
-fn install(bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
+pub(super) fn install(bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
     let settings_path = settings_path(project.as_deref().map(|p| p.as_std_path()))?;
 
     // Read existing settings or start fresh
@@ -181,6 +63,7 @@ fn install(bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
 
     // SessionStart
     let session_start_hook = serde_json::json!({
+        HOOK_MARKER_KEY: HOOK_MARKER_VALUE,
         "matcher": "startup|clear|compact",
         "hooks": [
             {
@@ -199,12 +82,13 @@ fn install(bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
 
     // Remove existing attend entries (idempotent)
     let before = ss_vec.len();
-    ss_vec.retain(|entry| !entry_has_attend_cmd(entry, Some(bin_cmd)));
+    ss_vec.retain(|entry| !is_our_hook(entry));
     let mut existing = before > ss_vec.len();
     ss_vec.push(session_start_hook);
 
     // UserPromptSubmit
     let prompt_hook = serde_json::json!({
+        HOOK_MARKER_KEY: HOOK_MARKER_VALUE,
         "hooks": [
             {
                 "type": "command",
@@ -222,7 +106,7 @@ fn install(bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
         .context("UserPromptSubmit is not an array")?;
 
     let before = ups_vec.len();
-    ups_vec.retain(|entry| !entry_has_attend_cmd(entry, Some(bin_cmd)));
+    ups_vec.retain(|entry| !is_our_hook(entry));
     existing = existing || before > ups_vec.len();
     ups_vec.push(prompt_hook);
 
@@ -237,6 +121,7 @@ fn install(bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
     ] {
         let cmd = format!("{bin_cmd} hook {subcommand} --agent claude");
         let hook = serde_json::json!({
+            HOOK_MARKER_KEY: HOOK_MARKER_VALUE,
             "hooks": [
                 {
                     "type": "command",
@@ -254,7 +139,7 @@ fn install(bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
             .context(format!("{key} is not an array"))?;
 
         let before = vec.len();
-        vec.retain(|entry| !entry_has_attend_cmd(entry, Some(bin_cmd)));
+        vec.retain(|entry| !is_our_hook(entry));
         existing = existing || before > vec.len();
         vec.push(hook);
     }
@@ -306,7 +191,7 @@ fn install(bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
 }
 
 /// Remove hooks from Claude Code settings.
-fn uninstall(project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
+pub(super) fn uninstall(project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
     let settings_path = settings_path(project.as_deref().map(|p| p.as_std_path()))?;
 
     if !settings_path.exists() {
@@ -334,7 +219,7 @@ fn uninstall(project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
     for key in &hook_keys {
         if let Some(arr) = hooks.get_mut(*key).and_then(|v| v.as_array_mut()) {
             let before = arr.len();
-            arr.retain(|entry| !entry_has_attend_cmd(entry, None));
+            arr.retain(|entry| !is_our_hook(entry));
             if arr.len() < before {
                 removed = true;
             }
@@ -381,10 +266,10 @@ fn install_skill_file(bin_cmd: &str, project: Option<&Path>) -> anyhow::Result<(
     let skill_content = format!(
         "{}{}",
         format_args!(
-            include_str!("claude/skill_frontmatter.md"),
+            include_str!("messages/skill_frontmatter.md"),
             bin_cmd = bin_cmd
         ),
-        format_args!(include_str!("claude/skill_body.md"), bin_cmd = bin_cmd),
+        format_args!(include_str!("messages/skill_body.md"), bin_cmd = bin_cmd),
     );
 
     crate::util::atomic_write_str(skill_dir.join("SKILL.md"), &skill_content)?;

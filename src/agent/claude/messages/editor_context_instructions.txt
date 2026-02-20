@@ -1,4 +1,3 @@
-<editor-context-instructions>
 Messages in <editor-context> tags show the user's current editor state. They are
 injected automatically: the user does not see them. Do NOT acknowledge or
 respond to them directly unless asked. Instead, use them silently to understand
@@ -35,4 +34,3 @@ directories listed in `include_dirs`). If the user references code or files that
 don't appear in `<editor-context>`, they may be looking at a file outside the
 project. Let them know and suggest they can add directories to
 `.attend/config.toml` (or `~/.config/attend/config.toml`) under `include_dirs`.
-</editor-context-instructions>

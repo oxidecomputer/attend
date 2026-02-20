@@ -52,11 +52,13 @@ impl HookEvent {
                 let agent = resolve_agent(&agent)?;
                 crate::hook::user_prompt(agent, None)
             }
-            HookEvent::Stop { agent }
-            | HookEvent::PreToolUse { agent }
-            | HookEvent::PostToolUse { agent } => {
+            HookEvent::Stop { agent } => {
                 let agent = resolve_agent(&agent)?;
-                crate::hook::stop(agent)
+                crate::hook::check_narration(agent, crate::hook::HookType::Stop)
+            }
+            HookEvent::PreToolUse { agent } | HookEvent::PostToolUse { agent } => {
+                let agent = resolve_agent(&agent)?;
+                crate::hook::check_narration(agent, crate::hook::HookType::ToolUse)
             }
         }
     }

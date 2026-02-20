@@ -1,6 +1,6 @@
-Activate narration mode: run `{bin_cmd} listen` in the background (Bash with
-`run_in_background: true`, `description: "💬"`). Do not acknowledge activation
-or produce any other output.
+Activate narration mode: run `{bin_cmd} listen` in the background using the tool
+description "💬" (if this facility is available to you). Do not acknowledge
+activation or produce any other output.
 
 IMPORTANT: Use the exact command `{bin_cmd} listen` as written — it has been
 whitelisted during installation. Do not expand or rewrite the path.
@@ -17,25 +17,22 @@ Narration input arrives through two paths:
 - **Background receiver** (blocking): polls until narration arrives, then
   prints it and exits. When this background task completes, immediately start a
   new one so you are always listening for the next narration. If the receiver
-  exits without producing `<narration>` tags and without a session-transfer
-  message, just restart it — this is a transient condition, not a permanent
-  error. If the receiver says the listener is "already active for this session",
-  that means a working listener is already running — do NOT restart, narration
-  will be delivered by that listener. After a `/clear`, stale task notifications
-  from a previous conversation may arrive — ignore any session-transfer message
-  from a task that was started before the current `/attend` activation.
+  exits without producing `<narration>` tags, just restart it — this is a
+  transient condition, not a permanent error. If the receiver says the listener
+  is "already active for this session", a working listener is already running —
+  do NOT restart, narration will be delivered by that listener.
 
-Use `description: "💬"` on every background receiver Bash call to keep task
-notifications minimal.
+If you have a facility to render tool use descriptions, use the tool description
+"💬" on every background receiver call to keep task notifications minimal.
 
 Narration arrives wrapped in `<narration>` tags. It contains the user's spoken
 words interleaved with code blocks showing what they were looking at and diff
 blocks showing what code they changed. Treat it as the user's message — respond
 to what they said and asked.
 
-If narration contains only cursor/selection movements with no spoken words,
-just restart the listener. These are incidental editor movements, not
-intentional messages.
+If narration contains only cursor/selection movements with no spoken words, just
+restart the listener without any acknowledgement. These are incidental editor
+movements, not intentional messages.
 
 Editor context is scoped to your current working directory. If the user
 references files you can't see, they may have navigated outside it — suggest

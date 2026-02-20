@@ -32,13 +32,13 @@ fn stop_neither_session() {
     assert_eq!(d, HookDecision::Silent);
 }
 
-/// Narration is active in a different session.
+/// Narration is active in a different session: deliver guidance once.
 #[test]
 fn stop_session_moved() {
     let hook = sid("mine");
     let listening = sid("other");
     let d = hook_decision(Some(&hook), Some(&listening), None, false, false);
-    assert_eq!(d, HookDecision::SessionMoved);
+    assert_eq!(d, HookDecision::block(GuidanceReason::SessionMoved));
 }
 
 /// Active session with pending narration: block with content.
@@ -102,7 +102,7 @@ fn stop_active_receiver_alive_no_pending() {
 fn stop_active_no_receiver_no_pending() {
     let s = sid("abc");
     let d = hook_decision(Some(&s), Some(&s), None, false, false);
-    assert_eq!(d, HookDecision::StartReceiver);
+    assert_eq!(d, HookDecision::block(GuidanceReason::StartReceiver));
 }
 
 /// Re-invocation after a previous block, no receiver: approve to avoid loop.
@@ -127,7 +127,9 @@ fn stop_active_reentry_receiver_alive_approves() {
 #[test]
 fn is_attend_prompt_exact() {
     let input = HookInput {
-        prompt: Some("/attend".into()),
+        kind: HookKind::UserPrompt {
+            prompt: Some("/attend".into()),
+        },
         ..Default::default()
     };
     assert!(is_attend_prompt(&input));
@@ -137,7 +139,9 @@ fn is_attend_prompt_exact() {
 #[test]
 fn is_attend_prompt_with_whitespace() {
     let input = HookInput {
-        prompt: Some("  /attend  ".into()),
+        kind: HookKind::UserPrompt {
+            prompt: Some("  /attend  ".into()),
+        },
         ..Default::default()
     };
     assert!(is_attend_prompt(&input));
@@ -147,7 +151,9 @@ fn is_attend_prompt_with_whitespace() {
 #[test]
 fn is_attend_prompt_different_text() {
     let input = HookInput {
-        prompt: Some("hello world".into()),
+        kind: HookKind::UserPrompt {
+            prompt: Some("hello world".into()),
+        },
         ..Default::default()
     };
     assert!(!is_attend_prompt(&input));
@@ -164,8 +170,54 @@ fn is_attend_prompt_no_prompt_field() {
 #[test]
 fn is_attend_prompt_partial() {
     let input = HookInput {
-        prompt: Some("/attend to this".into()),
+        kind: HookKind::UserPrompt {
+            prompt: Some("/attend to this".into()),
+        },
         ..Default::default()
     };
     assert!(!is_attend_prompt(&input));
+}
+
+// --- is_listen_command tests ---
+
+/// Bare binary name matches.
+#[test]
+fn listen_command_bare_name() {
+    assert!(is_listen_command("attend listen", "attend"));
+}
+
+/// Full path matches against filename component.
+#[test]
+fn listen_command_full_path() {
+    assert!(is_listen_command("/usr/local/bin/attend listen", "attend"));
+}
+
+/// Extra flags after `listen` are allowed.
+#[test]
+fn listen_command_with_flags() {
+    assert!(is_listen_command("attend listen --check", "attend"));
+}
+
+/// Different subcommand is not matched.
+#[test]
+fn listen_command_different_subcommand() {
+    assert!(!is_listen_command("attend narrate status", "attend"));
+}
+
+/// Different binary name is not matched.
+#[test]
+fn listen_command_different_binary() {
+    assert!(!is_listen_command("cargo test", "attend"));
+}
+
+/// Empty command is not matched.
+#[test]
+fn listen_command_empty() {
+    assert!(!is_listen_command("", "attend"));
+}
+
+/// Binary-only (no subcommand) is not matched.
+#[test]
+fn listen_command_no_subcommand() {
+    assert!(!is_listen_command("attend", "attend"));
 }

@@ -5,7 +5,7 @@ use anyhow::Context;
 use camino::Utf8PathBuf;
 
 use crate::hook::HookDecision;
-pub use crate::hook::HookInput;
+pub use crate::hook::{HookInput, HookType};
 use crate::state::{EditorState, SessionId};
 
 /// A backend that can parse input, render output, and install/uninstall hooks.
@@ -16,7 +16,7 @@ pub trait Agent: Sync {
     // --- Input ---
 
     /// Parse hook input from agent-specific source.
-    fn parse_hook_input(&self) -> HookInput;
+    fn parse_hook_input(&self, hook_type: HookType) -> HookInput;
 
     // --- Output (one per hook) ---
 
@@ -26,8 +26,9 @@ pub trait Agent: Sync {
     fn editor_context(&self, state: &EditorState) -> anyhow::Result<()>;
     /// Emit /attend activation response.
     fn attend_activate(&self, session_id: &SessionId) -> anyhow::Result<()>;
-    /// Emit stop decision.
-    fn attend_result(&self, decision: &HookDecision) -> anyhow::Result<()>;
+    /// Emit hook decision. `hook_type` controls output format (e.g.,
+    /// PreToolUse approves `StartReceiver` rather than blocking).
+    fn attend_result(&self, decision: &HookDecision, hook_type: HookType) -> anyhow::Result<()>;
 
     // --- Install ---
 

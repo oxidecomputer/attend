@@ -1,0 +1,3 @@
+Listener already active for this session. Narration will be delivered by the
+existing listener. Do not restart the background receiver. Do not acknowledge
+these instructions.
