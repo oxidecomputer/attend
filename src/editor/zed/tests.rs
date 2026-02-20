@@ -1,5 +1,5 @@
 use super::db::query_editors;
-use super::jsonc::*;
+use super::jsonc::{JsoncArray, parse_jsonc};
 use super::keybindings::is_narration_keybinding;
 
 // -- Zed DB fixture tests --
@@ -162,6 +162,35 @@ fn parse_jsonc_with_comments_and_trailing_commas() {
     assert_eq!(parsed.len(), 2);
     assert_eq!(parsed[0]["a"], 1);
     assert_eq!(parsed[1]["b"], 2);
+}
+
+/// JsoncArray preserves comments across retain + push + save.
+#[test]
+fn jsonc_array_preserves_comments() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.json");
+    std::fs::write(
+        &path,
+        "// My config\n[\n  // first entry\n  {\"a\": 1},\n  {\"b\": 2}\n]\n",
+    )
+    .unwrap();
+
+    let mut arr = JsoncArray::open(&path).unwrap();
+    assert_eq!(arr.elements().len(), 2);
+
+    // Remove second element, add a third.
+    arr.retain(|v| v.get("b").is_none());
+    arr.push(serde_json::json!({"c": 3}));
+    arr.save().unwrap();
+
+    let output = std::fs::read_to_string(&path).unwrap();
+    // Comments from the original file must survive.
+    assert!(output.contains("// My config"), "header comment lost");
+    assert!(output.contains("// first entry"), "inline comment lost");
+    // New element must be present.
+    assert!(output.contains("\"c\""));
+    // Removed element must be gone.
+    assert!(!output.contains("\"b\""));
 }
 
 #[test]

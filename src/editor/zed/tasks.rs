@@ -1,6 +1,6 @@
 //! Zed task definition install/uninstall for narration.
 
-use super::jsonc::{read_jsonc_array, write_json_array};
+use super::jsonc::JsoncArray;
 use super::{NARRATION_TASK_LABELS, zed_config_dir};
 
 /// Legacy task labels from previous versions.
@@ -15,7 +15,7 @@ const LEGACY_TASK_LABELS: &[&str] = &[
 /// Install a Zed task definition for narration.
 pub(super) fn install_task(bin_cmd: &str, label: &str, args: &[&str]) -> anyhow::Result<()> {
     let tasks_path = zed_config_dir()?.join("tasks.json");
-    let mut tasks = read_jsonc_array(&tasks_path);
+    let mut tasks = JsoncArray::open(&tasks_path)?;
 
     let task_entry = serde_json::json!({
         "label": label,
@@ -27,16 +27,18 @@ pub(super) fn install_task(bin_cmd: &str, label: &str, args: &[&str]) -> anyhow:
         "use_new_terminal": true
     });
 
-    if tasks.contains(&task_entry) {
+    if tasks.elements().contains(&task_entry) {
         return Ok(());
     }
 
     // Warn about stale command path before replacing.
     if let Some(cmd) = tasks
+        .elements()
         .iter()
         .find(|t| t.get("label").and_then(|l| l.as_str()) == Some(label))
         .and_then(|t| t.get("command").and_then(|c| c.as_str()))
-        && !std::path::Path::new(cmd).exists()
+        .map(|s| s.to_string())
+        && !std::path::Path::new(&cmd).exists()
     {
         tracing::warn!("Replacing stale command path: {cmd}");
     }
@@ -47,23 +49,22 @@ pub(super) fn install_task(bin_cmd: &str, label: &str, args: &[&str]) -> anyhow:
         l != Some(label) && !l.is_some_and(|l| LEGACY_TASK_LABELS.contains(&l))
     });
     tasks.push(task_entry);
-    write_json_array(&tasks_path, &tasks)
+    tasks.save()
 }
 
 /// Remove the Zed task definitions for narration (current + legacy).
 pub(super) fn uninstall_task() -> anyhow::Result<()> {
     let tasks_path = zed_config_dir()?.join("tasks.json");
-    let mut tasks = read_jsonc_array(&tasks_path);
+    let mut tasks = JsoncArray::open(&tasks_path)?;
 
-    let before = tasks.len();
     tasks.retain(|t| {
         let label = t.get("label").and_then(|l| l.as_str());
         !label
             .is_some_and(|l| NARRATION_TASK_LABELS.contains(&l) || LEGACY_TASK_LABELS.contains(&l))
     });
 
-    if tasks.len() < before {
-        write_json_array(&tasks_path, &tasks)?;
+    if tasks.is_modified() {
+        tasks.save()?;
     }
     Ok(())
 }

@@ -20,7 +20,7 @@ be performed as specified, please do it.
 | 1 | [Foundation](./phase-01-foundation.md) | Done (003a47d) | — |
 | 2 | [Type Safety & Config Simplification](./phase-02-type-safety.md) | Done (6990ff3) | Phase 1 |
 | 3 | [Module Reorganization](./phase-03-module-reorg.md) | Done (6733577) | Phase 2 |
-| 4 | [Unsafe Elimination & Dependency Upgrades](./phase-04-unsafe-elimination.md) | Not started | Phase 3 |
+| 4 | [Unsafe Elimination & Dependency Upgrades](./phase-04-unsafe-elimination.md) | Done (2393beb) | Phase 3 |
 | 5 | [Error Handling Audit](./phase-05-error-handling.md) | Not started | Phase 3 |
 | 6 | [Recording Daemon Improvements](./phase-06-daemon-improvements.md) | Not started | Phases 4, 5 |
 | 7 | [Agent Trait Generalization](./phase-07-agent-generalization.md) | Not started | Phases 3, 5 |
@@ -60,13 +60,13 @@ be performed as specified, please do it.
 - [x] 3.10 Future-proof editor trait — added design note on RawEditor
 
 ### Phase 4: Unsafe Elimination & Dependency Upgrades
-- [ ] 4.1 Replace `libc` with `nix`
-- [ ] 4.2 Replace manual UTC formatting with `chrono`
-- [ ] 4.3 Replace chime synthesis with `fundsp`
-- [ ] 4.4 Replace JSONC string munching with `jsonc-parser`
-- [ ] 4.5 Replace hand-rolled VAD downsampling
-- [ ] 4.6 Add `clap` color feature
-- [ ] 4.7 Atomic writes everywhere
+- [x] 4.1 Replace `libc` with `nix` + `crossterm` (a2ead64)
+- [x] 4.2 Replace manual UTC formatting with `chrono` (a2ead64)
+- [x] 4.3 Replace chime synthesis with `fundsp` (6d323a8)
+- [x] 4.4 Replace JSONC string munching with `jsonc-parser` (43025d5)
+- [x] 4.5 VAD downsampling: documented as intentional (linear for VAD is sufficient)
+- [x] 4.6 Add `clap` color feature (2393beb)
+- [x] 4.7 Atomic writes everywhere (2393beb)
 
 ### Phase 5: Error Handling Audit
 - [ ] 5.1 `resolve_bin_cmd` stop over-recovering
