@@ -4,23 +4,33 @@ mod claude;
 use anyhow::Context;
 use camino::Utf8PathBuf;
 
-/// Hook events that agents handle.
-#[derive(Clone, Copy)]
-pub enum HookEvent {
-    /// Fired once at the start of an agent session.
-    SessionStart,
-    /// Fired before each user prompt is sent.
-    UserPrompt,
-    /// Fired when the agent session stops.
-    Stop,
-}
+pub use crate::hook::HookInput;
+use crate::hook::StopDecision;
+use crate::state::{EditorState, SessionId};
 
-/// A backend that can install/uninstall hooks and run hook events for an agent.
+/// A backend that can parse input, render output, and install/uninstall hooks.
 pub trait Agent: Sync {
     /// CLI name (e.g., "claude").
     fn name(&self) -> &'static str;
-    /// Run a hook event.
-    fn run_hook(&self, event: HookEvent, cwd: Option<Utf8PathBuf>) -> anyhow::Result<()>;
+
+    // --- Input ---
+
+    /// Parse hook input from agent-specific source.
+    fn parse_hook_input(&self) -> HookInput;
+
+    // --- Output (one per hook) ---
+
+    /// Emit session-start output. `is_listening` = narration active for this session.
+    fn session_start(&self, input: &HookInput, is_listening: bool) -> anyhow::Result<()>;
+    /// Emit editor context when state has changed.
+    fn editor_context(&self, state: &EditorState) -> anyhow::Result<()>;
+    /// Emit /attend activation response.
+    fn attend_activate(&self, session_id: &SessionId) -> anyhow::Result<()>;
+    /// Emit stop decision.
+    fn attend_result(&self, decision: &StopDecision) -> anyhow::Result<()>;
+
+    // --- Install ---
+
     /// Install hooks into agent settings.
     fn install(&self, bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()>;
     /// Remove hooks from agent settings.

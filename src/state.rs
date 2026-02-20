@@ -81,6 +81,9 @@ pub(crate) struct InstallMeta {
     pub agents: Vec<String>,
     pub editors: Vec<String>,
     pub dev: bool,
+    /// Project directories where hooks have been installed via `--project`.
+    #[serde(default)]
+    pub project_paths: Vec<Utf8PathBuf>,
 }
 
 /// Read the install metadata, if any.

@@ -2,13 +2,14 @@ use crate::state::SessionId;
 
 use super::*;
 
-/// Helper to build an `Option<&SessionId>` from a literal.
+/// Helper to build a `SessionId` from a literal.
 fn sid(s: &str) -> SessionId {
     SessionId::from(s)
 }
 
 // --- stop_decision tests ---
 
+/// No listening session at all: approve silently.
 #[test]
 fn stop_no_listening_session() {
     let hook = sid("abc");
@@ -16,6 +17,7 @@ fn stop_no_listening_session() {
     assert_eq!(d, StopDecision::Silent);
 }
 
+/// No hook session ID: approve silently.
 #[test]
 fn stop_no_hook_session_id() {
     let listening = sid("abc");
@@ -23,33 +25,23 @@ fn stop_no_hook_session_id() {
     assert_eq!(d, StopDecision::Silent);
 }
 
+/// Neither session present: approve silently.
 #[test]
 fn stop_neither_session() {
     let d = stop_decision(None, None, None, false, false);
     assert_eq!(d, StopDecision::Silent);
 }
 
+/// Narration is active in a different session.
 #[test]
 fn stop_session_moved() {
     let hook = sid("mine");
     let listening = sid("other");
     let d = stop_decision(Some(&hook), Some(&listening), None, false, false);
-    assert!(matches!(d, StopDecision::Approve { reason } if reason.contains("moved")));
+    assert_eq!(d, StopDecision::SessionMoved);
 }
 
-#[test]
-fn stop_session_moved_says_no_restart() {
-    let hook = sid("mine");
-    let listening = sid("other");
-    let d = stop_decision(Some(&hook), Some(&listening), None, false, false);
-    if let StopDecision::Approve { reason } = d {
-        assert!(reason.contains("Do not restart"));
-        assert!(reason.contains("/attend"));
-    } else {
-        panic!("expected Approve, got {d:?}");
-    }
-}
-
+/// Active session with pending narration: block with content.
 #[test]
 fn stop_active_with_pending_narration() {
     let s = sid("abc");
@@ -60,9 +52,12 @@ fn stop_active_with_pending_narration() {
         false,
         false,
     );
-    assert!(matches!(d, StopDecision::Block { reason } if reason.contains("hello")));
+    assert!(
+        matches!(d, StopDecision::PendingNarration { ref content } if content.contains("hello"))
+    );
 }
 
+/// Pending narration takes priority over a running receiver.
 #[test]
 fn stop_active_pending_takes_priority_over_receiver() {
     let s = sid("abc");
@@ -73,12 +68,14 @@ fn stop_active_pending_takes_priority_over_receiver() {
         true,
         false,
     );
-    assert!(matches!(d, StopDecision::Block { reason } if reason.contains("hello")));
+    assert!(
+        matches!(d, StopDecision::PendingNarration { ref content } if content.contains("hello"))
+    );
 }
 
+/// Pending narration takes priority even on re-invocation.
 #[test]
 fn stop_active_pending_takes_priority_over_reentry() {
-    // Even on re-invocation, pending narration must be delivered.
     let s = sid("abc");
     let d = stop_decision(
         Some(&s),
@@ -87,9 +84,12 @@ fn stop_active_pending_takes_priority_over_reentry() {
         false,
         true,
     );
-    assert!(matches!(d, StopDecision::Block { reason } if reason.contains("hello")));
+    assert!(
+        matches!(d, StopDecision::PendingNarration { ref content } if content.contains("hello"))
+    );
 }
 
+/// Receiver alive, no pending: approve silently.
 #[test]
 fn stop_active_receiver_alive_no_pending() {
     let s = sid("abc");
@@ -97,22 +97,23 @@ fn stop_active_receiver_alive_no_pending() {
     assert_eq!(d, StopDecision::Silent);
 }
 
+/// No receiver, no pending, first attempt: ask agent to start receiver.
 #[test]
 fn stop_active_no_receiver_no_pending() {
     let s = sid("abc");
     let d = stop_decision(Some(&s), Some(&s), None, false, false);
-    assert!(matches!(d, StopDecision::Block { reason } if reason.contains("listen")));
+    assert_eq!(d, StopDecision::StartReceiver);
 }
 
+/// Re-invocation after a previous block, no receiver: approve to avoid loop.
 #[test]
 fn stop_active_reentry_no_receiver_approves() {
-    // Re-invocation after a previous block: approve even if receiver isn't
-    // alive yet, to avoid an infinite block loop.
     let s = sid("abc");
     let d = stop_decision(Some(&s), Some(&s), None, false, true);
     assert_eq!(d, StopDecision::Silent);
 }
 
+/// Re-invocation with receiver alive: approve silently.
 #[test]
 fn stop_active_reentry_receiver_alive_approves() {
     let s = sid("abc");
@@ -122,32 +123,49 @@ fn stop_active_reentry_receiver_alive_approves() {
 
 // --- is_attend_prompt tests ---
 
+/// Exact `/attend` match.
 #[test]
 fn is_attend_prompt_exact() {
-    let json = serde_json::json!({"prompt": "/attend", "session_id": "abc"});
-    assert!(is_attend_prompt(&json));
+    let input = HookInput {
+        prompt: Some("/attend".into()),
+        ..Default::default()
+    };
+    assert!(is_attend_prompt(&input));
 }
 
+/// `/attend` with surrounding whitespace.
 #[test]
 fn is_attend_prompt_with_whitespace() {
-    let json = serde_json::json!({"prompt": "  /attend  ", "session_id": "abc"});
-    assert!(is_attend_prompt(&json));
+    let input = HookInput {
+        prompt: Some("  /attend  ".into()),
+        ..Default::default()
+    };
+    assert!(is_attend_prompt(&input));
 }
 
+/// Non-attend prompt text.
 #[test]
 fn is_attend_prompt_different_text() {
-    let json = serde_json::json!({"prompt": "hello world", "session_id": "abc"});
-    assert!(!is_attend_prompt(&json));
+    let input = HookInput {
+        prompt: Some("hello world".into()),
+        ..Default::default()
+    };
+    assert!(!is_attend_prompt(&input));
 }
 
+/// No prompt field at all.
 #[test]
 fn is_attend_prompt_no_prompt_field() {
-    let json = serde_json::json!({"session_id": "abc"});
-    assert!(!is_attend_prompt(&json));
+    let input = HookInput::default();
+    assert!(!is_attend_prompt(&input));
 }
 
+/// Partial match: `/attend to this` should not match.
 #[test]
 fn is_attend_prompt_partial() {
-    let json = serde_json::json!({"prompt": "/attend to this", "session_id": "abc"});
-    assert!(!is_attend_prompt(&json));
+    let input = HookInput {
+        prompt: Some("/attend to this".into()),
+        ..Default::default()
+    };
+    assert!(!is_attend_prompt(&input));
 }

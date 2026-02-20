@@ -1,10 +1,27 @@
 use std::fs;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use camino::Utf8PathBuf;
+use serde::Deserialize;
 
-use super::{Agent, HookEvent};
+use super::Agent;
+use crate::hook::{HookInput, StopDecision};
+use crate::state::{EditorState, SessionId};
+
+/// Raw JSON payload from Claude Code hook stdin.
+#[derive(Deserialize, Default)]
+struct ClaudeHookStdin {
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    cwd: Option<Utf8PathBuf>,
+    #[serde(default)]
+    prompt: Option<String>,
+    #[serde(default)]
+    stop_hook_active: bool,
+}
 
 /// Claude Code hook configuration keys.
 const HOOK_KEY_SESSION_START: &str = "SessionStart";
@@ -19,12 +36,79 @@ impl Agent for Claude {
         "claude"
     }
 
-    fn run_hook(&self, event: HookEvent, cwd: Option<Utf8PathBuf>) -> anyhow::Result<()> {
-        match event {
-            HookEvent::SessionStart => crate::hook::session_start(),
-            HookEvent::UserPrompt => crate::hook::run(cwd),
-            HookEvent::Stop => crate::hook::stop(),
+    fn parse_hook_input(&self) -> HookInput {
+        let mut buf = String::new();
+        let _ = io::stdin().read_to_string(&mut buf);
+        let raw: ClaudeHookStdin = serde_json::from_str(&buf).unwrap_or_default();
+        HookInput {
+            session_id: raw.session_id.map(SessionId::from),
+            cwd: raw.cwd,
+            prompt: raw.prompt,
+            stop_hook_active: raw.stop_hook_active,
         }
+    }
+
+    fn session_start(&self, _input: &HookInput, is_listening: bool) -> anyhow::Result<()> {
+        let bin = std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "attend".to_string());
+
+        // Emit instructions (templated with the binary path)
+        print!(include_str!("../instructions.txt"), bin_cmd = bin);
+
+        // If this session is actively listening for narration, re-emit the
+        // narration skill instructions so the agent restarts its background
+        // receiver after context compaction or clear.
+        if is_listening {
+            print!("{}", narration_instructions(&bin));
+        }
+
+        Ok(())
+    }
+
+    fn editor_context(&self, state: &EditorState) -> anyhow::Result<()> {
+        println!("<editor-context>\n{state}\n</editor-context>");
+        Ok(())
+    }
+
+    fn attend_activate(&self, _session_id: &SessionId) -> anyhow::Result<()> {
+        let response = serde_json::json!({
+            "additionalContext": "Narration mode activated for this session. \
+                Listening for voice input.\n\n\
+                Run `attend listen` in the background to wait for narration."
+        });
+        println!("{}", serde_json::to_string(&response)?);
+        Ok(())
+    }
+
+    fn attend_result(&self, decision: &StopDecision) -> anyhow::Result<()> {
+        match decision {
+            StopDecision::Silent => {}
+            StopDecision::SessionMoved => {
+                let response = serde_json::json!({
+                    "decision": "approve",
+                    "reason": "Narration has moved to a session with another agent. \
+                        Do not restart the background receiver. \
+                        If the user wants narration in this session, they will type /attend."
+                });
+                println!("{}", serde_json::to_string(&response)?);
+            }
+            StopDecision::PendingNarration { content } => {
+                let response = serde_json::json!({
+                    "decision": "block",
+                    "reason": content
+                });
+                println!("{}", serde_json::to_string(&response)?);
+            }
+            StopDecision::StartReceiver => {
+                let response = serde_json::json!({
+                    "decision": "block",
+                    "reason": "Run `attend listen` in the background to wait for the next narration."
+                });
+                println!("{}", serde_json::to_string(&response)?);
+            }
+        }
+        Ok(())
     }
 
     fn install(&self, bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
@@ -34,6 +118,15 @@ impl Agent for Claude {
     fn uninstall(&self, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
         uninstall(project)
     }
+}
+
+/// Build narration skill instructions for re-emission after context compaction.
+///
+/// Uses `claude_skill_body.md` — the same body as the installed SKILL.md,
+/// so the instructions stay consistent with the skill template.
+fn narration_instructions(bin_cmd: &str) -> String {
+    let body = format!(include_str!("claude_skill_body.md"), bin_cmd = bin_cmd);
+    format!("\n<narration-instructions>\n{body}</narration-instructions>\n")
 }
 
 /// Check whether a hook entry's commands reference `attend` or the given binary command.

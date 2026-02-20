@@ -33,11 +33,23 @@ pub(super) fn install(
             .ok_or_else(|| anyhow::anyhow!("unknown editor: {name}"))?;
         ed.install_narration(&bin_cmd)?;
     }
+
+    // Track project paths: preserve existing, append new (deduplicated).
+    let mut project_paths = crate::state::installed_meta()
+        .map(|m| m.project_paths)
+        .unwrap_or_default();
+    if let Some(ref p) = project
+        && !project_paths.contains(p)
+    {
+        project_paths.push(p.clone());
+    }
+
     crate::state::save_install_meta(&crate::state::InstallMeta {
         version: env!("CARGO_PKG_VERSION").to_string(),
         agents: agent,
         editors: editor,
         dev,
+        project_paths,
     });
     Ok(())
 }
@@ -65,6 +77,24 @@ pub(super) fn uninstall(
     } else {
         editor
     };
+
+    // When no --project is given, also uninstall from all tracked project paths.
+    if project.is_none()
+        && let Some(meta) = crate::state::installed_meta()
+    {
+        for path in &meta.project_paths {
+            for name in &agents {
+                // Best-effort: project dir may have been removed.
+                let _ = crate::agent::uninstall(name, Some(path.clone()));
+            }
+        }
+        // Clear tracked project paths.
+        crate::state::save_install_meta(&crate::state::InstallMeta {
+            project_paths: Vec::new(),
+            ..meta
+        });
+    }
+
     for name in &agents {
         crate::agent::uninstall(name, project.clone())?;
     }

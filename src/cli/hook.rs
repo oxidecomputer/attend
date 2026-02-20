@@ -33,13 +33,23 @@ pub enum HookEvent {
 impl HookEvent {
     /// Execute a hook event.
     pub fn run(self) -> anyhow::Result<()> {
-        let (agent_name, event) = match self {
-            HookEvent::SessionStart { agent } => (agent, crate::agent::HookEvent::SessionStart),
-            HookEvent::UserPrompt { agent } => (agent, crate::agent::HookEvent::UserPrompt),
-            HookEvent::Stop { agent } => (agent, crate::agent::HookEvent::Stop),
-        };
-        let agent = crate::agent::backend_by_name(&agent_name)
-            .ok_or_else(|| anyhow::anyhow!("unknown agent: {agent_name}"))?;
-        agent.run_hook(event, None)
+        match self {
+            HookEvent::SessionStart { agent } => {
+                let agent = resolve_agent(&agent)?;
+                crate::hook::session_start(agent)
+            }
+            HookEvent::UserPrompt { agent } => {
+                let agent = resolve_agent(&agent)?;
+                crate::hook::user_prompt(agent, None)
+            }
+            HookEvent::Stop { agent } => {
+                let agent = resolve_agent(&agent)?;
+                crate::hook::stop(agent)
+            }
+        }
     }
+}
+
+fn resolve_agent(name: &str) -> anyhow::Result<&'static dyn crate::agent::Agent> {
+    crate::agent::backend_by_name(name).ok_or_else(|| anyhow::anyhow!("unknown agent: {name}"))
 }

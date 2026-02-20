@@ -1,23 +1,47 @@
 use std::fs;
-use std::io::{self, Read};
+use std::io;
 
 use camino::Utf8PathBuf;
 
-use crate::state::{self, SessionId};
+use crate::agent::Agent;
+use crate::state::{self, EditorState, SessionId};
+
+/// Parsed input from an agent hook invocation.
+///
+/// Each agent fills this from its own input source (e.g., Claude reads
+/// stdin JSON). The shared orchestrator functions consume it.
+#[derive(Debug, Default)]
+pub struct HookInput {
+    pub session_id: Option<SessionId>,
+    pub cwd: Option<Utf8PathBuf>,
+    /// User prompt text (UserPrompt hook only).
+    pub prompt: Option<String>,
+    /// Whether the stop hook was re-invoked after a previous block.
+    pub stop_hook_active: bool,
+}
+
+/// Structured stop decision with semantic variants.
+///
+/// Produced by the shared `stop_decision` logic, consumed by each agent's
+/// `attend_result` method to render agent-specific output.
+#[derive(Debug, PartialEq)]
+pub enum StopDecision {
+    /// No output needed.
+    Silent,
+    /// Narration moved to another session.
+    SessionMoved,
+    /// Pending narration to deliver.
+    PendingNarration { content: String },
+    /// No receiver running: agent should start one.
+    StartReceiver,
+}
 
 /// Per-session cache: tracks what was last emitted to a given session for deduplication.
 fn session_cache_path(session_id: &SessionId) -> Option<Utf8PathBuf> {
     Some(state::cache_dir()?.join(format!("cache-{session_id}.json")))
 }
 
-/// Read stdin and parse as JSON, returning `None` on any failure.
-fn read_stdin_json() -> Option<serde_json::Value> {
-    let mut buf = String::new();
-    io::stdin().read_to_string(&mut buf).ok()?;
-    serde_json::from_str(&buf).ok()
-}
-
-/// Handle the `SessionStart` hook: clear cache and emit format instructions.
+/// Handle the `SessionStart` hook: clear cache, auto-upgrade, emit instructions.
 ///
 /// On compact/clear, if this session is actively listening for narration,
 /// re-emit the narration skill instructions so the agent knows to restart
@@ -26,16 +50,11 @@ fn read_stdin_json() -> Option<serde_json::Value> {
 /// Also checks whether the running binary version matches the version that
 /// installed the hooks. On mismatch, auto-reinstalls for all previously
 /// installed agents and editors.
-pub fn session_start() -> anyhow::Result<()> {
-    let stdin_json = read_stdin_json();
-    let session_id: Option<SessionId> = stdin_json
-        .as_ref()
-        .and_then(|v| v.get("session_id"))
-        .and_then(|v| v.as_str())
-        .map(SessionId::from);
+pub fn session_start(agent: &dyn Agent) -> anyhow::Result<()> {
+    let input = agent.parse_hook_input();
 
     // Delete session cache file
-    if let Some(ref sid) = session_id
+    if let Some(ref sid) = input.session_id
         && let Some(cp) = session_cache_path(sid)
     {
         let _ = fs::remove_file(cp); // Best-effort: stale cache file may not exist
@@ -45,49 +64,41 @@ pub fn session_start() -> anyhow::Result<()> {
     // version: the version is saved after the attempt regardless of outcome.
     auto_upgrade_hooks();
 
-    let bin = std::env::current_exe()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "attend".to_string());
+    // Check whether this session is actively listening for narration.
+    let listening = state::listening_session();
+    let is_listening = input.session_id.is_some() && listening == input.session_id;
 
-    // Emit instructions (templated with the binary path)
-    print!(include_str!("instructions.txt"), bin_cmd = bin);
-
-    // If this session is actively listening for narration, re-emit the
-    // narration skill instructions so the agent restarts its background
-    // receiver after context compaction or clear.
-    if session_id.is_some() && state::listening_session() == session_id {
-        print!("{}", narration_instructions(&bin));
-    }
-
-    Ok(())
+    agent.session_start(&input, is_listening)
 }
 
 /// Handle the `UserPromptSubmit` hook: emit editor context if changed.
 ///
 /// When the prompt is `/attend`, activates narration mode instead of
 /// emitting editor context.
-pub fn run(cli_cwd: Option<Utf8PathBuf>) -> anyhow::Result<()> {
-    let stdin_json = read_stdin_json();
+pub fn user_prompt(agent: &dyn Agent, cli_cwd: Option<Utf8PathBuf>) -> anyhow::Result<()> {
+    let input = agent.parse_hook_input();
 
     // Check for /attend activation
-    if let Some(ref json) = stdin_json
-        && is_attend_prompt(json)
-    {
-        return handle_attend_activate(json);
+    if is_attend_prompt(&input) {
+        let session_id = input
+            .session_id
+            .ok_or_else(|| anyhow::anyhow!("no session_id in hook input"))?;
+
+        let Some(path) = state::listening_path() else {
+            return Err(anyhow::anyhow!("cannot determine cache directory"));
+        };
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        crate::util::atomic_write(&path, |file| {
+            use std::io::Write;
+            file.write_all(session_id.as_str().as_bytes())
+        })?;
+
+        return agent.attend_activate(&session_id);
     }
 
-    let session_id: Option<SessionId> = stdin_json
-        .as_ref()
-        .and_then(|v| v.get("session_id"))
-        .and_then(|v| v.as_str())
-        .map(SessionId::from);
-    let stdin_cwd = stdin_json
-        .as_ref()
-        .and_then(|v| v.get("cwd"))
-        .and_then(|v| v.as_str())
-        .map(Utf8PathBuf::from);
-
-    let cwd = cli_cwd.or(stdin_cwd).unwrap_or_else(|| {
+    let cwd = cli_cwd.or(input.cwd).unwrap_or_else(|| {
         Utf8PathBuf::try_from(std::env::current_dir().unwrap_or_default())
             .unwrap_or_else(|_| Utf8PathBuf::from("."))
     });
@@ -95,13 +106,14 @@ pub fn run(cli_cwd: Option<Utf8PathBuf>) -> anyhow::Result<()> {
     let config = crate::config::Config::load(&cwd);
 
     // Per-session cache: what this session last saw, used for deduplication.
-    let session_previous = session_id
+    let session_previous = input
+        .session_id
         .as_ref()
         .and_then(session_cache_path)
         .and_then(|cp| fs::read_to_string(&cp).ok())
-        .and_then(|s| serde_json::from_str::<state::EditorState>(&s).ok());
+        .and_then(|s| serde_json::from_str::<EditorState>(&s).ok());
 
-    let state = match state::EditorState::current(Some(&cwd), &config.include_dirs)? {
+    let state = match EditorState::current(Some(&cwd), &config.include_dirs)? {
         Some(s) => s,
         None => return Ok(()),
     };
@@ -112,7 +124,7 @@ pub fn run(cli_cwd: Option<Utf8PathBuf>) -> anyhow::Result<()> {
     }
 
     // Update session cache and emit.
-    if let Some(ref sid) = session_id
+    if let Some(ref sid) = input.session_id
         && let Some(cp) = session_cache_path(sid)
     {
         if let Some(parent) = cp.parent() {
@@ -125,19 +137,58 @@ pub fn run(cli_cwd: Option<Utf8PathBuf>) -> anyhow::Result<()> {
         }
     }
 
-    println!("<editor-context>\n{state}\n</editor-context>");
-    Ok(())
+    agent.editor_context(&state)
 }
 
-/// Decision from the stop hook logic.
-#[derive(Debug, PartialEq)]
-enum StopDecision {
-    /// Approve silently — no output needed.
-    Silent,
-    /// Approve with informational reason (e.g. session moved).
-    Approve { reason: String },
-    /// Block the stop with a reason (narration content or guidance).
-    Block { reason: String },
+/// Handle the `Stop` hook: deliver pending narration when the session stops.
+pub fn stop(agent: &dyn Agent) -> anyhow::Result<()> {
+    let input = agent.parse_hook_input();
+    let listening = state::listening_session();
+
+    // Resolve pending narration content (only if we're the active session).
+    let is_active = matches!(
+        (&listening, &input.session_id),
+        (Some(l), Some(h)) if l == h
+    );
+    let (pending_content, pending_files) = if is_active {
+        let session_id = listening.as_ref().unwrap();
+        let cwd = input.cwd.clone().unwrap_or_else(|| {
+            Utf8PathBuf::try_from(std::env::current_dir().unwrap_or_default())
+                .unwrap_or_else(|_| Utf8PathBuf::from("."))
+        });
+        let config = crate::config::Config::load(&cwd);
+        let files = crate::narrate::receive::collect_pending(session_id);
+        let content = crate::narrate::receive::read_pending(&files, &cwd, &config.include_dirs);
+        (content, files)
+    } else {
+        (None, Vec::new())
+    };
+
+    let decision = stop_decision(
+        input.session_id.as_ref(),
+        listening.as_ref(),
+        pending_content,
+        receiver_alive(),
+        input.stop_hook_active,
+    );
+
+    // Archive pending files when delivering narration.
+    if matches!(&decision, StopDecision::PendingNarration { .. })
+        && !pending_files.is_empty()
+        && let Some(ref sid) = listening
+    {
+        crate::narrate::receive::archive_pending(&pending_files, sid);
+    }
+
+    agent.attend_result(&decision)
+}
+
+/// Check if the user prompt is `/attend`.
+fn is_attend_prompt(input: &HookInput) -> bool {
+    input
+        .prompt
+        .as_deref()
+        .is_some_and(|p| p.trim() == "/attend")
 }
 
 /// Pure decision logic for the stop hook.
@@ -158,15 +209,8 @@ fn stop_decision(
     match (listening_session, hook_session_id) {
         // We are the active listening session — check for narration.
         (Some(listening_sid), Some(hook_sid)) if listening_sid == hook_sid => {}
-        // Narration is active in a different session — inform Claude.
-        (Some(_), Some(_)) => {
-            return StopDecision::Approve {
-                reason: "Narration has moved to a session with another agent. \
-                    Do not restart the background receiver. \
-                    If the user wants narration in this session, they will type /attend."
-                    .to_string(),
-            };
-        }
+        // Narration is active in a different session.
+        (Some(_), Some(_)) => return StopDecision::SessionMoved,
         // No listening session at all — approve silently.
         _ => return StopDecision::Silent,
     }
@@ -174,7 +218,7 @@ fn stop_decision(
     // We are the active session. Pending narration always takes priority —
     // deliver it regardless of stop_hook_active.
     if let Some(content) = pending_content {
-        return StopDecision::Block { reason: content };
+        return StopDecision::PendingNarration { content };
     }
 
     // No narration. If a receiver is running, it will handle future delivery.
@@ -189,78 +233,7 @@ fn stop_decision(
     }
 
     // First attempt, no receiver — ask the agent to start one.
-    StopDecision::Block {
-        reason: "Run `attend listen` in the background to wait for the next narration.".to_string(),
-    }
-}
-
-/// Handle the `Stop` hook: deliver pending narration when the session stops.
-pub fn stop() -> anyhow::Result<()> {
-    let stdin_json = read_stdin_json();
-
-    let hook_session_id: Option<SessionId> = stdin_json
-        .as_ref()
-        .and_then(|v| v.get("session_id"))
-        .and_then(|v| v.as_str())
-        .map(SessionId::from);
-
-    let listening = state::listening_session();
-
-    // Resolve pending narration content (only if we're the active session).
-    let is_active = matches!(
-        (&listening, &hook_session_id),
-        (Some(l), Some(h)) if l == h
-    );
-    let (pending_content, pending_files) = if is_active {
-        let session_id = listening.as_ref().unwrap();
-        let cwd_str = stdin_json
-            .as_ref()
-            .and_then(|v| v.get("cwd"))
-            .and_then(|v| v.as_str());
-        let cwd = cwd_str.map(Utf8PathBuf::from).unwrap_or_else(|| {
-            Utf8PathBuf::try_from(std::env::current_dir().unwrap_or_default())
-                .unwrap_or_else(|_| Utf8PathBuf::from("."))
-        });
-        let config = crate::config::Config::load(&cwd);
-        let files = crate::narrate::receive::collect_pending(session_id);
-        let content = crate::narrate::receive::read_pending(&files, &cwd, &config.include_dirs);
-        (content, files)
-    } else {
-        (None, Vec::new())
-    };
-
-    let stop_hook_active = stdin_json
-        .as_ref()
-        .and_then(|v| v.get("stop_hook_active"))
-        .is_some_and(|v| v.as_bool() == Some(true) || v.as_str() == Some("true"));
-
-    let decision = stop_decision(
-        hook_session_id.as_ref(),
-        listening.as_ref(),
-        pending_content,
-        receiver_alive(),
-        stop_hook_active,
-    );
-
-    match decision {
-        StopDecision::Silent => {}
-        StopDecision::Approve { reason } => {
-            let response = serde_json::json!({ "decision": "approve", "reason": reason });
-            println!("{}", serde_json::to_string(&response)?);
-        }
-        StopDecision::Block { reason } => {
-            // Archive pending files if we blocked with narration content.
-            if !pending_files.is_empty()
-                && let Some(ref sid) = listening
-            {
-                crate::narrate::receive::archive_pending(&pending_files, sid);
-            }
-            let response = serde_json::json!({ "decision": "block", "reason": reason });
-            println!("{}", serde_json::to_string(&response)?);
-        }
-    }
-
-    Ok(())
+    StopDecision::StartReceiver
 }
 
 /// Check whether a background `receive --wait` process is alive.
@@ -273,53 +246,6 @@ fn receiver_alive() -> bool {
         return false;
     };
     crate::narrate::process_alive(pid)
-}
-
-/// Build narration skill instructions for re-emission after context compaction.
-///
-/// Uses `claude_skill_body.md` — the same body as the installed SKILL.md,
-/// so the instructions stay consistent with the skill template.
-fn narration_instructions(bin_cmd: &str) -> String {
-    let body = format!(
-        include_str!("agent/claude_skill_body.md"),
-        bin_cmd = bin_cmd
-    );
-    format!("\n<narration-instructions>\n{body}</narration-instructions>\n")
-}
-
-/// Check if the user prompt is `/attend`.
-fn is_attend_prompt(json: &serde_json::Value) -> bool {
-    json.get("prompt")
-        .and_then(|v| v.as_str())
-        .is_some_and(|p| p.trim() == "/attend")
-}
-
-/// Activate narration mode for this session.
-fn handle_attend_activate(json: &serde_json::Value) -> anyhow::Result<()> {
-    let session_id: SessionId = json
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("no session_id in hook stdin"))?
-        .into();
-
-    let Some(path) = crate::state::listening_path() else {
-        return Err(anyhow::anyhow!("cannot determine cache directory"));
-    };
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    crate::util::atomic_write(&path, |file| {
-        use std::io::Write;
-        file.write_all(session_id.as_str().as_bytes())
-    })?;
-
-    let response = serde_json::json!({
-        "additionalContext": "Narration mode activated for this session. \
-            Listening for voice input.\n\n\
-            Run `attend listen` in the background to wait for narration."
-    });
-    println!("{}", serde_json::to_string(&response)?);
-    Ok(())
 }
 
 /// Auto-upgrade hooks and editor integration when the running binary version
@@ -365,6 +291,7 @@ fn auto_upgrade_hooks() {
         agents: meta.agents,
         editors: meta.editors,
         dev: meta.dev,
+        project_paths: meta.project_paths,
     });
 
     eprintln!("attend: hooks upgraded from {} to {running}", meta.version);

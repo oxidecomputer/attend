@@ -12,7 +12,7 @@ categories = ["command-line-utilities", "development-tools"]
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive", "color"] }
-crossterm = "0.28"
+crossterm = "0.29"
 clap_complete = "4"
 dirs = "6"
 camino = { version = "1", features = ["serde1"] }
@@ -42,7 +42,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ureq = "3"
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 insta = "1"
 proptest = "1"
 tempfile = "3"
