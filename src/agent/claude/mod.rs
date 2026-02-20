@@ -32,6 +32,10 @@ impl Agent for Claude {
         output::attend_activate(session_id)
     }
 
+    fn deliver_narration(&self, content: &str) -> anyhow::Result<()> {
+        output::deliver_narration(content)
+    }
+
     fn attend_result(&self, decision: &HookDecision, hook_type: HookType) -> anyhow::Result<()> {
         output::attend_result(decision, hook_type)
     }

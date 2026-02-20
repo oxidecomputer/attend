@@ -15,7 +15,7 @@ use super::types::{GuidanceReason, HookDecision};
 pub(super) fn hook_decision(
     hook_session_id: Option<&SessionId>,
     listening_session: Option<&SessionId>,
-    pending_content: Option<String>,
+    has_pending: bool,
     receiver_alive: bool,
     stop_hook_active: bool,
 ) -> HookDecision {
@@ -28,13 +28,11 @@ pub(super) fn hook_decision(
         _ => return HookDecision::Silent,
     }
 
-    // We are the active session. Pending narration always takes priority —
-    // deliver it regardless of stop_hook_active.
-    if let Some(content) = pending_content {
-        return HookDecision::PendingNarration {
-            content,
-            effect: super::types::GuidanceEffect::Block,
-        };
+    // We are the active session. Pending narration always takes priority:
+    // tell the agent to run `attend listen` so PreToolUse can deliver
+    // the content and start a new receiver in one round trip.
+    if has_pending {
+        return HookDecision::block(GuidanceReason::NarrationReady);
     }
 
     // No narration. If a receiver is running, it will handle future delivery.

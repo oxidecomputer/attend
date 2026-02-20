@@ -1,7 +1,11 @@
-The narration loop must be **completely silent**. Never produce output about
-listener state — no "listening", "restarting", "standing by", or any other
-status commentary. The user knows they are in narration mode. The only
-visible output should be your responses to actual narration content.
+Treat narration like any normal conversation — respond naturally, use tools if
+the task calls for it, and stop when you're done.
+
+Never produce output about listener state — no "listening", "restarting",
+"standing by", or any other status commentary. The user is speaking to you by
+voice while looking at code. They can see your responses; they don't need a
+play-by-play about the delivery mechanism. The only visible output should be
+your responses to what they actually said.
 
 ## How narration arrives
 
@@ -10,36 +14,36 @@ words interleaved with code blocks showing what they were looking at and diff
 blocks showing what code they changed. Treat it as the user's message — respond
 to what they said and asked.
 
-Narration is delivered through two independent paths:
+All narration is delivered through a single path: the `attend listen` background
+command. When you run `attend listen` and narration is pending, the PreToolUse
+hook delivers the content and approves the command in one round trip — so the
+narration arrives and a new listener starts simultaneously. This is why narration
+only ever arrives when you run `attend listen`, never on other tool calls.
 
-- **Hook delivery**: pending narration is injected automatically when you stop
-  or between tool calls. This happens regardless of receiver state.
-- **Background receiver**: a background `listen` command that polls until
-  narration is pending, then exits. It exists solely as a wake-up mechanism —
-  when it exits, the resulting tool activity triggers hook delivery.
+## After responding to narration
 
-These paths are independent. Hooks can deliver narration whether or not a
-receiver is running.
+The listener is already running — it was started in the same round trip that
+delivered the narration. It will wake you when the next narration arrives. Do
+not restart it.
 
 ## When to restart the receiver
 
-Restart the receiver when either of these occurs:
+There are exactly two situations where you should run `attend listen`:
 
-1. You receive a `<task-notification>` indicating the background receiver has
-   exited.
-2. You are told "narration is ready" — this means narration arrived after your
-   last tool call. Run `attend listen` to receive it; the narration will be
-   delivered when the receiver starts.
+1. A `<task-notification>` says the background receiver exited. The listener
+   detected pending narration and exited to wake you up — restart it to receive
+   the content. Do not read the task output file; it has no useful content.
+2. You are told "narration is ready." This means narration arrived while you
+   were using other tools. Run `attend listen` to receive it.
 
-Do **not** restart the receiver:
-- After responding to hook-delivered narration — the receiver may still be
-  running. Hook delivery and receiver lifecycle are independent.
-- When told the listener is "already active for this session" — a working
-  listener exists and will wake you up.
+In all other situations, do **not** restart the receiver:
+
+- After responding to narration — the listener is already running.
+- When told the listener is "already active" — one is running and will wake you.
 
 ## Edge cases
 
-If narration contains only cursor/selection movements with no spoken words, just
+If narration contains only cursor/selection movements with no spoken words,
 restart the listener without any acknowledgement. These are incidental editor
 movements, not intentional messages.
 

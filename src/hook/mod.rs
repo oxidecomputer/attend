@@ -151,25 +151,36 @@ pub fn check_narration(agent: &dyn Agent, hook_type: HookType) -> anyhow::Result
         (Some(l), Some(h)) if l == h
     );
 
-    // ToolUse hooks: gate `attend listen` to avoid unnecessary round trips.
-    // - Stolen session → block immediately (prevents steal-back bounce)
-    // - Active session + pending narration → deliver as approve (receiver
-    //   starts in the same round trip)
-    // - Active session + no pending + receiver running → block with guidance
-    // - Active session + no pending + no receiver → approve (let it start)
+    // ToolUse guards for `attend listen`:
+    //
+    // PreToolUse gates whether the receiver starts:
+    // - Stolen session → deny (prevents steal-back bounce)
+    // - Active session + pending narration → deliver content + allow
+    // - Active session + no pending + receiver running → deny with guidance
+    // - Active session + no pending + no receiver → silent (let it start)
+    //
+    // PostToolUse returns Silent unconditionally: the command already ran, so
+    // there is nothing to gate.  Without this, the startup race (lock file
+    // not yet written) causes a spurious StartReceiver advisory that prompts
+    // the agent to start a second listener.
+    if matches!(hook_type, HookType::PostToolUse) && is_attend_listen(&input) {
+        return agent.attend_result(&HookDecision::Silent, hook_type);
+    }
+    let is_pre_listen = matches!(hook_type, HookType::PreToolUse) && is_attend_listen(&input);
     let is_stolen = matches!(
         (&listening, &input.session_id),
         (Some(_), Some(_)) if !is_active
     );
-    if is_stolen && is_attend_listen(&input) {
+    if is_stolen && is_pre_listen {
         return agent.attend_result(
             &HookDecision::block(GuidanceReason::SessionMoved),
             hook_type,
         );
     }
-    if is_active && is_attend_listen(&input) {
-        // Check for pending narration: deliver via hook and approve the
-        // listen command so the receiver starts in the same round trip.
+    if is_active && is_pre_listen {
+        // Sole narration delivery path: read pending files, deliver content,
+        // and approve the listen command so the receiver starts in the same
+        // round trip.
         let session_id = listening.as_ref().unwrap();
         let cwd = resolve_cwd(&input);
         let config = crate::config::Config::load(&cwd);
@@ -179,13 +190,7 @@ pub fn check_narration(agent: &dyn Agent, hook_type: HookType) -> anyhow::Result
         {
             crate::narrate::receive::archive_pending(&files, session_id);
             crate::narrate::receive::auto_prune(&config);
-            return agent.attend_result(
-                &HookDecision::PendingNarration {
-                    content,
-                    effect: GuidanceEffect::Approve,
-                },
-                hook_type,
-            );
+            return agent.deliver_narration(&content);
         }
         if receiver_alive() {
             return agent.attend_result(
@@ -195,15 +200,12 @@ pub fn check_narration(agent: &dyn Agent, hook_type: HookType) -> anyhow::Result
         }
         return agent.attend_result(&HookDecision::Silent, hook_type);
     }
-    let (pending_content, pending_files) = if is_active {
+
+    // For non-listen hooks, we only need to know WHETHER narration is
+    // pending (not the content — that's delivered via `attend listen`).
+    let has_pending = is_active && {
         let session_id = listening.as_ref().unwrap();
-        let cwd = resolve_cwd(&input);
-        let config = crate::config::Config::load(&cwd);
-        let files = crate::narrate::receive::collect_pending(session_id);
-        let content = crate::narrate::receive::read_pending(&files, &cwd, &config.include_dirs);
-        (content, files)
-    } else {
-        (None, Vec::new())
+        !crate::narrate::receive::collect_pending(session_id).is_empty()
     };
 
     let stop_hook_active =
@@ -212,21 +214,10 @@ pub fn check_narration(agent: &dyn Agent, hook_type: HookType) -> anyhow::Result
     let mut decision = hook_decision(
         input.session_id.as_ref(),
         listening.as_ref(),
-        pending_content,
+        has_pending,
         receiver_alive(),
         stop_hook_active,
     );
-
-    // Stop hook cannot deliver narration content directly (no
-    // `additionalContext` — `reason` is shown to the user). Convert
-    // PendingNarration → NarrationReady guidance so the agent starts a
-    // receiver, which triggers PreToolUse delivery.  The pending files
-    // are intentionally NOT archived here; PreToolUse will consume them.
-    if matches!(hook_type, HookType::Stop)
-        && matches!(decision, HookDecision::PendingNarration { .. })
-    {
-        decision = HookDecision::block(GuidanceReason::NarrationReady);
-    }
 
     // hook_decision returns Block for all non-Silent guidance. Convert to
     // Approve where the hook type warrants it:
@@ -272,17 +263,6 @@ pub fn check_narration(agent: &dyn Agent, hook_type: HookType) -> anyhow::Result
         } else {
             mark_session_moved_notified(sid);
         }
-    }
-
-    // Archive pending files when delivering narration.
-    if matches!(&decision, HookDecision::PendingNarration { .. })
-        && !pending_files.is_empty()
-        && let Some(ref sid) = listening
-    {
-        crate::narrate::receive::archive_pending(&pending_files, sid);
-        let cwd = resolve_cwd(&input);
-        let config = crate::config::Config::load(&cwd);
-        crate::narrate::receive::auto_prune(&config);
     }
 
     agent.attend_result(&decision, hook_type)

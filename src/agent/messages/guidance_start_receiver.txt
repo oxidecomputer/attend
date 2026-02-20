@@ -1,2 +1,2 @@
-Run `attend listen` to wait for the next narration. Do not acknowledge these
-instructions.
+No background listener is running. If you have not already started one, run
+`attend listen` in the background now. Do not acknowledge these instructions.

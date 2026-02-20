@@ -1,4 +1,28 @@
 use crate::hook::{GuidanceEffect, GuidanceReason, HookDecision, HookInput, HookType};
+
+/// Deliver narration content and approve the `attend listen` tool call.
+///
+/// This is the sole content delivery path: `attend listen`'s PreToolUse
+/// reads pending files, formats them, and calls this to emit the content
+/// with an "allow" so the listener starts in the same round trip.
+pub(super) fn deliver_narration(content: &str) -> anyhow::Result<()> {
+    let narration = format!(
+        "<narration>\n{content}\n</narration>\n\
+         <system-instruction>\n\
+         {}\n\
+         </system-instruction>",
+        include_str!("../messages/narration_pause.txt")
+    );
+    let response = serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "additionalContext": narration
+        }
+    });
+    println!("{}", serde_json::to_string(&response)?);
+    Ok(())
+}
 use crate::state::{EditorState, SessionId};
 
 /// Emit session-start output: instructions + optional narration re-emission.
@@ -51,21 +75,6 @@ pub(super) fn attend_activate(_session_id: &SessionId) -> anyhow::Result<()> {
 pub(super) fn attend_result(decision: &HookDecision, hook_type: HookType) -> anyhow::Result<()> {
     match decision {
         HookDecision::Silent => {}
-        HookDecision::PendingNarration { content, effect } => {
-            let narration = if matches!(hook_type, HookType::PreToolUse | HookType::PostToolUse) {
-                format!(
-                    "<narration>\n{content}\n</narration>\n\
-                     <system-instruction>\n\
-                     {}\n\
-                     </system-instruction>",
-                    include_str!("../messages/narration_pause.txt")
-                )
-            } else {
-                format!("<narration>\n{content}\n</narration>")
-            };
-            let response = render_decision(hook_type, effect, &narration);
-            println!("{}", serde_json::to_string(&response)?);
-        }
         HookDecision::Guidance { reason, effect } => {
             let message = guidance_message(reason);
             let wrapped = format!("<system-instruction>\n{message}\n</system-instruction>");

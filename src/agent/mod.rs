@@ -26,6 +26,13 @@ pub trait Agent: Sync {
     fn editor_context(&self, state: &EditorState) -> anyhow::Result<()>;
     /// Emit /attend activation response.
     fn attend_activate(&self, session_id: &SessionId) -> anyhow::Result<()>;
+    /// Deliver narration content and approve the `attend listen` tool call.
+    ///
+    /// Called from the `attend listen` PreToolUse path — the sole content
+    /// delivery mechanism. The agent formats the narration for its output
+    /// protocol and emits an "approve" so the listener starts in the same
+    /// round trip.
+    fn deliver_narration(&self, content: &str) -> anyhow::Result<()>;
     /// Emit hook decision. `hook_type` controls output format (e.g.,
     /// PreToolUse approves `StartReceiver` rather than blocking).
     fn attend_result(&self, decision: &HookDecision, hook_type: HookType) -> anyhow::Result<()>;

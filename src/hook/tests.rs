@@ -13,7 +13,7 @@ fn sid(s: &str) -> SessionId {
 #[test]
 fn stop_no_listening_session() {
     let hook = sid("abc");
-    let d = hook_decision(Some(&hook), None, None, false, false);
+    let d = hook_decision(Some(&hook), None, false, false, false);
     assert_eq!(d, HookDecision::Silent);
 }
 
@@ -21,14 +21,14 @@ fn stop_no_listening_session() {
 #[test]
 fn stop_no_hook_session_id() {
     let listening = sid("abc");
-    let d = hook_decision(None, Some(&listening), None, false, false);
+    let d = hook_decision(None, Some(&listening), false, false, false);
     assert_eq!(d, HookDecision::Silent);
 }
 
 /// Neither session present: approve silently.
 #[test]
 fn stop_neither_session() {
-    let d = hook_decision(None, None, None, false, false);
+    let d = hook_decision(None, None, false, false, false);
     assert_eq!(d, HookDecision::Silent);
 }
 
@@ -37,75 +37,39 @@ fn stop_neither_session() {
 fn stop_session_moved() {
     let hook = sid("mine");
     let listening = sid("other");
-    let d = hook_decision(Some(&hook), Some(&listening), None, false, false);
+    let d = hook_decision(Some(&hook), Some(&listening), false, false, false);
     assert_eq!(d, HookDecision::block(GuidanceReason::SessionMoved));
 }
 
-/// Active session with pending narration: block with content.
+/// Active session with pending narration: block with NarrationReady.
 #[test]
-fn stop_active_with_pending_narration() {
+fn decision_active_pending_narration() {
     let s = sid("abc");
-    let d = hook_decision(
-        Some(&s),
-        Some(&s),
-        Some("<narration>hello</narration>".into()),
-        false,
-        false,
-    );
-    assert!(matches!(
-        d,
-        HookDecision::PendingNarration {
-            ref content,
-            effect: GuidanceEffect::Block,
-        } if content.contains("hello")
-    ));
+    let d = hook_decision(Some(&s), Some(&s), true, false, false);
+    assert_eq!(d, HookDecision::block(GuidanceReason::NarrationReady));
 }
 
 /// Pending narration takes priority over a running receiver.
 #[test]
-fn stop_active_pending_takes_priority_over_receiver() {
+fn decision_pending_takes_priority_over_receiver() {
     let s = sid("abc");
-    let d = hook_decision(
-        Some(&s),
-        Some(&s),
-        Some("<narration>hello</narration>".into()),
-        true,
-        false,
-    );
-    assert!(matches!(
-        d,
-        HookDecision::PendingNarration {
-            ref content,
-            effect: GuidanceEffect::Block,
-        } if content.contains("hello")
-    ));
+    let d = hook_decision(Some(&s), Some(&s), true, true, false);
+    assert_eq!(d, HookDecision::block(GuidanceReason::NarrationReady));
 }
 
 /// Pending narration takes priority even on re-invocation.
 #[test]
-fn stop_active_pending_takes_priority_over_reentry() {
+fn decision_pending_takes_priority_over_reentry() {
     let s = sid("abc");
-    let d = hook_decision(
-        Some(&s),
-        Some(&s),
-        Some("<narration>hello</narration>".into()),
-        false,
-        true,
-    );
-    assert!(matches!(
-        d,
-        HookDecision::PendingNarration {
-            ref content,
-            effect: GuidanceEffect::Block,
-        } if content.contains("hello")
-    ));
+    let d = hook_decision(Some(&s), Some(&s), true, false, true);
+    assert_eq!(d, HookDecision::block(GuidanceReason::NarrationReady));
 }
 
 /// Receiver alive, no pending: approve silently.
 #[test]
 fn stop_active_receiver_alive_no_pending() {
     let s = sid("abc");
-    let d = hook_decision(Some(&s), Some(&s), None, true, false);
+    let d = hook_decision(Some(&s), Some(&s), false, true, false);
     assert_eq!(d, HookDecision::Silent);
 }
 
@@ -113,7 +77,7 @@ fn stop_active_receiver_alive_no_pending() {
 #[test]
 fn stop_active_no_receiver_no_pending() {
     let s = sid("abc");
-    let d = hook_decision(Some(&s), Some(&s), None, false, false);
+    let d = hook_decision(Some(&s), Some(&s), false, false, false);
     assert_eq!(d, HookDecision::block(GuidanceReason::StartReceiver));
 }
 
@@ -121,7 +85,7 @@ fn stop_active_no_receiver_no_pending() {
 #[test]
 fn stop_active_reentry_no_receiver_approves() {
     let s = sid("abc");
-    let d = hook_decision(Some(&s), Some(&s), None, false, true);
+    let d = hook_decision(Some(&s), Some(&s), false, false, true);
     assert_eq!(d, HookDecision::Silent);
 }
 
@@ -129,7 +93,7 @@ fn stop_active_reentry_no_receiver_approves() {
 #[test]
 fn stop_active_reentry_receiver_alive_approves() {
     let s = sid("abc");
-    let d = hook_decision(Some(&s), Some(&s), None, true, true);
+    let d = hook_decision(Some(&s), Some(&s), false, true, true);
     assert_eq!(d, HookDecision::Silent);
 }
 

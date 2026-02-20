@@ -48,20 +48,16 @@ pub enum HookKind {
 ///
 /// Produced by `check_narration` / `hook_decision`, consumed by each agent's
 /// `attend_result` method to render agent-specific output.
+///
+/// Narration content is delivered separately via `Agent::deliver_narration`,
+/// not through this enum. This enum only carries guidance decisions.
 #[derive(Debug, PartialEq)]
 pub enum HookDecision {
     /// No output needed.
     Silent,
-    /// Pending narration to deliver. Effect controls whether the current
-    /// action is blocked (default for non-listen tools) or approved (for
-    /// `attend listen`, so the receiver starts in the same round trip).
-    PendingNarration {
-        content: String,
-        effect: GuidanceEffect,
-    },
-    /// Non-narration guidance for the agent. The `effect` field (block/approve)
-    /// is decided by business logic upstream — the agent renderer should not
-    /// transform one into the other.
+    /// Guidance for the agent. The `effect` field (block/approve) is decided
+    /// by business logic upstream — the agent renderer should not transform
+    /// one into the other.
     Guidance {
         reason: GuidanceReason,
         effect: GuidanceEffect,
@@ -78,9 +74,9 @@ pub enum GuidanceReason {
     SessionMoved,
     /// No background receiver is running: agent should start one.
     StartReceiver,
-    /// Narration is pending but the current hook cannot deliver content
-    /// directly (e.g. Stop hook has no `additionalContext`). The agent
-    /// should start a receiver so PreToolUse can deliver the narration.
+    /// Narration is pending. The agent should run `attend listen` so its
+    /// PreToolUse hook can deliver the content and start a new receiver
+    /// in one round trip.
     NarrationReady,
     /// A listener is already active for this session.
     ListenerAlreadyActive,
