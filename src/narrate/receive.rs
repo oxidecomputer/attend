@@ -16,6 +16,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 
 use super::merge::Event;
 use super::render::{self, SnipConfig};
+use super::transcribe::Engine;
 use super::{archive_dir, pending_dir, receive_lock_path, resolve_session};
 use crate::config::Config;
 use crate::state::SessionId;
@@ -148,6 +149,17 @@ pub(crate) fn archive_pending(files: &[PathBuf], session_id: &SessionId) {
     let _ = fs::remove_dir(&dir);
 }
 
+/// Prune archived narrations older than the configured retention period.
+/// No-op if retention is `"forever"` or the archive doesn't exist.
+fn auto_prune(config: &Config) {
+    if let Some(retention) = config.retention_duration() {
+        let archive_root = super::cache_dir().join("archive");
+        if archive_root.exists() {
+            super::clean::clean_archive_dir(archive_root.as_std_path(), retention);
+        }
+    }
+}
+
 /// Try to acquire an exclusive lock file via the `lockfile` crate.
 ///
 /// If the lock is held by a dead process (stale), cleans up and retries once.
@@ -211,6 +223,7 @@ fn run_once(session_id: Option<SessionId>) -> anyhow::Result<()> {
         Some(content) => {
             print!("{content}");
             archive_pending(&files, &session_id);
+            auto_prune(&config);
             Ok(())
         }
         None => std::process::exit(1),
@@ -233,6 +246,27 @@ fn run_wait(session_id: Option<SessionId>) -> anyhow::Result<()> {
         )
     })?;
     let config = Config::load(&cwd);
+
+    // Pre-download the transcription model if missing. The daemon would
+    // download it on first recording anyway, but starting here means the
+    // model is likely ready before the user presses record. The download
+    // runs on a background thread so we can start polling immediately.
+    let engine = config.engine.unwrap_or(Engine::Parakeet);
+    let model_path = config
+        .model
+        .clone()
+        .unwrap_or_else(|| engine.default_model_path());
+    if !engine.is_model_cached(&model_path) {
+        println!(
+            "Downloading {} model. First narration will be delayed until the download finishes.",
+            engine.display_name()
+        );
+        thread::spawn(move || {
+            if let Err(e) = engine.ensure_model(&model_path) {
+                eprintln!("Model download failed: {e}");
+            }
+        });
+    }
 
     // Acquire exclusive lock
     let lock_path = receive_lock_path();
@@ -267,6 +301,7 @@ fn run_wait(session_id: Option<SessionId>) -> anyhow::Result<()> {
             print!("{content}");
             println!("{REDISPATCH_MSG}");
             archive_pending(&files, &session_id);
+            auto_prune(&config);
             return Ok(());
         }
 

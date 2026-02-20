@@ -25,6 +25,9 @@ pub struct Config {
     pub model: Option<Utf8PathBuf>,
     /// Seconds of silence before splitting a recording segment (default 5.0; 0 to disable).
     pub silence_duration: Option<f64>,
+    /// How long to keep archived narrations (e.g. `"7d"`, `"24h"`).
+    /// Set to `"forever"` to disable automatic cleanup. Defaults to `"7d"`.
+    pub archive_retention: Option<String>,
 }
 
 impl Config {
@@ -61,6 +64,16 @@ impl Config {
     ///
     /// Arrays are concatenated. Scalar fields use "first wins" semantics:
     /// the existing value is kept if already set, otherwise the new value is taken.
+    /// Parse `archive_retention` to a [`Duration`], returning `None` for
+    /// `"forever"` (cleanup disabled). Defaults to 7 days when unset.
+    pub fn retention_duration(&self) -> Option<std::time::Duration> {
+        match self.archive_retention.as_deref() {
+            Some("forever") => None,
+            Some(s) => humantime::parse_duration(s).ok(),
+            None => Some(std::time::Duration::from_secs(7 * 24 * 60 * 60)),
+        }
+    }
+
     pub fn merge(&mut self, other: Config) {
         self.include_dirs.extend(other.include_dirs);
         if self.engine.is_none() {
@@ -71,6 +84,9 @@ impl Config {
         }
         if self.silence_duration.is_none() {
             self.silence_duration = other.silence_duration;
+        }
+        if self.archive_retention.is_none() {
+            self.archive_retention = other.archive_retention;
         }
     }
 }

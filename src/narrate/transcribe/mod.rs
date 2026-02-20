@@ -55,17 +55,36 @@ impl Engine {
         }
     }
 
+    /// Check whether the model files are already cached at `path`.
+    pub fn is_model_cached(&self, path: &Utf8Path) -> bool {
+        match self {
+            Engine::Whisper => path.exists(),
+            Engine::Parakeet => parakeet::is_model_cached(path),
+        }
+    }
+
+    /// Download model files to `path` if not already present (does not load).
+    pub fn ensure_model(&self, path: &Utf8Path) -> anyhow::Result<()> {
+        match self {
+            Engine::Whisper => whisper::ensure_model(path),
+            Engine::Parakeet => parakeet::ensure_model(path),
+        }
+    }
+
+    /// Human-readable engine name for status messages.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Engine::Whisper => "Whisper",
+            Engine::Parakeet => "Parakeet TDT",
+        }
+    }
+
     /// Ensure the model exists (downloading if needed) and load it.
     pub fn preload(&self, path: &Utf8Path) -> anyhow::Result<Box<dyn Transcriber>> {
+        self.ensure_model(path)?;
         match self {
-            Engine::Whisper => {
-                whisper::ensure_model(path)?;
-                Ok(Box::new(whisper::WhisperTranscriber::load(path)?))
-            }
-            Engine::Parakeet => {
-                parakeet::ensure_model(path)?;
-                Ok(Box::new(parakeet::ParakeetTranscriber::load(path)?))
-            }
+            Engine::Whisper => Ok(Box::new(whisper::WhisperTranscriber::load(path)?)),
+            Engine::Parakeet => Ok(Box::new(parakeet::ParakeetTranscriber::load(path)?)),
         }
     }
 

@@ -26,9 +26,9 @@ pub struct SnipConfig {
 impl Default for SnipConfig {
     fn default() -> Self {
         Self {
-            threshold: 20,
-            head: 10,
-            tail: 5,
+            threshold: 5,
+            head: 3,
+            tail: 2,
         }
     }
 }
@@ -37,7 +37,10 @@ impl Default for SnipConfig {
 ///
 /// Returns the original string unchanged if it fits, otherwise keeps the
 /// first `head` and last `tail` lines with an omission marker.
-fn snip(text: &str, cfg: SnipConfig) -> String {
+///
+/// When `first_line` is provided, the marker includes the actual line range
+/// (e.g. `lines 45-78`) so an agent can request exactly those lines.
+fn snip(text: &str, cfg: SnipConfig, first_line: Option<usize>) -> String {
     let lines: Vec<&str> = text.lines().collect();
     if lines.len() <= cfg.threshold {
         return text.to_string();
@@ -48,7 +51,16 @@ fn snip(text: &str, cfg: SnipConfig) -> String {
         out.push_str(line);
         out.push('\n');
     }
-    out.push_str(&format!("// ... ({omitted} lines omitted)\n"));
+    match first_line {
+        Some(base) => {
+            let start = base + cfg.head;
+            let end = start + omitted - 1;
+            out.push_str(&format!("// ... (lines {start}-{end} omitted)\n"));
+        }
+        None => {
+            out.push_str(&format!("// ... ({omitted} lines omitted)\n"));
+        }
+    }
     for line in &lines[lines.len() - cfg.tail..] {
         out.push_str(line);
         out.push('\n');
@@ -135,7 +147,7 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                         out.push('\n');
                     }
                     out.push('\n');
-                    let snipped = snip(&file.content, snip_cfg);
+                    let snipped = snip(&file.content, snip_cfg, Some(file.first_line as usize));
                     out.push_str("```\n");
                     out.push_str(&format!("// {}:{}\n", file.path, file.first_line));
                     out.push_str(&snipped);
@@ -158,7 +170,7 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                     out.push('\n');
                 }
                 out.push('\n');
-                let snipped = snip(&diff, snip_cfg);
+                let snipped = snip(&diff, snip_cfg, None);
                 out.push_str("```diff\n");
                 out.push_str(&format!("// {path}\n"));
                 out.push_str(&snipped);
@@ -247,7 +259,7 @@ mod tests {
             head: 2,
             tail: 1,
         };
-        assert_eq!(snip(text, cfg), text);
+        assert_eq!(snip(text, cfg, None), text);
     }
 
     #[test]
@@ -258,8 +270,23 @@ mod tests {
             head: 2,
             tail: 1,
         };
-        let result = snip(text, cfg);
-        assert_eq!(result, "a\nb\n// ... (3 lines omitted)\nf\n");
+        // Without line numbers
+        assert_eq!(snip(text, cfg, None), "a\nb\n// ... (3 lines omitted)\nf\n");
+    }
+
+    #[test]
+    fn snip_with_line_range() {
+        let text = "a\nb\nc\nd\ne\nf\n";
+        let cfg = SnipConfig {
+            threshold: 5,
+            head: 2,
+            tail: 1,
+        };
+        // first_line=10: head keeps lines 10-11, omits 12-14, tail keeps line 15
+        assert_eq!(
+            snip(text, cfg, Some(10)),
+            "a\nb\n// ... (lines 12-14 omitted)\nf\n"
+        );
     }
 
     #[test]
@@ -274,6 +301,6 @@ mod tests {
             head: 2,
             tail: 1,
         };
-        assert_eq!(snip(&text, cfg), text);
+        assert_eq!(snip(&text, cfg, Some(1)), text);
     }
 }

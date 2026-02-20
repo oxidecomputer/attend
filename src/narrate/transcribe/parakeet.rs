@@ -106,10 +106,14 @@ impl super::Transcriber for ParakeetTranscriber {
     }
 }
 
+/// Check whether all Parakeet model files are present.
+pub(super) fn is_model_cached(dir: &Utf8Path) -> bool {
+    MODEL_FILES.iter().all(|f| dir.join(f).exists())
+}
+
 /// Ensure the Parakeet TDT model directory exists with all required files.
 pub(super) fn ensure_model(dir: &Utf8Path) -> anyhow::Result<()> {
-    let all_present = MODEL_FILES.iter().all(|f| dir.join(f).exists());
-    if all_present {
+    if is_model_cached(dir) {
         return Ok(());
     }
     download_model(dir)

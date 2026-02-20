@@ -10,11 +10,24 @@ use anyhow::Context;
 
 use super::{Editor, QueryResult};
 
-/// Known narration keybindings (current + legacy).
+/// Known narration keybindings (both platforms, for detection + uninstall).
 const NARRATION_KEYS: &[&str] = &[
-    "cmd-:", // start (current)
-    "cmd-;", // toggle (current)
+    "cmd-:",   // start (macOS)
+    "cmd-;",   // toggle (macOS)
+    "super-:", // start (Linux)
+    "super-;", // toggle (Linux)
 ];
+
+/// Platform-appropriate modifier for Zed keybindings.
+///
+/// Zed's `cmd` means Command on macOS; on Linux it must be `super`.
+fn platform_modifier() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "cmd"
+    } else {
+        "super"
+    }
+}
 
 /// Narration task labels.
 const NARRATION_TASK_LABELS: &[&str] = &["attend: toggle narration", "attend: start narration"];
@@ -42,10 +55,11 @@ impl Editor for Zed {
     }
 
     fn install_narration(&self, bin_cmd: &str) -> anyhow::Result<()> {
+        let m = platform_modifier();
         tasks::install_task(bin_cmd, "attend: toggle narration", &["narrate", "toggle"])?;
         tasks::install_task(bin_cmd, "attend: start narration", &["narrate", "start"])?;
-        keybindings::install_keybinding("cmd-;", "attend: toggle narration")?;
-        keybindings::install_keybinding("cmd-:", "attend: start narration")?;
+        keybindings::install_keybinding(&format!("{m}-;"), "attend: toggle narration")?;
+        keybindings::install_keybinding(&format!("{m}-:"), "attend: start narration")?;
         println!("Installed Zed narration tasks and keybindings.");
         Ok(())
     }

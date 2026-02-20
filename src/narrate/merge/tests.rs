@@ -300,7 +300,7 @@ fn noise_markers_filtered() {
 
 #[test]
 fn snip_applied_to_code_block() {
-    // 25 lines of content → should be snipped with default config (threshold=20)
+    // 25 lines of content → snipped with default config (threshold=5, head=3, tail=2)
     let content: String = (1..=25).map(|i| format!("line {i}\n")).collect();
     let mut events = vec![Event::EditorSnapshot {
         offset_secs: 0.0,
@@ -312,11 +312,12 @@ fn snip_applied_to_code_block() {
         }],
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
-    assert!(md.contains("// ... (10 lines omitted)"));
+    assert!(md.contains("// ... (lines 4-23 omitted)"));
     assert!(md.contains("line 1\n"));
-    assert!(md.contains("line 10\n"));
+    assert!(md.contains("line 3\n"));
+    assert!(!md.contains("line 4\n"));
+    assert!(md.contains("line 24\n"));
     assert!(md.contains("line 25\n"));
-    assert!(!md.contains("line 11\n"));
 }
 
 #[test]
@@ -329,11 +330,13 @@ fn snip_applied_to_diff_block() {
         new: new_content,
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
-    assert!(md.contains("// ... (10 lines omitted)"));
+    // Diffs don't have a first_line, so they show count-only format.
+    // unified_diff produces 25 +lines (no @@ header); snip keeps head=3, tail=2.
+    assert!(md.contains("// ... (20 lines omitted)"));
     assert!(md.contains("+line 1\n"));
-    assert!(md.contains("+line 10\n"));
+    assert!(md.contains("+line 3\n"));
+    assert!(!md.contains("+line 4\n"));
     assert!(md.contains("+line 25\n"));
-    assert!(!md.contains("+line 11\n"));
 }
 
 #[test]

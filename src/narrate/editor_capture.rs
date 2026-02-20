@@ -68,8 +68,11 @@ fn render_snapshot_files(files: &[state::FileEntry], cwd: Option<&Utf8Path>) -> 
             continue;
         }
 
-        let Ok(payload) = view::render_json(std::slice::from_ref(file), cwd, view::Extent::Exact)
-        else {
+        let extent = view::Extent::Lines {
+            before: 1,
+            after: 1,
+        };
+        let Ok(payload) = view::render_json(std::slice::from_ref(file), cwd, extent) else {
             continue;
         };
 

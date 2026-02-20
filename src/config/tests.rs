@@ -109,12 +109,14 @@ fn merge_semantics() {
         engine: Some(Engine::Whisper),
         model: None,
         silence_duration: None,
+        archive_retention: None,
     };
     let other = Config {
         include_dirs: vec![Utf8PathBuf::from("/b")],
         engine: Some(Engine::Parakeet),
         model: Some(Utf8PathBuf::from("/model")),
         silence_duration: Some(3.0),
+        archive_retention: Some("30d".to_string()),
     };
     base.merge(other);
     assert_eq!(
@@ -126,6 +128,37 @@ fn merge_semantics() {
     // None is filled from other
     assert_eq!(base.model, Some(Utf8PathBuf::from("/model")));
     assert_eq!(base.silence_duration, Some(3.0));
+    assert_eq!(base.archive_retention, Some("30d".to_string()));
+}
+
+/// retention_duration parses human-friendly strings and defaults to 7 days.
+#[test]
+fn retention_duration_parsing() {
+    use std::time::Duration;
+
+    // Default (None) → 7 days
+    let config = Config::default();
+    assert_eq!(
+        config.retention_duration(),
+        Some(Duration::from_secs(7 * 24 * 3600))
+    );
+
+    // Explicit duration
+    let config = Config {
+        archive_retention: Some("24h".to_string()),
+        ..Config::default()
+    };
+    assert_eq!(
+        config.retention_duration(),
+        Some(Duration::from_secs(24 * 3600))
+    );
+
+    // "forever" → None (cleanup disabled)
+    let config = Config {
+        archive_retention: Some("forever".to_string()),
+        ..Config::default()
+    };
+    assert_eq!(config.retention_duration(), None);
 }
 
 /// Unknown engine values in TOML are reported and ignored.
