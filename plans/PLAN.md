@@ -27,6 +27,7 @@ be performed as specified, please do it.
 | 8 | [UX Improvements](./phase-08-ux-improvements.md) | Not started | Phases 4, 6 |
 | 9 | [Test Hardening](./phase-09-test-hardening.md) | Not started | Phase 3 |
 | 10 | [merge.rs Deep Refactor](./phase-10-merge-refactor.md) | Not started | Phase 9 |
+| 11 | [Persistent Daemon](./phase-11-persistent-daemon.md) | Not started | Phases 6, 8 |
 
 ## Item Progress
 
@@ -112,3 +113,12 @@ be performed as specified, please do it.
 - [ ] 10.1 Comprehensive test suite for merge.rs
 - [ ] 10.2 Single streaming pass rewrite
 - [ ] 10.3 Documentation
+
+### Phase 11: Persistent Daemon
+- [ ] 11.1 Benchmark model load time
+- [ ] 11.2 Design persistent daemon lifecycle
+- [ ] 11.3 IPC upgrade: sentinel files → command channel
+- [ ] 11.4 Implement idle state
+- [ ] 11.5 Memory footprint analysis
+- [ ] 11.6 Warm-start correctness
+- [ ] 11.7 Daemon health and observability
