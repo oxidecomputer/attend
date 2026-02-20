@@ -7,7 +7,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::json::utc_now;
+use crate::util::utc_now;
 
 // ---------------------------------------------------------------------------
 // Chime constants

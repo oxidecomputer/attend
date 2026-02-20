@@ -224,7 +224,7 @@ fn refresh(
                     Format::Human => format!("{s}"),
                     Format::Json => {
                         let payload = crate::json::CompactPayload::from_state(s);
-                        let wrapped = crate::json::Timestamped::now(payload);
+                        let wrapped = crate::util::Timestamped::now(payload);
                         if is_tty {
                             serde_json::to_string_pretty(&wrapped)
                                 .expect("serialization of known type")
@@ -263,7 +263,7 @@ fn refresh(
                     },
                     Format::Json => match crate::view::render_json(&s.files, dir, extent) {
                         Ok(payload) => {
-                            let wrapped = crate::json::Timestamped::now(payload);
+                            let wrapped = crate::util::Timestamped::now(payload);
                             let output = if is_tty {
                                 serde_json::to_string_pretty(&wrapped)
                                     .expect("serialization of known type")

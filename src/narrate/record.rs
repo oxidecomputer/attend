@@ -21,7 +21,7 @@ use super::{
     stop_sentinel_path,
 };
 use crate::config::Config;
-use crate::json::utc_now;
+use crate::util::utc_now;
 
 /// Target sample rate for transcription engines (Whisper, Parakeet).
 const TRANSCRIPTION_SAMPLE_RATE: u32 = 16_000;

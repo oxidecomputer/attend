@@ -4,18 +4,51 @@ mod parse;
 use std::io::IsTerminal;
 
 use camino::{Utf8Path, Utf8PathBuf};
+use serde::Serialize;
 
-use crate::json::{self, ViewFile, ViewGroup, ViewPayload};
+use crate::json::split_selections;
 use crate::state::FileEntry;
-#[cfg(test)]
-use crate::state::Selection;
 use crate::state::resolve::relativize;
+use crate::state::{Line, Position, Selection};
 
 #[cfg(test)]
 use annotate::line_events;
 use annotate::{Group, render_line_range};
 
 pub use parse::parse_compact;
+
+// ---------------------------------------------------------------------------
+// View JSON types (attend view --format json)
+// ---------------------------------------------------------------------------
+
+/// JSON representation of a group of selections with rendered content.
+#[derive(Serialize)]
+pub struct ViewGroup {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cursors: Vec<Position>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub selections: Vec<Selection>,
+    pub first_line: Line,
+    pub last_line: Line,
+    pub content: String,
+}
+
+/// JSON representation of a single file's view output.
+#[derive(Serialize)]
+pub struct ViewFile {
+    pub path: String,
+    pub groups: Vec<ViewGroup>,
+}
+
+/// Top-level JSON payload for `attend view --format json`.
+#[derive(Serialize)]
+pub struct ViewPayload {
+    pub files: Vec<ViewFile>,
+}
+
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
 
 /// Cursor marker: U+2758 Light Vertical Bar (non-TTY).
 const CURSOR: char = '❘';
@@ -216,7 +249,7 @@ pub fn render_json(
                 Mode::Markers,
             );
             let all_sels: Vec<_> = group.sels.iter().map(|s| **s).collect();
-            let (cursors, selections) = json::split_selections(&all_sels);
+            let (cursors, selections) = split_selections(&all_sels);
             groups.push(ViewGroup {
                 cursors,
                 selections,

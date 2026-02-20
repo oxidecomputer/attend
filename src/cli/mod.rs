@@ -195,7 +195,7 @@ impl Command {
                             Format::Human => println!("{state}"),
                             Format::Json => {
                                 let payload = crate::json::CompactPayload::from_state(&state);
-                                let wrapped = crate::json::Timestamped::now(payload);
+                                let wrapped = crate::util::Timestamped::now(payload);
                                 println!(
                                     "{}",
                                     serde_json::to_string_pretty(&wrapped)
@@ -257,7 +257,7 @@ impl Command {
                         Format::Json => {
                             let payload =
                                 crate::view::render_json(&entries, dir.as_deref(), extent)?;
-                            let wrapped = crate::json::Timestamped::now(payload);
+                            let wrapped = crate::util::Timestamped::now(payload);
                             println!(
                                 "{}",
                                 serde_json::to_string_pretty(&wrapped)
