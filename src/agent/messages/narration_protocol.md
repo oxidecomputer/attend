@@ -30,9 +30,10 @@ not restart it.
 
 There are exactly two situations where you should run `attend listen`:
 
-1. A `<task-notification>` says the background receiver exited. The listener
-   detected pending narration and exited to wake you up — restart it to receive
-   the content. Do not read the task output file; it has no useful content.
+1. A `<task-notification>` says the background receiver exited — but only if
+   you haven't started a newer listener since then. Narration delivery starts
+   a replacement listener automatically, so notifications for older listeners
+   are stale. Do not read the task output file; it has no useful content.
 2. You are told "narration is ready." This means narration arrived while you
    were using other tools. Run `attend listen` to receive it.
 

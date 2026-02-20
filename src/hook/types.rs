@@ -80,6 +80,9 @@ pub enum GuidanceReason {
     NarrationReady,
     /// A listener is already active for this session.
     ListenerAlreadyActive,
+    /// A listener was just started in the background. Primes the agent to
+    /// restart (not read the output) when the task notification arrives.
+    ListenerStarted,
 }
 
 /// Whether guidance blocks or approves the current action.

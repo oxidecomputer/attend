@@ -146,6 +146,9 @@ fn guidance_message(reason: &GuidanceReason) -> &'static str {
         GuidanceReason::ListenerAlreadyActive => {
             include_str!("../messages/guidance_listener_active.txt")
         }
+        GuidanceReason::ListenerStarted => {
+            include_str!("../messages/guidance_listener_started.txt")
+        }
     }
 }
 

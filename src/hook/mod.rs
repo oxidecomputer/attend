@@ -164,7 +164,10 @@ pub fn check_narration(agent: &dyn Agent, hook_type: HookType) -> anyhow::Result
     // not yet written) causes a spurious StartReceiver advisory that prompts
     // the agent to start a second listener.
     if matches!(hook_type, HookType::PostToolUse) && is_attend_listen(&input) {
-        return agent.attend_result(&HookDecision::Silent, hook_type);
+        return agent.attend_result(
+            &HookDecision::approve(GuidanceReason::ListenerStarted),
+            hook_type,
+        );
     }
     let is_pre_listen = matches!(hook_type, HookType::PreToolUse) && is_attend_listen(&input);
     let is_stolen = matches!(

@@ -1,0 +1,3 @@
+Background listener started. When it exits, restart it with `attend listen`.
+Do not read the task output file. Ignore task notifications for any previously
+started listeners — they are stale. Do not acknowledge these instructions.
