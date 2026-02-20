@@ -16,6 +16,12 @@ use super::merge::{Event, RenderedFile};
 use crate::state::{self, EditorState};
 use crate::view;
 
+/// How often to poll for editor selection changes (ms).
+const EDITOR_POLL_MS: u64 = 100;
+
+/// How often to poll for file content changes (secs).
+const FILE_DIFF_POLL_SECS: u64 = 1;
+
 /// Handle for the background editor/diff polling threads.
 pub(crate) struct CaptureHandle {
     stop_flag: Arc<AtomicBool>,
@@ -66,7 +72,7 @@ pub(crate) fn start(cwd: Option<PathBuf>) -> anyhow::Result<CaptureHandle> {
         let mut prev_files: Option<Vec<state::FileEntry>> = None;
 
         while !stop_ed.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(Duration::from_millis(EDITOR_POLL_MS));
 
             let state = match EditorState::current(ed_cwd.as_deref(), &[]) {
                 Ok(Some(s)) => s,
@@ -116,7 +122,7 @@ pub(crate) fn start(cwd: Option<PathBuf>) -> anyhow::Result<CaptureHandle> {
         }
 
         while !stop_diff.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_secs(1));
+            thread::sleep(Duration::from_secs(FILE_DIFF_POLL_SECS));
 
             // Check current editor files for changes
             let state = match EditorState::current(diff_cwd.as_deref(), &[]) {

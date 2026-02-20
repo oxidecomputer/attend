@@ -103,7 +103,7 @@ pub(crate) fn status() -> anyhow::Result<()> {
             if process_alive(pid) {
                 "recording"
             } else {
-                "stale lock (daemon not running) — run `attend narrate toggle` to clean up"
+                "stale lock (daemon not running): run `attend narrate toggle` to clean up"
             }
         } else {
             "recording"

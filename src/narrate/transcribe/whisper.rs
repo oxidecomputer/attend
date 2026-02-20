@@ -12,8 +12,17 @@ pub(super) const MODEL_NAMES: &[&str] = &[
     "ggml-medium.en.bin",
 ];
 
+/// Target sample rate for transcription (16 kHz).
+const SAMPLE_RATE: u32 = 16_000;
+
+/// Maximum chunk duration in seconds (4 minutes).
+const MAX_CHUNK_SECS: usize = 240;
+
 /// Maximum chunk length in samples (4 minutes at 16 kHz).
-const MAX_CHUNK_SAMPLES: usize = 240 * 16_000;
+const MAX_CHUNK_SAMPLES: usize = MAX_CHUNK_SECS * SAMPLE_RATE as usize;
+
+/// Whisper timestamps are in centiseconds (hundredths of a second).
+const WHISPER_CENTISEC_DIVISOR: f64 = 100.0;
 
 /// Whisper transcription backend.
 pub struct WhisperTranscriber {
@@ -64,7 +73,7 @@ impl super::Transcriber for WhisperTranscriber {
         };
 
         for (chunk_idx, chunk) in chunks.iter().enumerate() {
-            let offset_secs = (chunk_idx * MAX_CHUNK_SAMPLES) as f64 / 16_000.0;
+            let offset_secs = (chunk_idx * MAX_CHUNK_SAMPLES) as f64 / SAMPLE_RATE as f64;
 
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
             params.set_token_timestamps(true);
@@ -98,8 +107,10 @@ impl super::Transcriber for WhisperTranscriber {
                 // Whisper timestamps are in centiseconds
                 words.push(Word {
                     text,
-                    start_secs: segment.start_timestamp() as f64 / 100.0 + offset_secs,
-                    end_secs: segment.end_timestamp() as f64 / 100.0 + offset_secs,
+                    start_secs: segment.start_timestamp() as f64 / WHISPER_CENTISEC_DIVISOR
+                        + offset_secs,
+                    end_secs: segment.end_timestamp() as f64 / WHISPER_CENTISEC_DIVISOR
+                        + offset_secs,
                 });
             }
 

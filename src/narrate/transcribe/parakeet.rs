@@ -16,8 +16,14 @@ use super::Word;
 /// Model variant names for benchmarking.
 pub(super) const MODEL_NAMES: &[&str] = &["parakeet-tdt-0.6b-v3"];
 
+/// Target sample rate for transcription (16 kHz).
+const SAMPLE_RATE: u32 = 16_000;
+
+/// Maximum chunk duration in seconds (4 minutes).
+const MAX_CHUNK_SECS: usize = 240;
+
 /// Maximum chunk length in samples (4 minutes at 16 kHz).
-const MAX_CHUNK_SAMPLES: usize = 240 * 16_000;
+const MAX_CHUNK_SAMPLES: usize = MAX_CHUNK_SECS * SAMPLE_RATE as usize;
 
 const REPO: &str = "istupakov/parakeet-tdt-0.6b-v3-onnx";
 
@@ -55,11 +61,11 @@ impl super::Transcriber for ParakeetTranscriber {
         };
 
         for (chunk_idx, chunk) in chunks.iter().enumerate() {
-            let offset_secs = (chunk_idx * MAX_CHUNK_SAMPLES) as f64 / 16_000.0;
+            let offset_secs = (chunk_idx * MAX_CHUNK_SAMPLES) as f64 / SAMPLE_RATE as f64;
 
             let result = self.model.transcribe_samples(
                 chunk.to_vec(),
-                16_000,
+                SAMPLE_RATE,
                 1,
                 Some(TimestampMode::Sentences),
             )?;
@@ -86,7 +92,7 @@ impl super::Transcriber for ParakeetTranscriber {
         let t0 = Instant::now();
         let _ = self.model.transcribe_samples(
             samples.to_vec(),
-            16_000,
+            SAMPLE_RATE,
             1,
             Some(TimestampMode::Sentences),
         );

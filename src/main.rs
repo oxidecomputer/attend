@@ -1,5 +1,8 @@
 //! Read editor state (open files, selections) for agent integration.
 
+#[cfg(not(unix))]
+compile_error!("attend requires a Unix platform (macOS or Linux)");
+
 mod agent;
 mod cli;
 mod config;

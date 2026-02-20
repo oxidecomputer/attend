@@ -391,20 +391,20 @@ fn check_narration_health() -> anyhow::Result<Vec<String>> {
     let tasks = read_jsonc_array(&tasks_path);
 
     if tasks.is_empty() && !tasks_path.exists() {
-        warnings.push(format!("tasks.json not found — {reinstall}"));
+        warnings.push(format!("tasks.json not found: {reinstall}"));
     } else {
         for label in NARRATION_TASK_LABELS {
             let task = tasks
                 .iter()
                 .find(|t| t.get("label").and_then(|l| l.as_str()) == Some(label));
             match task {
-                None => warnings.push(format!("{label} task not found — {reinstall}")),
+                None => warnings.push(format!("{label} task not found: {reinstall}")),
                 Some(t) => {
                     if let Some(cmd) = t.get("command").and_then(|c| c.as_str())
                         && !command_exists(cmd)
                     {
                         warnings.push(format!(
-                            "task command path does not exist: {cmd} — reinstall with {reinstall}"
+                            "task command path does not exist: {cmd}: reinstall with {reinstall}"
                         ));
                     }
                 }
@@ -417,9 +417,9 @@ fn check_narration_health() -> anyhow::Result<Vec<String>> {
     let keymap = read_jsonc_array(&keymap_path);
 
     if keymap.is_empty() && !keymap_path.exists() {
-        warnings.push(format!("keymap.json not found — {reinstall}"));
+        warnings.push(format!("keymap.json not found: {reinstall}"));
     } else if !keymap.iter().any(is_narration_keybinding) {
-        warnings.push(format!("narration keybinding not found — {reinstall}"));
+        warnings.push(format!("narration keybinding not found: {reinstall}"));
     }
 
     Ok(warnings)

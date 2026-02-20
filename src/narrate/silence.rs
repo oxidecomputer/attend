@@ -9,11 +9,17 @@ use std::time::{Duration, Instant};
 
 use super::audio::AudioChunk;
 
-/// Internal VAD sample rate — all input is resampled to 16 kHz.
+/// Internal VAD sample rate: all input is resampled to 16 kHz.
 const VAD_RATE: u32 = 16_000;
 
-/// 10 ms frame at 16 kHz.
-const FRAME_SAMPLES: usize = (VAD_RATE / 100) as usize;
+/// Duration of each VAD frame in milliseconds.
+const VAD_FRAME_MS: usize = 10;
+
+/// Number of VAD frames per second (1000 / VAD_FRAME_MS).
+const FRAMES_PER_SEC: usize = 1000 / VAD_FRAME_MS;
+
+/// Samples per VAD frame at 16 kHz (160 samples = 10 ms).
+const FRAME_SAMPLES: usize = VAD_RATE as usize / FRAMES_PER_SEC;
 
 /// Detects extended silences in an audio stream using WebRTC VAD.
 pub struct SilenceDetector {
@@ -47,7 +53,7 @@ impl SilenceDetector {
             webrtc_vad::SampleRate::Rate16kHz,
             webrtc_vad::VadMode::Aggressive,
         );
-        let min_silence_frames = (min_silence.as_millis() as usize) / 10;
+        let min_silence_frames = (min_silence.as_millis() as usize) / VAD_FRAME_MS;
 
         SilenceDetector {
             vad,
@@ -76,14 +82,14 @@ impl SilenceDetector {
             match self.state {
                 State::Idle => {
                     if has_voice {
-                        tracing::debug!("VAD: voice detected — Idle → Speaking");
+                        tracing::debug!("VAD: voice detected: Idle -> Speaking");
                         self.state = State::Speaking;
                         self.silent_frames = 0;
                     }
                 }
                 State::Speaking => {
                     if !has_voice {
-                        tracing::debug!("VAD: silence detected — Speaking → Trailing");
+                        tracing::debug!("VAD: silence detected: Speaking -> Trailing");
                         self.state = State::Trailing;
                         self.silent_frames = 1;
                         self.silence_start_instant = Some(chunk.instant);
@@ -93,7 +99,7 @@ impl SilenceDetector {
                     if has_voice {
                         tracing::debug!(
                             after_frames = self.silent_frames,
-                            "VAD: voice resumed — Trailing → Speaking"
+                            "VAD: voice resumed: Trailing -> Speaking"
                         );
                         self.state = State::Speaking;
                         self.silent_frames = 0;
@@ -101,17 +107,18 @@ impl SilenceDetector {
                     } else {
                         self.silent_frames += 1;
                         // Log progress every second of silence.
-                        if self.silent_frames.is_multiple_of(100) {
+                        if self.silent_frames.is_multiple_of(FRAMES_PER_SEC) {
                             tracing::debug!(
-                                silent_secs = self.silent_frames as f64 / 100.0,
-                                threshold_secs = self.min_silence_frames as f64 / 100.0,
+                                silent_secs = self.silent_frames as f64 / FRAMES_PER_SEC as f64,
+                                threshold_secs =
+                                    self.min_silence_frames as f64 / FRAMES_PER_SEC as f64,
                                 "VAD: silence continuing"
                             );
                         }
                         if self.silent_frames >= self.min_silence_frames {
                             tracing::info!(
-                                silent_secs = self.silent_frames as f64 / 100.0,
-                                "VAD: silence threshold reached — splitting segment"
+                                silent_secs = self.silent_frames as f64 / FRAMES_PER_SEC as f64,
+                                "VAD: silence threshold reached: splitting segment"
                             );
                             result = self.silence_start_instant.take();
                             self.state = State::Idle;
@@ -162,7 +169,7 @@ fn downsample_to_vad(samples: &[f32], from_rate: u32) -> Vec<i16> {
 }
 
 fn f32_to_i16(s: f32) -> i16 {
-    (s * 32767.0).clamp(-32768.0, 32767.0) as i16
+    (s * i16::MAX as f32).clamp(i16::MIN as f32, i16::MAX as f32) as i16
 }
 
 #[cfg(test)]

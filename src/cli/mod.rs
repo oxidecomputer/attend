@@ -12,7 +12,7 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 #[derive(Parser)]
 #[command(
     name = "attend",
-    about = "Pair program with your coding agent — editor context and voice narration, delivered seamlessly.",
+    about = "Pair program with your coding agent: editor context and voice narration, delivered seamlessly.",
     version
 )]
 pub struct Cli {

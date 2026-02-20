@@ -22,6 +22,27 @@ use super::{
 use crate::config::Config;
 use crate::json::utc_now;
 
+/// Target sample rate for transcription engines (Whisper, Parakeet).
+const TRANSCRIPTION_SAMPLE_RATE: u32 = 16_000;
+
+/// Number of poll iterations to wait for sentinel acknowledgement.
+const SENTINEL_WAIT_ITERATIONS: usize = 100;
+
+/// Interval between sentinel poll checks (ms).
+const SENTINEL_POLL_MS: u64 = 50;
+
+/// Grace period after spawning the daemon for it to acquire the lock (ms).
+const DAEMON_STARTUP_GRACE_MS: u64 = 200;
+
+/// Main daemon loop poll interval (ms).
+const DAEMON_LOOP_POLL_MS: u64 = 100;
+
+/// Number of recent words to feed as transcription context.
+const TRANSCRIPTION_CONTEXT_WORDS: usize = 50;
+
+/// Minimum remaining audio duration (seconds) worth transcribing at stop/flush.
+const MIN_TRANSCRIPTION_DURATION_SECS: f64 = 0.5;
+
 /// Toggle recording: start if not recording, stop if recording.
 pub fn toggle() -> anyhow::Result<()> {
     let lock = record_lock_path();
@@ -84,11 +105,11 @@ fn flush() -> anyhow::Result<()> {
     fs::write(&sentinel, "")?;
 
     // Wait for the daemon to delete the sentinel (acknowledging the flush).
-    for _ in 0..100 {
+    for _ in 0..SENTINEL_WAIT_ITERATIONS {
         if !sentinel.exists() {
             return Ok(());
         }
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(SENTINEL_POLL_MS));
     }
 
     eprintln!("Flush signal sent; daemon may still be transcribing.");
@@ -123,7 +144,7 @@ fn spawn_daemon() -> anyhow::Result<()> {
     cmd.spawn()?;
 
     // Give the daemon a moment to acquire the lock and start audio
-    thread::sleep(Duration::from_millis(200));
+    thread::sleep(Duration::from_millis(DAEMON_STARTUP_GRACE_MS));
 
     Ok(())
 }
@@ -144,11 +165,11 @@ pub fn stop() -> anyhow::Result<()> {
     fs::write(&sentinel, "")?;
 
     // Wait briefly for the daemon to notice
-    for _ in 0..100 {
+    for _ in 0..SENTINEL_WAIT_ITERATIONS {
         if !record_lock_path().exists() {
             return Ok(());
         }
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(SENTINEL_POLL_MS));
     }
 
     eprintln!("Stop signal sent; daemon may still be transcribing.");
@@ -310,7 +331,7 @@ pub fn daemon() -> anyhow::Result<()> {
         }
 
         // 4. Sleep before next poll.
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(DAEMON_LOOP_POLL_MS));
     }
 
     Ok(())
@@ -328,10 +349,14 @@ fn transcribe_segment(
         .instant
         .duration_since(period_start)
         .as_secs_f64();
-    let samples_16k = audio::resample(&audio::flatten_chunks(speech_chunks), sample_rate, 16000)?;
+    let samples_16k = audio::resample(
+        &audio::flatten_chunks(speech_chunks),
+        sample_rate,
+        TRANSCRIPTION_SAMPLE_RATE,
+    )?;
 
     tracing::debug!(
-        duration_secs = samples_16k.len() as f64 / 16_000.0,
+        duration_secs = samples_16k.len() as f64 / TRANSCRIPTION_SAMPLE_RATE as f64,
         offset_secs = offset,
         "Transcribing speech segment on the fly"
     );
@@ -349,7 +374,7 @@ fn transcribe_segment(
     let ctx: String = pre_transcribed
         .iter()
         .rev()
-        .take(50)
+        .take(TRANSCRIPTION_CONTEXT_WORDS)
         .map(|w| w.text.as_str())
         .collect::<Vec<_>>()
         .join(" ");
@@ -379,7 +404,7 @@ fn transcribe_and_write(
         let remaining_samples = audio::flatten_chunks(&remaining_chunks);
         let remaining_duration = remaining_samples.len() as f64 / sample_rate as f64;
 
-        if remaining_duration >= 0.5 {
+        if remaining_duration >= MIN_TRANSCRIPTION_DURATION_SECS {
             let offset = remaining_chunks[0]
                 .instant
                 .duration_since(period_start)
@@ -390,7 +415,8 @@ fn transcribe_and_write(
                 "Transcribing remaining audio..."
             );
 
-            let samples_16k = audio::resample(&remaining_samples, sample_rate, 16000)?;
+            let samples_16k =
+                audio::resample(&remaining_samples, sample_rate, TRANSCRIPTION_SAMPLE_RATE)?;
             let words = transcriber.transcribe(&samples_16k)?;
             for w in &words {
                 all_words.push(Word {

@@ -110,11 +110,15 @@ pub fn run(cli_cwd: Option<PathBuf>) -> anyhow::Result<()> {
     // Update session cache and emit.
     if let Some(sid) = session_id
         && let Some(cp) = session_cache_path(sid)
-        && let Err(e) = state::atomic_write(&cp, |file| {
-            serde_json::to_writer(io::BufWriter::new(file), &state).map_err(io::Error::other)
-        })
     {
-        tracing::warn!("Failed to write session cache: {e}");
+        if let Some(parent) = cp.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Err(e) = state::atomic_write(&cp, |file| {
+            serde_json::to_writer(io::BufWriter::new(file), &state).map_err(io::Error::other)
+        }) {
+            tracing::warn!("Failed to write session cache: {e}");
+        }
     }
 
     println!("<editor-context>\n{state}\n</editor-context>");
@@ -326,7 +330,7 @@ fn auto_upgrade_hooks() {
     tracing::info!(
         installed = meta.version,
         running,
-        "Version mismatch — reinstalling hooks"
+        "Version mismatch: reinstalling hooks"
     );
 
     let bin_cmd = match crate::agent::resolve_bin_cmd(meta.dev) {

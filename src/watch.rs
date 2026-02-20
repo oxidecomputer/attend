@@ -8,6 +8,21 @@ use std::time::Duration;
 use crate::cli::Format;
 use crate::state::EditorState;
 
+/// Default poll interval for silent (daemon) mode (secs).
+const WATCH_SILENT_POLL_SECS: u64 = 5;
+
+/// Default poll interval for live display modes (ms).
+const WATCH_LIVE_POLL_MS: u64 = 100;
+
+/// Granularity of the interruptible sleep loop (ms).
+const SLEEP_GRANULARITY_MS: u64 = 50;
+
+/// Fallback terminal width when ioctl is unavailable.
+const DEFAULT_TERMINAL_WIDTH: usize = 80;
+
+/// Fallback terminal height when ioctl is unavailable.
+const DEFAULT_TERMINAL_HEIGHT: usize = 24;
+
 /// Display mode for the watch loop.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum WatchMode {
@@ -165,7 +180,7 @@ fn sleep_interruptible(duration: Duration, interrupted: &AtomicBool, resized: &A
         {
             break;
         }
-        thread::sleep(remaining.min(Duration::from_millis(50)));
+        thread::sleep(remaining.min(Duration::from_millis(SLEEP_GRANULARITY_MS)));
     }
 }
 
@@ -300,7 +315,7 @@ fn terminal_size() -> (usize, usize) {
             return (ws.ws_col as usize, ws.ws_row as usize);
         }
     }
-    (80, 24)
+    (DEFAULT_TERMINAL_WIDTH, DEFAULT_TERMINAL_HEIGHT)
 }
 
 /// Truncate a line to `max_cols` visible columns, ANSI-aware.
@@ -360,7 +375,7 @@ fn poll_interval(mode: WatchMode, interval: Option<f64>) -> Duration {
         return Duration::from_secs_f64(secs);
     }
     match mode {
-        WatchMode::Silent => Duration::from_secs(5),
-        _ => Duration::from_millis(100),
+        WatchMode::Silent => Duration::from_secs(WATCH_SILENT_POLL_SECS),
+        _ => Duration::from_millis(WATCH_LIVE_POLL_MS),
     }
 }

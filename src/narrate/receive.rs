@@ -1,7 +1,7 @@
 //! Check for and deliver pending narration files to Claude Code.
 //!
 //! Narration files are stored as individual timestamped JSON files in
-//! `~/.cache/attend/pending/<session_id>/`. Each file contains a
+//! `<cache_dir>/attend/pending/<session_id>/` (platform cache directory). Each file contains a
 //! `Vec<Event>` with absolute paths. On receive, events are filtered to
 //! the current project directory (and any configured `include_dirs`),
 //! paths are relativized, and the result is rendered as markdown wrapped
@@ -15,6 +15,9 @@ use std::time::Duration;
 use super::merge::{self, Event, SnipConfig};
 use super::{archive_dir, cache_dir, pending_dir, receive_lock_path, resolve_session};
 use crate::config::Config;
+
+/// How often to poll for pending narration when waiting (ms).
+const NARRATION_POLL_MS: u64 = 500;
 
 /// Re-dispatch instruction appended to output when listening.
 const REDISPATCH_MSG: &str =
@@ -262,7 +265,7 @@ fn run_wait(session_id: Option<String>) -> anyhow::Result<()> {
         }
     };
 
-    let poll_interval = Duration::from_millis(500);
+    let poll_interval = Duration::from_millis(NARRATION_POLL_MS);
 
     loop {
         // Check if session was stolen

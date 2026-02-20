@@ -9,6 +9,50 @@ use std::time::Instant;
 
 use crate::json::utc_now;
 
+// ---------------------------------------------------------------------------
+// Chime constants
+// ---------------------------------------------------------------------------
+
+/// Frequency for flush chime: G5.
+const FLUSH_CHIME_FREQ_HZ: f32 = 783.99;
+
+/// Duration of the flush chime note (seconds).
+const FLUSH_CHIME_DURATION_SECS: f32 = 0.08;
+
+/// Start chime note 1: C5.
+const CHIME_NOTE_C5_HZ: f32 = 523.25;
+
+/// Start chime note 2: E5.
+const CHIME_NOTE_E5_HZ: f32 = 659.25;
+
+/// Duration of each note in start/stop chime (seconds).
+const CHIME_NOTE_DURATION_SECS: f32 = 0.1;
+
+/// Chime playback amplitude (0.0 to 1.0).
+const CHIME_AMPLITUDE: f32 = 0.3;
+
+/// Extra padding after chime playback to ensure it completes (seconds).
+const CHIME_PLAYBACK_PADDING_SECS: f32 = 0.05;
+
+// ---------------------------------------------------------------------------
+// Resampler constants (rubato sinc interpolation)
+// ---------------------------------------------------------------------------
+
+/// Sinc interpolation kernel length.
+const RESAMPLER_SINC_LEN: usize = 256;
+
+/// Low-pass cutoff frequency (fraction of Nyquist).
+const RESAMPLER_CUTOFF: f32 = 0.95;
+
+/// Sinc oversampling factor for table lookup.
+const RESAMPLER_OVERSAMPLING: usize = 256;
+
+/// Number of input samples processed per resampler call.
+const RESAMPLER_CHUNK_SIZE: usize = 1024;
+
+/// Transition bandwidth for the anti-aliasing filter.
+const RESAMPLER_TRANSITION_BW: f64 = 2.0;
+
 /// A timestamped chunk of audio samples.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -203,31 +247,37 @@ pub fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> anyhow::Result
     };
 
     let params = SincInterpolationParameters {
-        sinc_len: 256,
-        f_cutoff: 0.95,
+        sinc_len: RESAMPLER_SINC_LEN,
+        f_cutoff: RESAMPLER_CUTOFF,
         interpolation: SincInterpolationType::Linear,
-        oversampling_factor: 256,
+        oversampling_factor: RESAMPLER_OVERSAMPLING,
         window: WindowFunction::BlackmanHarris2,
     };
 
     let ratio = to_rate as f64 / from_rate as f64;
-    let chunk_size = 1024;
-    let mut resampler =
-        Async::<f32>::new_sinc(ratio, 2.0, &params, chunk_size, 1, FixedAsync::Input)?;
+    let mut resampler = Async::<f32>::new_sinc(
+        ratio,
+        RESAMPLER_TRANSITION_BW,
+        &params,
+        RESAMPLER_CHUNK_SIZE,
+        1,
+        FixedAsync::Input,
+    )?;
 
-    let mut output = Vec::with_capacity((samples.len() as f64 * ratio) as usize + chunk_size);
+    let mut output =
+        Vec::with_capacity((samples.len() as f64 * ratio) as usize + RESAMPLER_CHUNK_SIZE);
     let mut pos = 0;
 
     while pos < samples.len() {
-        let end = (pos + chunk_size).min(samples.len());
+        let end = (pos + RESAMPLER_CHUNK_SIZE).min(samples.len());
         let mut chunk = samples[pos..end].to_vec();
-        if chunk.len() < chunk_size {
-            chunk.resize(chunk_size, 0.0);
+        if chunk.len() < RESAMPLER_CHUNK_SIZE {
+            chunk.resize(RESAMPLER_CHUNK_SIZE, 0.0);
         }
-        let input = InterleavedSlice::new(&chunk, 1, chunk_size)?;
+        let input = InterleavedSlice::new(&chunk, 1, RESAMPLER_CHUNK_SIZE)?;
         let result = resampler.process(&input, 0, None)?;
         output.extend(result.take_data());
-        pos += chunk_size;
+        pos += RESAMPLER_CHUNK_SIZE;
     }
 
     let expected = (samples.len() as f64 * ratio).ceil() as usize;
@@ -252,8 +302,8 @@ pub fn play_flush_chime() -> anyhow::Result<()> {
     let sample_rate = config.sample_rate() as f32;
     let channels = config.channels() as usize;
 
-    let freq = 783.99_f32; // G5
-    let note_samples = (sample_rate * 0.08) as usize; // 80ms
+    let freq = FLUSH_CHIME_FREQ_HZ;
+    let note_samples = (sample_rate * FLUSH_CHIME_DURATION_SECS) as usize;
     let sample_idx = Arc::new(AtomicUsize::new(0));
     let sample_idx_ref = Arc::clone(&sample_idx);
 
@@ -270,7 +320,7 @@ pub fn play_flush_chime() -> anyhow::Result<()> {
                     let t = idx as f32 / sample_rate;
                     let pos = idx as f32 / note_samples as f32;
                     let envelope = (pos * std::f32::consts::PI).sin();
-                    (t * freq * 2.0 * std::f32::consts::PI).sin() * envelope * 0.3
+                    (t * freq * 2.0 * std::f32::consts::PI).sin() * envelope * CHIME_AMPLITUDE
                 };
                 for ch in frame.iter_mut() {
                     *ch = sample;
@@ -285,8 +335,9 @@ pub fn play_flush_chime() -> anyhow::Result<()> {
 
     stream.play()?;
 
-    let total_duration =
-        std::time::Duration::from_secs_f32(note_samples as f32 / sample_rate + 0.05);
+    let total_duration = std::time::Duration::from_secs_f32(
+        note_samples as f32 / sample_rate + CHIME_PLAYBACK_PADDING_SECS,
+    );
     std::thread::sleep(total_duration);
 
     Ok(())
@@ -294,7 +345,7 @@ pub fn play_flush_chime() -> anyhow::Result<()> {
 
 /// Play a short synthesized chime for auditory feedback.
 ///
-/// `ascending`: true for start chime (low→high), false for stop (high→low).
+/// `ascending`: true for start chime (low->high), false for stop (high->low).
 pub fn play_chime(ascending: bool) -> anyhow::Result<()> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -308,14 +359,14 @@ pub fn play_chime(ascending: bool) -> anyhow::Result<()> {
     let sample_rate = config.sample_rate() as f32;
     let channels = config.channels() as usize;
 
-    // Two-note chime: 100ms per note
+    // Two-note chime
     let (freq1, freq2) = if ascending {
-        (523.25_f32, 659.25_f32) // C5 → E5
+        (CHIME_NOTE_C5_HZ, CHIME_NOTE_E5_HZ) // C5 -> E5
     } else {
-        (659.25_f32, 523.25_f32) // E5 → C5
+        (CHIME_NOTE_E5_HZ, CHIME_NOTE_C5_HZ) // E5 -> C5
     };
 
-    let note_samples = (sample_rate * 0.1) as usize; // 100ms per note
+    let note_samples = (sample_rate * CHIME_NOTE_DURATION_SECS) as usize;
     let total_samples = note_samples * 2;
     let sample_idx = Arc::new(AtomicUsize::new(0));
     let sample_idx_ref = Arc::clone(&sample_idx);
@@ -339,7 +390,7 @@ pub fn play_chime(ascending: bool) -> anyhow::Result<()> {
                         let pos = (idx - note_samples) as f32 / note_samples as f32;
                         (pos * std::f32::consts::PI).sin()
                     };
-                    (t * freq * 2.0 * std::f32::consts::PI).sin() * envelope * 0.3
+                    (t * freq * 2.0 * std::f32::consts::PI).sin() * envelope * CHIME_AMPLITUDE
                 };
                 for ch in frame.iter_mut() {
                     *ch = sample;
@@ -355,8 +406,9 @@ pub fn play_chime(ascending: bool) -> anyhow::Result<()> {
     stream.play()?;
 
     // Wait for playback to complete
-    let total_duration =
-        std::time::Duration::from_secs_f32(total_samples as f32 / sample_rate + 0.05);
+    let total_duration = std::time::Duration::from_secs_f32(
+        total_samples as f32 / sample_rate + CHIME_PLAYBACK_PADDING_SECS,
+    );
     std::thread::sleep(total_duration);
 
     Ok(())
