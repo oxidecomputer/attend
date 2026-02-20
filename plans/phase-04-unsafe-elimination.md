@@ -14,9 +14,9 @@
 
 ## 4.2 Replace manual UTC formatting with `chrono`
 
-- `utc_now()` -> `chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()`
+- `utc_now()` in `util.rs` -> `chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()`
 - Remove `libc` dependency for time operations
-- Eliminate all `unsafe` in the former `json.rs` code
+- Eliminate all `unsafe` in `utc_now()`
 
 ## 4.3 Replace chime synthesis with `fundsp`
 
@@ -26,8 +26,7 @@
 
 ## 4.4 Replace JSONC string munching with `jsonc-parser`
 
-- Rewrite keybinding install/uninstall in `editor/zed/keybindings.rs`
-- Rewrite task install/uninstall in `editor/zed/tasks.rs`
+- Rewrite keybinding install/uninstall in `editor/zed.rs` (or `editor/zed/` submodule if Phase 3.6 has landed)
 - Parse -> edit structured AST -> serialize preserving comments
 - Atomic writes for all file operations (use shared `atomic_write`)
 

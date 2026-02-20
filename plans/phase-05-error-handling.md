@@ -7,9 +7,9 @@
 
 ## 5.1 `resolve_bin_cmd` — stop over-recovering
 
-- Dev mode: use `current_exe()`, done
+- Dev mode: use `current_exe()`, done (tightened during Camino migration — now errors on non-UTF-8)
 - Release mode: `which` must succeed or return error — if we can't find the binary, neither can the agent
-- Remove the fallback chain that silently papers over missing binaries
+- Remove the remaining fallback chain that silently papers over missing binaries
 
 ## 5.2 `receive.rs` — remove legacy no-session fallback
 

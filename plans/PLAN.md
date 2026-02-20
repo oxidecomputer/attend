@@ -12,9 +12,9 @@ Point Claude at this file to resume work.
 
 | Phase | Name | Status | Depends On |
 |-------|------|--------|------------|
-| 1 | [Foundation](./phase-01-foundation.md) | Not started | — |
-| 2 | [Type Safety & Config Simplification](./phase-02-type-safety.md) | Not started | Phase 1 |
-| 3 | [Module Reorganization](./phase-03-module-reorg.md) | Not started | Phase 2 |
+| 1 | [Foundation](./phase-01-foundation.md) | Done (003a47d) | — |
+| 2 | [Type Safety & Config Simplification](./phase-02-type-safety.md) | Done (9927fbd) | Phase 1 |
+| 3 | [Module Reorganization](./phase-03-module-reorg.md) | Partial (3c1acc8) | Phase 2 |
 | 4 | [Unsafe Elimination & Dependency Upgrades](./phase-04-unsafe-elimination.md) | Not started | Phase 3 |
 | 5 | [Error Handling Audit](./phase-05-error-handling.md) | Not started | Phase 3 |
 | 6 | [Recording Daemon Improvements](./phase-06-daemon-improvements.md) | Not started | Phases 4, 5 |
@@ -26,33 +26,33 @@ Point Claude at this file to resume work.
 ## Item Progress
 
 ### Phase 1: Foundation
-- [ ] 1.1 Add new crate dependencies
-- [ ] 1.2 Platform gate
-- [ ] 1.3 Named constants for magic numbers
-- [ ] 1.4 Extract all inline test modules to separate files
-- [ ] 1.5 Fix em-dashes and Unicode arrows in log messages
-- [ ] 1.6 Fix XDG comment in receive.rs
-- [ ] 1.7 Fix pre-existing `Failed to write cache` bug
-- [ ] 1.8 Audit `view/parse.rs` `parse_compact` usage
+- [x] 1.1 Add new crate dependencies
+- [x] 1.2 Platform gate
+- [x] 1.3 Named constants for magic numbers
+- [x] 1.4 Extract all inline test modules to separate files (already done)
+- [x] 1.5 Fix em-dashes and Unicode arrows in log messages
+- [x] 1.6 Fix XDG comment in receive.rs
+- [x] 1.7 Fix missing parent dir in hook.rs session cache write
+- [x] 1.8 Audit `view/parse.rs` `parse_compact` usage (used for both stdin and CLI)
 
 ### Phase 2: Type Safety & Config Simplification
-- [ ] 2.1 Derive `serde::Deserialize` on `Engine` enum
-- [ ] 2.2 Eliminate `RawConfig`
-- [ ] 2.3 Add `Config::merge` method
-- [ ] 2.4 Camino migration
-- [ ] 2.5 Introduce newtypes
+- [x] 2.1 Derive `serde::Deserialize` on `Engine` enum
+- [x] 2.2 Eliminate `RawConfig`
+- [x] 2.3 Add `Config::merge` method
+- [x] 2.4 Camino migration (zero `to_string_lossy` / `to_str().unwrap_or_default()`)
+- [ ] 2.5 Introduce `SessionId` newtype (WallClock, ModelPath dropped)
 
 ### Phase 3: Module Reorganization
-- [ ] 3.1 `state.rs` split and rename
-- [ ] 3.2 `json.rs` split
-- [ ] 3.3 `cli/mod.rs` split command defs from dispatch
-- [ ] 3.4 `narrate/mod.rs` barrel module
-- [ ] 3.5 `narrate/capture.rs` split
-- [ ] 3.6 `editor/zed.rs` submodule directory
-- [ ] 3.7 `merge.rs` extract `render_markdown`
-- [ ] 3.8 `watch.rs` split
-- [ ] 3.9 `editor/mod.rs` cleanup
-- [ ] 3.10 Future-proof editor trait for line:col backends
+- [x] 3.1 `state.rs` split — extracted `atomic_write` to `src/util.rs`
+- [ ] 3.2 `json.rs` split — deferred
+- [ ] 3.3 `cli/mod.rs` split — deferred
+- [x] 3.4 `narrate/mod.rs` — extracted `status.rs` and `clean.rs`
+- [ ] 3.5 `narrate/capture.rs` split — deferred
+- [ ] 3.6 `editor/zed.rs` submodule directory — deferred
+- [ ] 3.7 `merge.rs` extract `render_markdown` — deferred
+- [ ] 3.8 `watch.rs` split — deferred
+- [x] 3.9 `editor/mod.rs` cleanup — removed `watch_paths`/`all_watch_paths` dead code
+- [x] 3.10 Future-proof editor trait — added design note on RawEditor
 
 ### Phase 4: Unsafe Elimination & Dependency Upgrades
 - [ ] 4.1 Replace `libc` with `nix`

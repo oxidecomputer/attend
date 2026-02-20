@@ -26,12 +26,12 @@ Replace `PathBuf` / `Path` with `Utf8PathBuf` / `Utf8Path` throughout the codeba
 - Then `view/`, `watch.rs`, `json.rs`
 - Consolidate duplicate `relativize` functions (`state/resolve.rs` and `receive.rs`) into one shared utility
 
-## 2.5 Introduce newtypes
+## 2.5 Introduce `SessionId` newtype
 
-- `SessionId(String)` — replace `Option<String>` threading
-- `WallClock(String)` — ISO 8601 timestamps in AudioChunk, Recording
-- `ModelPath(Utf8PathBuf)` — distinct from general file paths
+- `SessionId(String)` — replace `Option<String>` threading through hook/receive/record
 - Update all function signatures, enabling the compiler to catch misuse
+- ~~`WallClock(String)`~~ — dropped; chrono replaces manual timestamp strings in Phase 4.2
+- ~~`ModelPath(Utf8PathBuf)`~~ — dropped; no distinct invariants beyond `Utf8PathBuf`
 
 ---
 
