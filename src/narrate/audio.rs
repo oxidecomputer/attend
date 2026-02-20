@@ -290,63 +290,73 @@ pub fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> anyhow::Result
 ///
 /// A single G5 note (~80ms) signals "submitted, still recording".
 pub fn play_flush_chime() -> anyhow::Result<()> {
-    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .ok_or_else(|| anyhow::anyhow!("no audio output device found"))?;
-
-    let config = device.default_output_config()?;
-    let sample_rate = config.sample_rate() as f32;
-    let channels = config.channels() as usize;
-
-    let freq = FLUSH_CHIME_FREQ_HZ;
-    let note_samples = (sample_rate * FLUSH_CHIME_DURATION_SECS) as usize;
-    let sample_idx = Arc::new(AtomicUsize::new(0));
-    let sample_idx_ref = Arc::clone(&sample_idx);
-
-    let stream_config: cpal::StreamConfig = config.into();
-
-    let stream = device.build_output_stream(
-        &stream_config,
-        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            for frame in data.chunks_mut(channels) {
-                let idx = sample_idx_ref.fetch_add(1, Ordering::Relaxed);
-                let sample = if idx >= note_samples {
-                    0.0
-                } else {
-                    let t = idx as f32 / sample_rate;
-                    let pos = idx as f32 / note_samples as f32;
-                    let envelope = (pos * std::f32::consts::PI).sin();
-                    (t * freq * 2.0 * std::f32::consts::PI).sin() * envelope * CHIME_AMPLITUDE
-                };
-                for ch in frame.iter_mut() {
-                    *ch = sample;
-                }
-            }
-        },
-        |err| {
-            tracing::error!("audio output error: {err}");
-        },
-        None,
-    )?;
-
-    stream.play()?;
-
-    let total_duration = std::time::Duration::from_secs_f32(
-        note_samples as f32 / sample_rate + CHIME_PLAYBACK_PADDING_SECS,
+    let sample_rate = output_sample_rate()?;
+    let samples = render_note(
+        FLUSH_CHIME_FREQ_HZ as f64,
+        FLUSH_CHIME_DURATION_SECS,
+        sample_rate,
     );
-    std::thread::sleep(total_duration);
-
-    Ok(())
+    play_buffer(&samples, sample_rate)
 }
 
 /// Play a short synthesized chime for auditory feedback.
 ///
 /// `ascending`: true for start chime (low->high), false for stop (high->low).
 pub fn play_chime(ascending: bool) -> anyhow::Result<()> {
+    let sample_rate = output_sample_rate()?;
+
+    // Two-note chime: C5→E5 (start) or E5→C5 (stop).
+    let (freq1, freq2) = if ascending {
+        (CHIME_NOTE_C5_HZ, CHIME_NOTE_E5_HZ)
+    } else {
+        (CHIME_NOTE_E5_HZ, CHIME_NOTE_C5_HZ)
+    };
+
+    let mut samples = render_note(freq1 as f64, CHIME_NOTE_DURATION_SECS, sample_rate);
+    samples.extend(render_note(
+        freq2 as f64,
+        CHIME_NOTE_DURATION_SECS,
+        sample_rate,
+    ));
+    play_buffer(&samples, sample_rate)
+}
+
+/// Render a single note with a sine-shaped amplitude envelope.
+///
+/// Uses a fundsp sine oscillator at the given frequency. The envelope
+/// ramps smoothly from silence to peak and back (sin-shaped), avoiding
+/// clicks at note boundaries.
+fn render_note(freq: f64, duration_secs: f32, sample_rate: f64) -> Vec<f32> {
+    use fundsp::prelude::*;
+
+    let num_samples = (sample_rate * duration_secs as f64) as usize;
+    let mut osc = sine_hz::<f64>(freq as f32);
+    osc.set_sample_rate(sample_rate);
+    osc.reset();
+
+    (0..num_samples)
+        .map(|i| {
+            let pos = i as f64 / num_samples as f64;
+            let envelope = (pos * std::f64::consts::PI).sin();
+            osc.get_mono() as f32 * envelope as f32 * CHIME_AMPLITUDE
+        })
+        .collect()
+}
+
+/// Query the default output device's sample rate.
+fn output_sample_rate() -> anyhow::Result<f64> {
+    use cpal::traits::{DeviceTrait, HostTrait};
+
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .ok_or_else(|| anyhow::anyhow!("no audio output device found"))?;
+    let config = device.default_output_config()?;
+    Ok(config.sample_rate() as f64)
+}
+
+/// Play a pre-rendered mono f32 buffer through the default output device.
+fn play_buffer(samples: &[f32], sample_rate: f64) -> anyhow::Result<()> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -356,60 +366,33 @@ pub fn play_chime(ascending: bool) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("no audio output device found"))?;
 
     let config = device.default_output_config()?;
-    let sample_rate = config.sample_rate() as f32;
     let channels = config.channels() as usize;
-
-    // Two-note chime
-    let (freq1, freq2) = if ascending {
-        (CHIME_NOTE_C5_HZ, CHIME_NOTE_E5_HZ) // C5 -> E5
-    } else {
-        (CHIME_NOTE_E5_HZ, CHIME_NOTE_C5_HZ) // E5 -> C5
-    };
-
-    let note_samples = (sample_rate * CHIME_NOTE_DURATION_SECS) as usize;
-    let total_samples = note_samples * 2;
-    let sample_idx = Arc::new(AtomicUsize::new(0));
-    let sample_idx_ref = Arc::clone(&sample_idx);
-
     let stream_config: cpal::StreamConfig = config.into();
+
+    let buf = Arc::new(samples.to_vec());
+    let idx = Arc::new(AtomicUsize::new(0));
+    let idx_ref = Arc::clone(&idx);
+    let buf_ref = Arc::clone(&buf);
 
     let stream = device.build_output_stream(
         &stream_config,
         move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
             for frame in data.chunks_mut(channels) {
-                let idx = sample_idx_ref.fetch_add(1, Ordering::Relaxed);
-                let sample = if idx >= total_samples {
-                    0.0
-                } else {
-                    let freq = if idx < note_samples { freq1 } else { freq2 };
-                    let t = idx as f32 / sample_rate;
-                    let envelope = if idx < note_samples {
-                        let pos = idx as f32 / note_samples as f32;
-                        (pos * std::f32::consts::PI).sin()
-                    } else {
-                        let pos = (idx - note_samples) as f32 / note_samples as f32;
-                        (pos * std::f32::consts::PI).sin()
-                    };
-                    (t * freq * 2.0 * std::f32::consts::PI).sin() * envelope * CHIME_AMPLITUDE
-                };
+                let i = idx_ref.fetch_add(1, Ordering::Relaxed);
+                let sample = buf_ref.get(i).copied().unwrap_or(0.0);
                 for ch in frame.iter_mut() {
                     *ch = sample;
                 }
             }
         },
-        |err| {
-            tracing::error!("audio output error: {err}");
-        },
+        |err| tracing::error!("audio output error: {err}"),
         None,
     )?;
 
     stream.play()?;
 
-    // Wait for playback to complete
-    let total_duration = std::time::Duration::from_secs_f32(
-        total_samples as f32 / sample_rate + CHIME_PLAYBACK_PADDING_SECS,
-    );
-    std::thread::sleep(total_duration);
+    let duration_secs = samples.len() as f32 / sample_rate as f32 + CHIME_PLAYBACK_PADDING_SECS;
+    std::thread::sleep(std::time::Duration::from_secs_f32(duration_secs));
 
     Ok(())
 }
