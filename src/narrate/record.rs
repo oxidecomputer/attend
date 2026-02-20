@@ -52,6 +52,7 @@ pub fn toggle() -> anyhow::Result<()> {
         // Check for stale lock (daemon was killed without cleanup).
         if is_lock_stale(&lock) {
             tracing::warn!("Stale record lock detected, cleaning up.");
+            // Best-effort cleanup: files may already be gone.
             let _ = fs::remove_file(&lock);
             let _ = fs::remove_file(stop_sentinel_path());
             spawn_daemon()
@@ -86,6 +87,7 @@ pub fn start() -> anyhow::Result<()> {
     if lock.exists() {
         if is_lock_stale(&lock) {
             tracing::warn!("Stale record lock detected, cleaning up.");
+            // Best-effort cleanup: files may already be gone.
             let _ = fs::remove_file(&lock);
             let _ = fs::remove_file(stop_sentinel_path());
             let _ = fs::remove_file(flush_sentinel_path());
@@ -176,6 +178,7 @@ pub fn stop() -> anyhow::Result<()> {
 pub fn daemon() -> anyhow::Result<()> {
     // Create a new session so the daemon survives if the parent's process
     // group is killed (e.g. Zed's task runner cleaning up after toggle exits).
+    // Intentionally ignored: may fail if already session leader (e.g. run manually).
     #[cfg(unix)]
     let _ = nix::unistd::setsid();
 
@@ -194,17 +197,17 @@ pub fn daemon() -> anyhow::Result<()> {
     let _lock = lockfile::Lockfile::create(record_lock_path())
         .map_err(|e| anyhow::anyhow!("record lock already held: {e:?}"))?;
 
-    // Write our PID so the lock can be detected as stale if we're killed
+    // Best-effort PID write for stale lock detection (lock already held).
     let _ = fs::write(record_lock_path(), std::process::id().to_string());
 
-    // Clean up any stale sentinels
+    // Best-effort cleanup: sentinels may not exist.
     let _ = fs::remove_file(stop_sentinel_path());
     let _ = fs::remove_file(flush_sentinel_path());
 
     // Preload model (blocks until ready — must complete before first transcription)
     let mut transcriber = engine.preload(&model_path)?;
 
-    // Play start chime
+    // Intentionally ignored: chime failure should not abort recording.
     let _ = audio::play_chime(true);
 
     // Start audio capture
@@ -271,11 +274,11 @@ pub fn daemon() -> anyhow::Result<()> {
 
         // 2. Check for stop sentinel → transcribe remaining + combine + write.
         if stop_sentinel.exists() {
-            let _ = audio::play_chime(false);
+            let _ = audio::play_chime(false); // Intentionally ignored: chime failure non-fatal
             // Grab any final chunks that arrived after the last take_chunks().
             let recording = capture.stop();
             buffered_chunks.extend(recording.chunks);
-            let _ = fs::remove_file(&stop_sentinel);
+            let _ = fs::remove_file(&stop_sentinel); // Best-effort cleanup
 
             let (editor_snapshots, file_diffs) = editor_events.collect();
             transcribe_and_write(
@@ -294,7 +297,7 @@ pub fn daemon() -> anyhow::Result<()> {
 
         // 3. Check for flush sentinel → transcribe remaining, write, reset state.
         if flush_sentinel.exists() {
-            let _ = audio::play_flush_chime();
+            let _ = audio::play_flush_chime(); // Intentionally ignored: chime failure non-fatal
             let recording = capture.drain();
             buffered_chunks.extend(recording.chunks);
             let elapsed = last_drain.elapsed().as_secs_f64();
@@ -320,7 +323,7 @@ pub fn daemon() -> anyhow::Result<()> {
                 detector.reset();
             }
 
-            // Acknowledge flush by deleting sentinel
+            // Acknowledge flush by deleting sentinel (best-effort)
             let _ = fs::remove_file(&flush_sentinel);
             continue;
         }

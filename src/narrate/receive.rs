@@ -16,7 +16,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 
 use super::merge::Event;
 use super::render::{self, SnipConfig};
-use super::{archive_dir, cache_dir, pending_dir, receive_lock_path, resolve_session};
+use super::{archive_dir, pending_dir, receive_lock_path, resolve_session};
 use crate::config::Config;
 use crate::state::SessionId;
 
@@ -133,6 +133,7 @@ fn relativize_str(path: &str, cwd: &Utf8Path) -> String {
 /// Archive pending narration files by moving them to the archive directory.
 pub(crate) fn archive_pending(files: &[PathBuf], session_id: &SessionId) {
     let archive = archive_dir(session_id);
+    // Best-effort archival: non-critical for narration delivery.
     let _ = fs::create_dir_all(&archive);
 
     for path in files {
@@ -142,15 +143,15 @@ pub(crate) fn archive_pending(files: &[PathBuf], session_id: &SessionId) {
         }
     }
 
-    // Clean up the pending directory if empty.
+    // Best-effort: only succeeds if empty.
     let dir = pending_dir(session_id);
-    let _ = fs::remove_dir(&dir); // only succeeds if empty
+    let _ = fs::remove_dir(&dir);
 }
 
 /// Try to acquire an exclusive lock file. Returns the path on success.
 fn try_lock(lock_path: &Utf8Path) -> Option<LockGuard> {
     if let Some(parent) = lock_path.parent() {
-        let _ = fs::create_dir_all(parent);
+        let _ = fs::create_dir_all(parent); // Best-effort: will fail at open if missing
     }
 
     // Use O_CREAT | O_EXCL for atomic creation
@@ -160,7 +161,7 @@ fn try_lock(lock_path: &Utf8Path) -> Option<LockGuard> {
         .open(lock_path)
     {
         Ok(_) => {
-            // Write our PID for debugging
+            // Best-effort PID write for stale lock detection.
             let _ = fs::write(lock_path, std::process::id().to_string());
             Some(LockGuard {
                 path: lock_path.to_path_buf(),
@@ -172,7 +173,7 @@ fn try_lock(lock_path: &Utf8Path) -> Option<LockGuard> {
                 && let Ok(pid) = content.trim().parse::<u32>()
                 && !super::process_alive(pid as i32)
             {
-                let _ = fs::remove_file(lock_path);
+                let _ = fs::remove_file(lock_path); // Best-effort stale lock cleanup
                 return try_lock(lock_path);
             }
             None
@@ -187,7 +188,7 @@ struct LockGuard {
 
 impl Drop for LockGuard {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        let _ = fs::remove_file(&self.path); // Best-effort: lock may already be gone
     }
 }
 
@@ -217,27 +218,7 @@ fn run_once(session_id: Option<SessionId>) -> anyhow::Result<()> {
 
     let session_id = match session_id {
         Some(s) => s,
-        None => {
-            // No session — try unsuffixed fallback
-            let fallback = cache_dir().join("narration.json");
-            if fallback.exists()
-                && let Ok(content) = fs::read_to_string(&fallback)
-            {
-                if let Ok(mut events) = serde_json::from_str::<Vec<Event>>(&content) {
-                    filter_events(&mut events, &cwd, &config.include_dirs);
-                    relativize_events(&mut events, &cwd);
-                    let markdown = render::render_markdown(&events, SnipConfig::default());
-                    let trimmed = markdown.trim();
-                    if !trimmed.is_empty() {
-                        print!("<narration>\n{trimmed}\n</narration>");
-                        let _ = fs::remove_file(&fallback);
-                        return Ok(());
-                    }
-                }
-                let _ = fs::remove_file(&fallback);
-            }
-            std::process::exit(1);
-        }
+        None => anyhow::bail!("no session ID available: run /attend to start a session"),
     };
 
     let files = collect_pending(&session_id);
@@ -256,7 +237,7 @@ fn run_wait(session_id: Option<SessionId>) -> anyhow::Result<()> {
     let session_id = match session_id {
         Some(s) => s,
         None => {
-            anyhow::bail!("no session ID available (use --session or run /attend first)");
+            anyhow::bail!("no session ID available: run /attend to start a session");
         }
     };
 

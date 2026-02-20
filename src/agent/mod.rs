@@ -51,16 +51,9 @@ pub(crate) fn resolve_bin_cmd(dev: bool) -> anyhow::Result<String> {
             .map_err(|e| anyhow::anyhow!("non-UTF-8 exe path: {}", e.into_path_buf().display()))?;
         Ok(exe.into_string())
     } else {
-        match which::which(&bin_name) {
-            Ok(_) => Ok(bin_name),
-            Err(_) => {
-                let exe = std::env::current_exe()
-                    .ok()
-                    .and_then(|p| Utf8PathBuf::try_from(p).ok())
-                    .map(Utf8PathBuf::into_string);
-                Ok(exe.unwrap_or(bin_name))
-            }
-        }
+        which::which(&bin_name)
+            .map(|_| bin_name)
+            .map_err(|e| anyhow::anyhow!("cannot find binary on PATH: {e}"))
     }
 }
 

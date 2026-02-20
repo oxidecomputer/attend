@@ -38,7 +38,7 @@ pub fn session_start() -> anyhow::Result<()> {
     if let Some(ref sid) = session_id
         && let Some(cp) = session_cache_path(sid)
     {
-        let _ = fs::remove_file(cp);
+        let _ = fs::remove_file(cp); // Best-effort: stale cache file may not exist
     }
 
     // Auto-upgrade hooks on version mismatch.
@@ -115,7 +115,7 @@ pub fn run(cli_cwd: Option<Utf8PathBuf>) -> anyhow::Result<()> {
         && let Some(cp) = session_cache_path(sid)
     {
         if let Some(parent) = cp.parent() {
-            let _ = fs::create_dir_all(parent);
+            let _ = fs::create_dir_all(parent); // Best-effort: will fail at write if missing
         }
         if let Err(e) = crate::util::atomic_write(&cp, |file| {
             serde_json::to_writer(io::BufWriter::new(file), &state).map_err(io::Error::other)

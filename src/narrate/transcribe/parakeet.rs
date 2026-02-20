@@ -90,6 +90,7 @@ impl super::Transcriber for ParakeetTranscriber {
         use std::time::Instant;
 
         let t0 = Instant::now();
+        // Intentionally ignored: bench only measures timing
         let _ = self.model.transcribe_samples(
             samples.to_vec(),
             SAMPLE_RATE,

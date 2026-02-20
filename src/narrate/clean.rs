@@ -55,7 +55,7 @@ pub(crate) fn clean_archive_dir(archive_root: &std::path::Path, older_than: Dura
 
         // Remove session directory if now empty.
         if fs::read_dir(&session_dir).is_ok_and(|mut d| d.next().is_none()) {
-            let _ = fs::remove_dir(&session_dir);
+            let _ = fs::remove_dir(&session_dir); // Best-effort: only succeeds if empty
         }
     }
 

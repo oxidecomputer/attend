@@ -34,6 +34,7 @@ impl CaptureHandle {
     pub fn collect(mut self) -> (Vec<Event>, Vec<Event>) {
         self.stop_flag.store(true, Ordering::Relaxed);
 
+        // Intentionally ignored: thread panics are non-recoverable here.
         if let Some(h) = self.editor_thread.take() {
             let _ = h.join();
         }

@@ -94,7 +94,7 @@ pub(crate) fn installed_meta() -> Option<InstallMeta> {
 pub(crate) fn save_install_meta(meta: &InstallMeta) {
     let Some(path) = version_path() else { return };
     if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+        let _ = fs::create_dir_all(parent); // Best-effort: will fail at write if missing
     }
     if let Err(e) = atomic_write(&path, |file| {
         serde_json::to_writer_pretty(io::BufWriter::new(file), meta).map_err(io::Error::other)

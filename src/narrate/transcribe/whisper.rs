@@ -154,7 +154,7 @@ impl super::Transcriber for WhisperTranscriber {
         params.set_no_context(true);
 
         let t2 = Instant::now();
-        let _ = state.full(params, samples);
+        let _ = state.full(params, samples); // Intentionally ignored: bench only measures timing
         let transcribe_time = t2.elapsed();
 
         let total = state_time + transcribe_time;
