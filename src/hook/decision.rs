@@ -1,53 +1,72 @@
 use std::fs;
 
-use crate::state::SessionId;
+use super::types::{GuidanceReason, HookDecision, HookType};
 
-use super::types::{GuidanceReason, HookDecision};
-
-/// Pure decision logic for narration delivery hooks (Stop, PreToolUse, PostToolUse).
+/// Relationship between the hook's session and the active listening session.
 ///
-/// Takes all external state as parameters so it can be tested without I/O.
+/// Computed once by the dispatcher and passed to decision functions so they
+/// don't need raw session IDs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SessionRelation {
+    /// This session is the active listener.
+    Active,
+    /// Another session owns narration (this session was displaced).
+    Stolen,
+    /// No listening session exists, or no session ID on this hook.
+    Inactive,
+}
+
+/// Pure decision logic for general (non-listen) hooks: Stop, PreToolUse,
+/// PostToolUse on tools other than `attend listen`.
+///
+/// Returns final decisions with the correct effect — callers should not
+/// transform Block↔Approve.
 ///
 /// `stop_hook_active` is set by Claude Code on re-invocation after a previous
 /// block. We use it as a safety valve: if we already told the agent to start
 /// a receiver and it's re-stopping, approve rather than risk an infinite
 /// block loop (e.g. if the receiver hasn't created its lock file yet).
-pub(super) fn hook_decision(
-    hook_session_id: Option<&SessionId>,
-    listening_session: Option<&SessionId>,
+pub(super) fn general_decision(
+    relation: SessionRelation,
     has_pending: bool,
     receiver_alive: bool,
     stop_hook_active: bool,
+    hook_type: HookType,
 ) -> HookDecision {
-    match (listening_session, hook_session_id) {
-        // We are the active listening session — check for narration.
-        (Some(listening_sid), Some(hook_sid)) if listening_sid == hook_sid => {}
-        // Narration is active in a different session.
-        (Some(_), Some(_)) => return HookDecision::block(GuidanceReason::SessionMoved),
-        // No listening session at all — approve silently.
-        _ => return HookDecision::Silent,
-    }
+    match relation {
+        SessionRelation::Inactive => HookDecision::Silent,
 
-    // We are the active session. Pending narration always takes priority:
-    // tell the agent to run `attend listen` so PreToolUse can deliver
-    // the content and start a new receiver in one round trip.
-    if has_pending {
-        return HookDecision::block(GuidanceReason::NarrationReady);
-    }
+        // Advisory: inform the agent that narration moved away.
+        SessionRelation::Stolen => HookDecision::approve(GuidanceReason::SessionMoved),
 
-    // No narration. If a receiver is running, it will handle future delivery.
-    if receiver_alive {
-        return HookDecision::Silent;
-    }
+        SessionRelation::Active => {
+            // Pending narration always takes priority: block so the agent
+            // runs `attend listen` to pick up the content first.
+            if has_pending {
+                return HookDecision::block(GuidanceReason::NarrationReady);
+            }
 
-    // No receiver. On re-invocation after a previous block, approve to avoid
-    // an infinite loop (the agent already got the "start receiver" message).
-    if stop_hook_active {
-        return HookDecision::Silent;
-    }
+            // A running receiver will handle future delivery.
+            if receiver_alive {
+                return HookDecision::Silent;
+            }
 
-    // First attempt, no receiver — ask the agent to start one.
-    HookDecision::block(GuidanceReason::StartReceiver)
+            // Re-invocation after a previous block: approve to avoid an
+            // infinite loop (the agent already got the "start receiver"
+            // message).
+            if stop_hook_active {
+                return HookDecision::Silent;
+            }
+
+            // First attempt, no receiver — nudge the agent to start one.
+            // Block on Stop (don't exit before starting), advisory on ToolUse
+            // (let the tool through).
+            match hook_type {
+                HookType::Stop => HookDecision::block(GuidanceReason::StartReceiver),
+                _ => HookDecision::approve(GuidanceReason::StartReceiver),
+            }
+        }
+    }
 }
 
 /// Check whether a background `receive --wait` process is alive.

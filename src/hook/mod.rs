@@ -22,10 +22,10 @@ pub(crate) use session_state::clear_session_moved_marker;
 #[cfg(test)]
 use command::is_listen_command;
 use command::{is_attend_listen, is_attend_prompt};
-use decision::{hook_decision, receiver_alive};
+use decision::{SessionRelation, general_decision, receiver_alive};
 use session_state::{
-    clean_moved_markers, mark_session_moved_notified, session_cache_path,
-    session_moved_already_notified,
+    clean_session_markers, mark_session_activated, mark_session_moved_notified, session_cache_path,
+    session_moved_already_notified, session_was_activated,
 };
 use upgrade::auto_upgrade_hooks;
 
@@ -48,8 +48,8 @@ pub fn session_start(agent: &dyn Agent) -> anyhow::Result<()> {
         let _ = fs::remove_file(cp); // Best-effort: stale cache file may not exist
     }
 
-    // Clean up orphan "session moved" marker files.
-    clean_moved_markers();
+    // Clean up orphan session marker files (moved-*, activated-*).
+    clean_session_markers();
 
     // Auto-upgrade hooks on version mismatch. Runs at most once per binary
     // version: the version is saved after the attempt regardless of outcome.
@@ -86,8 +86,11 @@ pub fn user_prompt(agent: &dyn Agent, cli_cwd: Option<Utf8PathBuf>) -> anyhow::R
             file.write_all(session_id.as_str().as_bytes())
         })?;
 
-        // Clear any stale "session moved" marker so this session gets
-        // a fresh notification if narration moves away again later.
+        // Mark this session as having activated attend, so narration
+        // hooks know it participates. Clear any stale "session moved"
+        // marker so this session gets a fresh notification if narration
+        // moves away again later.
+        mark_session_activated(&session_id);
         clear_session_moved_marker(&session_id);
 
         return agent.attend_activate(&session_id);
@@ -137,122 +140,125 @@ pub fn user_prompt(agent: &dyn Agent, cli_cwd: Option<Utf8PathBuf>) -> anyhow::R
 
 /// Handle narration delivery hooks: Stop, PreToolUse, PostToolUse.
 ///
-/// All three share the same check-and-deliver logic with ToolUse-specific
-/// guards: `attend listen` is approved when the session is active (to start
-/// the receiver) and blocked when the session was stolen (to prevent
-/// steal-back). A running receiver is detected early to save a round trip.
+/// Dispatches to [`handle_listen_hook`] for `attend listen` tool calls
+/// and [`handle_general_hook`] for everything else.
 pub fn check_narration(agent: &dyn Agent, hook_type: HookType) -> anyhow::Result<()> {
     let input = agent.parse_hook_input(hook_type);
     let listening = state::listening_session();
 
-    // Resolve whether we are the active listening session.
-    let is_active = matches!(
-        (&listening, &input.session_id),
-        (Some(l), Some(h)) if l == h
-    );
+    let relation = match (&listening, &input.session_id) {
+        (Some(l), Some(h)) if l == h => SessionRelation::Active,
+        (Some(_), Some(_)) => SessionRelation::Stolen,
+        _ => SessionRelation::Inactive,
+    };
 
-    // ToolUse guards for `attend listen`:
-    //
-    // PreToolUse gates whether the receiver starts:
-    // - Stolen session → deny (prevents steal-back bounce)
-    // - Active session + pending narration → deliver content + allow
-    // - Active session + no pending + receiver running → deny with guidance
-    // - Active session + no pending + no receiver → silent (let it start)
-    //
-    // PostToolUse returns Silent unconditionally: the command already ran, so
-    // there is nothing to gate.  Without this, the startup race (lock file
-    // not yet written) causes a spurious StartReceiver advisory that prompts
-    // the agent to start a second listener.
-    if matches!(hook_type, HookType::PostToolUse) && is_attend_listen(&input) {
+    // Sessions that never activated `/attend` don't participate in
+    // narration: skip all hook logic so we don't block unrelated sessions.
+    if relation != SessionRelation::Active
+        && let Some(ref sid) = input.session_id
+        && !session_was_activated(sid)
+    {
+        return agent.attend_result(&HookDecision::Silent, hook_type);
+    }
+
+    if is_attend_listen(&input) {
+        handle_listen_hook(agent, hook_type, &input, relation, listening.as_ref())
+    } else {
+        handle_general_hook(agent, hook_type, &input, relation, listening.as_ref())
+    }
+}
+
+/// Handle PreToolUse/PostToolUse for `attend listen` specifically.
+///
+/// - PostToolUse: approve with advisory (the command already ran).
+/// - Stolen session: block to prevent steal-back livelock.
+/// - Active session: deliver pending narration if any, or let the
+///   listener start if no receiver is running yet.
+fn handle_listen_hook(
+    agent: &dyn Agent,
+    hook_type: HookType,
+    input: &HookInput,
+    relation: SessionRelation,
+    listening: Option<&state::SessionId>,
+) -> anyhow::Result<()> {
+    // PostToolUse: the command already ran. Emit advisory so the agent
+    // knows to restart (not read) the listener when its task notification
+    // arrives. Without this, the startup race (lock file not yet written)
+    // causes a spurious StartReceiver advisory.
+    if matches!(hook_type, HookType::PostToolUse) {
         return agent.attend_result(
             &HookDecision::approve(GuidanceReason::ListenerStarted),
             hook_type,
         );
     }
-    let is_pre_listen = matches!(hook_type, HookType::PreToolUse) && is_attend_listen(&input);
-    let is_stolen = matches!(
-        (&listening, &input.session_id),
-        (Some(_), Some(_)) if !is_active
-    );
-    if is_stolen && is_pre_listen {
-        return agent.attend_result(
-            &HookDecision::block(GuidanceReason::SessionMoved),
-            hook_type,
-        );
-    }
-    if is_active && is_pre_listen {
-        // Sole narration delivery path: read pending files, deliver content,
-        // and approve the listen command so the receiver starts in the same
-        // round trip.
-        let session_id = listening.as_ref().unwrap();
-        let cwd = resolve_cwd(&input);
-        let config = crate::config::Config::load(&cwd);
-        let files = crate::narrate::receive::collect_pending(session_id);
-        if let Some(content) =
-            crate::narrate::receive::read_pending(&files, &cwd, &config.include_dirs)
-        {
-            crate::narrate::receive::archive_pending(&files, session_id);
-            crate::narrate::receive::auto_prune(&config);
-            return agent.deliver_narration(&content);
-        }
-        if receiver_alive() {
-            return agent.attend_result(
-                &HookDecision::block(GuidanceReason::ListenerAlreadyActive),
-                hook_type,
-            );
-        }
-        return agent.attend_result(&HookDecision::Silent, hook_type);
-    }
 
-    // For non-listen hooks, we only need to know WHETHER narration is
-    // pending (not the content — that's delivered via `attend listen`).
-    let has_pending = is_active && {
-        let session_id = listening.as_ref().unwrap();
+    // PreToolUse: gate whether the receiver is allowed to start.
+    match relation {
+        SessionRelation::Stolen => {
+            // Block to prevent a steal-back bounce between sessions.
+            agent.attend_result(
+                &HookDecision::block(GuidanceReason::SessionMoved),
+                hook_type,
+            )
+        }
+        SessionRelation::Active => {
+            // Sole narration delivery path: read pending files, deliver
+            // content, and approve so the receiver starts in the same
+            // round trip.
+            let session_id = listening.unwrap();
+            let cwd = resolve_cwd(input);
+            let config = crate::config::Config::load(&cwd);
+            let files = crate::narrate::receive::collect_pending(session_id);
+            if let Some(content) =
+                crate::narrate::receive::read_pending(&files, &cwd, &config.include_dirs)
+            {
+                crate::narrate::receive::archive_pending(&files, session_id);
+                crate::narrate::receive::auto_prune(&config);
+                return agent.deliver_narration(&content);
+            }
+            if receiver_alive() {
+                return agent.attend_result(
+                    &HookDecision::block(GuidanceReason::ListenerAlreadyActive),
+                    hook_type,
+                );
+            }
+            // No pending, no receiver — let it start silently.
+            agent.attend_result(&HookDecision::Silent, hook_type)
+        }
+        SessionRelation::Inactive => agent.attend_result(&HookDecision::Silent, hook_type),
+    }
+}
+
+/// Handle Stop/PreToolUse/PostToolUse for tools other than `attend listen`.
+///
+/// Calls `general_decision` for the pure logic, then applies the
+/// SessionMoved ratchet (deliver once, suppress thereafter).
+fn handle_general_hook(
+    agent: &dyn Agent,
+    hook_type: HookType,
+    input: &HookInput,
+    relation: SessionRelation,
+    listening: Option<&state::SessionId>,
+) -> anyhow::Result<()> {
+    let has_pending = matches!(relation, SessionRelation::Active) && {
+        let session_id = listening.unwrap();
         !crate::narrate::receive::collect_pending(session_id).is_empty()
     };
 
     let stop_hook_active =
         matches!(input.kind, HookKind::Stop { stop_hook_active } if stop_hook_active);
 
-    let mut decision = hook_decision(
-        input.session_id.as_ref(),
-        listening.as_ref(),
+    let mut decision = general_decision(
+        relation,
         has_pending,
         receiver_alive(),
         stop_hook_active,
+        hook_type,
     );
 
-    // hook_decision returns Block for all non-Silent guidance. Convert to
-    // Approve where the hook type warrants it:
-    // - SessionMoved on Stop → Approve (let Claude stop, just inject guidance)
-    // - StartReceiver on PreToolUse/PostToolUse → Approve (let tool through, inject nudge)
-    if matches!(hook_type, HookType::Stop)
-        && matches!(
-            decision,
-            HookDecision::Guidance {
-                reason: GuidanceReason::SessionMoved,
-                ..
-            }
-        )
-    {
-        decision = HookDecision::approve(GuidanceReason::SessionMoved);
-    }
-    if matches!(hook_type, HookType::PreToolUse | HookType::PostToolUse)
-        && matches!(
-            decision,
-            HookDecision::Guidance {
-                reason: GuidanceReason::StartReceiver,
-                ..
-            }
-        )
-    {
-        decision = HookDecision::approve(GuidanceReason::StartReceiver);
-    }
-
-    // SessionMoved ratchet: deliver the guidance once per session, then
-    // suppress on all subsequent hooks (Stop and ToolUse alike). The
-    // PreToolUse block on `attend listen` independently prevents the
-    // agent from stealing the session back.
+    // SessionMoved ratchet: deliver the advisory once per session, then
+    // suppress. The PreToolUse block on `attend listen` independently
+    // prevents the agent from stealing the session back.
     if matches!(
         decision,
         HookDecision::Guidance {
