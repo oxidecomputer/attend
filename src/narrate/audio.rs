@@ -37,20 +37,42 @@ const CHIME_PLAYBACK_PADDING_SECS: f32 = 0.05;
 // ---------------------------------------------------------------------------
 // Resampler constants (rubato sinc interpolation)
 // ---------------------------------------------------------------------------
+//
+// We use rubato's async sinc resampler to downsample from the device's native
+// rate (typically 44.1/48 kHz) to 16 kHz for transcription. The "async" variant
+// handles non-integer ratios (e.g. 48000/16000 = 3, but 44100/16000 = 2.75625).
+//
+// Sinc interpolation with a BlackmanHarris window gives excellent alias
+// rejection. The parameters below trade off quality vs. CPU: a longer kernel
+// and higher oversampling improve frequency response at the cost of more
+// multiplies per sample. These values are generous for speech (which only
+// occupies 0-8 kHz) but cheap enough on modern hardware.
 
-/// Sinc interpolation kernel length.
+/// Sinc interpolation kernel length (number of zero-crossings on each side).
+/// Longer = sharper cutoff but more computation. 256 is high-quality; speech
+/// would be fine with 64-128, but the extra cost is negligible for our
+/// throughput (~5 seconds of audio at a time).
 const RESAMPLER_SINC_LEN: usize = 256;
 
-/// Low-pass cutoff frequency (fraction of Nyquist).
+/// Low-pass cutoff frequency as a fraction of the output Nyquist frequency.
+/// 0.95 preserves nearly all energy below Nyquist while still leaving a
+/// small transition band for the anti-aliasing filter to roll off.
 const RESAMPLER_CUTOFF: f32 = 0.95;
 
-/// Sinc oversampling factor for table lookup.
+/// Sinc table oversampling factor. The resampler precomputes a table of sinc
+/// values and interpolates between entries. Higher = more accurate interpolation
+/// at the cost of memory (256 * 256 * sizeof(f32) = 256 KB, trivial).
 const RESAMPLER_OVERSAMPLING: usize = 256;
 
-/// Number of input samples processed per resampler call.
+/// Number of input samples processed per resampler call. Larger batches
+/// amortize per-call overhead. 1024 is a reasonable default; the last chunk
+/// is zero-padded if shorter (see `resample()`).
 const RESAMPLER_CHUNK_SIZE: usize = 1024;
 
-/// Transition bandwidth for the anti-aliasing filter.
+/// Transition bandwidth parameter for the anti-aliasing filter design.
+/// Controls how quickly the filter rolls off above the cutoff. A value of
+/// 2.0 gives a moderate transition band — wider than the minimum (which
+/// would require a longer kernel) but sufficient for speech.
 const RESAMPLER_TRANSITION_BW: f64 = 2.0;
 
 /// A timestamped chunk of audio samples.
@@ -234,7 +256,13 @@ pub fn flatten_chunks(chunks: &[AudioChunk]) -> Vec<f32> {
     out
 }
 
-/// Resample a mono f32 buffer from `from_rate` to `to_rate` (typically 16000).
+/// Resample a mono f32 buffer from `from_rate` to `to_rate` (typically 16 kHz).
+///
+/// Processes the input in fixed-size chunks (`RESAMPLER_CHUNK_SIZE` samples).
+/// The final chunk is zero-padded to the full chunk size because rubato
+/// requires fixed-length input buffers. After processing, the output is
+/// truncated to the mathematically expected sample count to remove any
+/// trailing silence introduced by padding.
 pub fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> anyhow::Result<Vec<f32>> {
     if from_rate == to_rate {
         return Ok(samples.to_vec());
@@ -249,8 +277,14 @@ pub fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> anyhow::Result
     let params = SincInterpolationParameters {
         sinc_len: RESAMPLER_SINC_LEN,
         f_cutoff: RESAMPLER_CUTOFF,
+        // Linear interpolation between sinc table entries. Cubic would give
+        // marginally better frequency response but costs more per sample.
+        // For speech destined for a neural transcription model, the difference
+        // is inaudible and immeasurable.
         interpolation: SincInterpolationType::Linear,
         oversampling_factor: RESAMPLER_OVERSAMPLING,
+        // BlackmanHarris2 has excellent sidelobe suppression (~92 dB), keeping
+        // aliased energy well below the noise floor of typical microphone input.
         window: WindowFunction::BlackmanHarris2,
     };
 

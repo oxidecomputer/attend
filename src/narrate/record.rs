@@ -6,6 +6,8 @@
 //! merges all streams, and writes the result as a pending narration file.
 
 use std::fs;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -33,9 +35,6 @@ const SENTINEL_WAIT_ITERATIONS: usize = 100;
 /// Interval between sentinel poll checks (ms).
 const SENTINEL_POLL_MS: u64 = 50;
 
-/// Grace period after spawning the daemon for it to acquire the lock (ms).
-const DAEMON_STARTUP_GRACE_MS: u64 = 200;
-
 /// Main daemon loop poll interval (ms).
 const DAEMON_LOOP_POLL_MS: u64 = 100;
 
@@ -44,6 +43,331 @@ const TRANSCRIPTION_CONTEXT_WORDS: usize = 50;
 
 /// Minimum remaining audio duration (seconds) worth transcribing at stop/flush.
 const MIN_TRANSCRIPTION_DURATION_SECS: f64 = 0.5;
+
+// ---------------------------------------------------------------------------
+// Deferred transcriber (background model loading)
+// ---------------------------------------------------------------------------
+
+/// A transcriber that loads its model on a background thread.
+///
+/// Audio capture and chime playback proceed concurrently with model loading.
+/// The first call to [`get()`] blocks until the model is ready.
+struct DeferredTranscriber {
+    handle: Option<thread::JoinHandle<anyhow::Result<Box<dyn super::transcribe::Transcriber>>>>,
+    transcriber: Option<Box<dyn super::transcribe::Transcriber>>,
+}
+
+impl DeferredTranscriber {
+    /// Spawn model preloading on a background thread.
+    fn spawn(engine: Engine, model_path: camino::Utf8PathBuf) -> Self {
+        let handle = thread::spawn(move || engine.preload(&model_path));
+        Self {
+            handle: Some(handle),
+            transcriber: None,
+        }
+    }
+
+    /// Get a mutable reference to the transcriber, blocking if still loading.
+    fn get(&mut self) -> anyhow::Result<&mut dyn super::transcribe::Transcriber> {
+        if self.transcriber.is_none() {
+            let handle = self
+                .handle
+                .take()
+                .expect("transcriber handle already consumed");
+            self.transcriber = Some(
+                handle
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("model preload thread panicked"))??,
+            );
+        }
+        Ok(&mut **self.transcriber.as_mut().unwrap())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Daemon state
+// ---------------------------------------------------------------------------
+
+/// Mutable state for the recording daemon's main loop.
+///
+/// Bundles audio buffers, transcription state, silence detection, capture
+/// handles, and timing into a single struct. The main loop becomes:
+///
+/// ```ignore
+/// loop {
+///     state.ingest_chunks()?;
+///     if state.check_stop()? { break; }
+///     if state.check_flush()? { continue; }
+///     thread::sleep(POLL_INTERVAL);
+/// }
+/// ```
+struct DaemonState {
+    transcriber: DeferredTranscriber,
+    /// Audio capture handle. `Some` during recording, `None` after stop.
+    audio_capture: Option<audio::CaptureHandle>,
+    /// Editor/diff capture handle. `Some` during recording, `None` after stop.
+    editor_capture: Option<capture::CaptureHandle>,
+    /// Set by the SIGTERM handler for graceful shutdown.
+    terminated: Arc<AtomicBool>,
+    silence_detector: Option<SilenceDetector>,
+    /// Audio chunks buffered since the last on-the-fly transcription.
+    buffered_chunks: Vec<AudioChunk>,
+    /// Words transcribed on the fly during this period.
+    pre_transcribed: Vec<Word>,
+    /// When the current period started (for computing word offsets).
+    period_start: Instant,
+    /// Accumulated time base across flushes (seconds).
+    time_base_secs: f64,
+    /// When the last drain/flush occurred.
+    last_drain: Instant,
+    sample_rate: u32,
+    session_id: Option<SessionId>,
+    stop_sentinel: camino::Utf8PathBuf,
+    flush_sentinel: camino::Utf8PathBuf,
+}
+
+impl DaemonState {
+    /// Ingest new audio chunks from the capture stream.
+    ///
+    /// Feeds each chunk to the silence detector. When a speech segment ends
+    /// (silence detected after speech), transcribes the segment on the fly
+    /// and frees the audio.
+    fn ingest_chunks(&mut self) -> anyhow::Result<()> {
+        let capture = self
+            .audio_capture
+            .as_ref()
+            .expect("audio capture already stopped");
+        for chunk in capture.take_chunks() {
+            if let Some(ref mut detector) = self.silence_detector
+                && let Some(silence_start) = detector.feed(&chunk)
+            {
+                self.buffered_chunks.push(chunk);
+
+                // Partition: chunks whose instant < silence_start are speech.
+                let split = self
+                    .buffered_chunks
+                    .partition_point(|c| c.instant < silence_start);
+                let speech: Vec<_> = self.buffered_chunks.drain(..split).collect();
+                // Discard trailing silence chunks.
+                self.buffered_chunks.clear();
+                detector.reset();
+
+                if !speech.is_empty() {
+                    self.transcribe_segment(&speech)?;
+                }
+                continue;
+            }
+            self.buffered_chunks.push(chunk);
+        }
+        Ok(())
+    }
+
+    /// Check for stop sentinel or SIGTERM. If found, finalize and write narration.
+    ///
+    /// Returns `true` if the daemon should exit (stop was handled).
+    fn check_stop(&mut self) -> anyhow::Result<bool> {
+        if !self.stop_sentinel.exists() && !self.terminated.load(Ordering::Relaxed) {
+            return Ok(false);
+        }
+
+        // Intentionally ignored: chime failure non-fatal.
+        let _ = audio::play_chime(false);
+
+        // Grab any final chunks that arrived after the last ingest.
+        let capture = self
+            .audio_capture
+            .take()
+            .expect("audio capture already stopped");
+        let recording = capture.stop();
+        self.buffered_chunks.extend(recording.chunks);
+        // Best-effort cleanup.
+        let _ = fs::remove_file(&self.stop_sentinel);
+
+        let editor = self
+            .editor_capture
+            .take()
+            .expect("editor capture already stopped");
+        let (editor_snapshots, file_diffs) = editor.collect();
+        self.transcribe_and_write(editor_snapshots, file_diffs)?;
+        Ok(true)
+    }
+
+    /// Check for flush sentinel. If found, write current narration and reset.
+    ///
+    /// Returns `true` if a flush was handled (caller should `continue`).
+    fn check_flush(&mut self) -> anyhow::Result<bool> {
+        if !self.flush_sentinel.exists() {
+            return Ok(false);
+        }
+
+        // Intentionally ignored: chime failure non-fatal.
+        let _ = audio::play_flush_chime();
+
+        let capture = self
+            .audio_capture
+            .as_ref()
+            .expect("audio capture already stopped");
+        let recording = capture.drain();
+        self.buffered_chunks.extend(recording.chunks);
+        let elapsed = self.last_drain.elapsed().as_secs_f64();
+
+        let editor = self
+            .editor_capture
+            .as_ref()
+            .expect("editor capture already stopped");
+        let (editor_snapshots, file_diffs) = editor.drain();
+        self.transcribe_and_write(editor_snapshots, file_diffs)?;
+
+        self.time_base_secs += elapsed;
+        self.last_drain = Instant::now();
+        self.period_start = Instant::now();
+
+        if let Some(ref mut detector) = self.silence_detector {
+            detector.reset();
+        }
+
+        // Acknowledge flush by deleting sentinel (best-effort).
+        let _ = fs::remove_file(&self.flush_sentinel);
+        Ok(true)
+    }
+
+    /// Transcribe a completed speech segment on the fly.
+    fn transcribe_segment(&mut self, speech_chunks: &[AudioChunk]) -> anyhow::Result<()> {
+        let offset = speech_chunks[0]
+            .instant
+            .duration_since(self.period_start)
+            .as_secs_f64();
+        let samples_16k = audio::resample(
+            &audio::flatten_chunks(speech_chunks),
+            self.sample_rate,
+            TRANSCRIPTION_SAMPLE_RATE,
+        )?;
+
+        tracing::debug!(
+            duration_secs = samples_16k.len() as f64 / TRANSCRIPTION_SAMPLE_RATE as f64,
+            offset_secs = offset,
+            "Transcribing speech segment on the fly"
+        );
+
+        let transcriber = self.transcriber.get()?;
+        let words = transcriber.transcribe(&samples_16k)?;
+        for w in &words {
+            self.pre_transcribed.push(Word {
+                start_secs: w.start_secs + offset,
+                end_secs: w.end_secs + offset,
+                text: w.text.clone(),
+            });
+        }
+
+        // Feed context for next segment (Whisper uses it, Parakeet ignores).
+        let ctx: String = self
+            .pre_transcribed
+            .iter()
+            .rev()
+            .take(TRANSCRIPTION_CONTEXT_WORDS)
+            .map(|w| w.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.transcriber.get()?.set_context(&ctx);
+
+        Ok(())
+    }
+
+    /// Transcribe remaining audio, combine with pre-transcribed words, merge
+    /// with editor events, and write the pending narration file.
+    fn transcribe_and_write(
+        &mut self,
+        editor_snapshots: Vec<Event>,
+        file_diffs: Vec<Event>,
+    ) -> anyhow::Result<()> {
+        let remaining_chunks = std::mem::take(&mut self.buffered_chunks);
+        let mut all_words = std::mem::take(&mut self.pre_transcribed);
+
+        // Transcribe any remaining buffered audio (the in-progress segment).
+        if !remaining_chunks.is_empty() {
+            let remaining_samples = audio::flatten_chunks(&remaining_chunks);
+            let remaining_duration = remaining_samples.len() as f64 / self.sample_rate as f64;
+
+            if remaining_duration >= MIN_TRANSCRIPTION_DURATION_SECS {
+                let offset = remaining_chunks[0]
+                    .instant
+                    .duration_since(self.period_start)
+                    .as_secs_f64();
+
+                tracing::info!(
+                    duration_secs = remaining_duration,
+                    "Transcribing remaining audio..."
+                );
+
+                let samples_16k = audio::resample(
+                    &remaining_samples,
+                    self.sample_rate,
+                    TRANSCRIPTION_SAMPLE_RATE,
+                )?;
+                let transcriber = self.transcriber.get()?;
+                let words = transcriber.transcribe(&samples_16k)?;
+                for w in &words {
+                    all_words.push(Word {
+                        start_secs: w.start_secs + offset,
+                        end_secs: w.end_secs + offset,
+                        text: w.text.clone(),
+                    });
+                }
+            } else {
+                tracing::debug!(
+                    duration_secs = remaining_duration,
+                    "Remaining audio too short, skipping."
+                );
+            }
+        }
+
+        if all_words.is_empty() && editor_snapshots.is_empty() && file_diffs.is_empty() {
+            tracing::debug!("No content captured, discarding.");
+            return Ok(());
+        }
+
+        let mut events: Vec<Event> = Vec::new();
+
+        for word in &all_words {
+            events.push(Event::Words {
+                offset_secs: word.start_secs + self.time_base_secs,
+                text: word.text.clone(),
+            });
+        }
+
+        events.extend(editor_snapshots);
+        events.extend(file_diffs);
+
+        // Sort and compress/merge events, then serialize as JSON.
+        merge::compress_and_merge(&mut events);
+
+        if events.is_empty() {
+            tracing::debug!("No content captured after merge, discarding.");
+            return Ok(());
+        }
+
+        let json = serde_json::to_string(&events)?;
+
+        let ts = utc_now().replace(':', "-");
+        if let Some(ref sid) = self.session_id {
+            let dir = pending_dir(sid);
+            fs::create_dir_all(&dir)?;
+            let path = dir.join(format!("{ts}.json"));
+            crate::util::atomic_write_str(&path, &json)?;
+            tracing::info!(path = %path, "Narration written");
+        } else {
+            let path = cache_dir().join("narration.json");
+            crate::util::atomic_write_str(&path, &json)?;
+            tracing::info!(path = %path, "Narration written");
+        }
+
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public API: toggle, start, stop, daemon
+// ---------------------------------------------------------------------------
 
 /// Toggle recording: start if not recording, stop if recording.
 pub fn toggle() -> anyhow::Result<()> {
@@ -134,8 +458,9 @@ fn spawn_daemon() -> anyhow::Result<()> {
 
     cmd.spawn()?;
 
-    // Give the daemon a moment to acquire the lock and start audio
-    thread::sleep(Duration::from_millis(DAEMON_STARTUP_GRACE_MS));
+    // No grace period needed: the daemon acquires the record lock at startup.
+    // If the user double-toggles, the second spawn will find the lock held
+    // and the toggle logic handles it (stop or stale-lock cleanup).
 
     Ok(())
 }
@@ -203,13 +528,8 @@ pub fn daemon() -> anyhow::Result<()> {
     let _ = fs::remove_file(stop_sentinel_path());
     let _ = fs::remove_file(flush_sentinel_path());
 
-    // Preload model (blocks until ready — must complete before first transcription)
-    let mut transcriber = engine.preload(&model_path)?;
-
-    // Intentionally ignored: chime failure should not abort recording.
-    let _ = audio::play_chime(true);
-
-    // Start audio capture
+    // Start audio capture immediately — audio accumulates in the background
+    // while the model loads and the chime plays.
     let capture = audio::start_capture()?;
     let sample_rate = capture.sample_rate();
 
@@ -217,9 +537,22 @@ pub fn daemon() -> anyhow::Result<()> {
     // Pass None for cwd so paths stay absolute — filtering is deferred to receive.
     let editor_events = capture::start(None)?;
 
+    // Spawn model preload on a background thread. The first call to
+    // transcriber.get() blocks until the model is ready. This lets audio
+    // accumulate and the chime play concurrently with model loading.
+    let transcriber = DeferredTranscriber::spawn(engine, model_path);
+
+    // Register SIGTERM handler so `kill <pid>` triggers a clean shutdown
+    // (transcribe remaining audio and release the lock) instead of an abrupt exit.
+    let terminated = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&terminated))?;
+
+    // Intentionally ignored: chime failure should not abort recording.
+    let _ = audio::play_chime(true);
+
     // Silence-based segmentation (0 disables).
     let silence_secs = config.silence_duration.unwrap_or(5.0);
-    let mut silence_detector = if silence_secs > 0.0 {
+    let silence_detector = if silence_secs > 0.0 {
         Some(SilenceDetector::new(
             sample_rate,
             Duration::from_secs_f64(silence_secs),
@@ -228,246 +561,33 @@ pub fn daemon() -> anyhow::Result<()> {
         None
     };
 
-    // Chunks buffered since the last on-the-fly transcription (or period start).
-    let mut buffered_chunks: Vec<AudioChunk> = Vec::new();
-    // Words transcribed on the fly during this period.
-    let mut pre_transcribed: Vec<Word> = Vec::new();
-    // When the current period started (for computing word offsets).
-    let mut period_start = Instant::now();
-
-    // Track time base for word timestamp offsets across flushes
-    let mut time_base_secs = 0.0_f64;
-    let mut last_drain = Instant::now();
-
-    let stop_sentinel = stop_sentinel_path();
-    let flush_sentinel = flush_sentinel_path();
+    let now = Instant::now();
+    let mut state = DaemonState {
+        transcriber,
+        audio_capture: Some(capture),
+        editor_capture: Some(editor_events),
+        terminated,
+        silence_detector,
+        buffered_chunks: Vec::new(),
+        pre_transcribed: Vec::new(),
+        period_start: now,
+        time_base_secs: 0.0,
+        last_drain: now,
+        sample_rate,
+        session_id,
+        stop_sentinel: stop_sentinel_path(),
+        flush_sentinel: flush_sentinel_path(),
+    };
 
     loop {
-        // 1. Ingest new chunks from the capture stream.
-        for chunk in capture.take_chunks() {
-            if let Some(ref mut detector) = silence_detector
-                && let Some(silence_start) = detector.feed(&chunk)
-            {
-                buffered_chunks.push(chunk);
-
-                // Partition: chunks whose instant < silence_start are speech.
-                let split = buffered_chunks.partition_point(|c| c.instant < silence_start);
-                let speech: Vec<_> = buffered_chunks.drain(..split).collect();
-                // Discard trailing silence chunks.
-                buffered_chunks.clear();
-                detector.reset();
-
-                if !speech.is_empty() {
-                    transcribe_segment(
-                        &mut *transcriber,
-                        &speech,
-                        sample_rate,
-                        period_start,
-                        &mut pre_transcribed,
-                    )?;
-                }
-                continue;
-            }
-            buffered_chunks.push(chunk);
-        }
-
-        // 2. Check for stop sentinel → transcribe remaining + combine + write.
-        if stop_sentinel.exists() {
-            let _ = audio::play_chime(false); // Intentionally ignored: chime failure non-fatal
-            // Grab any final chunks that arrived after the last take_chunks().
-            let recording = capture.stop();
-            buffered_chunks.extend(recording.chunks);
-            let _ = fs::remove_file(&stop_sentinel); // Best-effort cleanup
-
-            let (editor_snapshots, file_diffs) = editor_events.collect();
-            transcribe_and_write(
-                &mut *transcriber,
-                std::mem::take(&mut buffered_chunks),
-                sample_rate,
-                std::mem::take(&mut pre_transcribed),
-                period_start,
-                editor_snapshots,
-                file_diffs,
-                time_base_secs,
-                session_id.as_ref(),
-            )?;
+        state.ingest_chunks()?;
+        if state.check_stop()? {
             break;
         }
-
-        // 3. Check for flush sentinel → transcribe remaining, write, reset state.
-        if flush_sentinel.exists() {
-            let _ = audio::play_flush_chime(); // Intentionally ignored: chime failure non-fatal
-            let recording = capture.drain();
-            buffered_chunks.extend(recording.chunks);
-            let elapsed = last_drain.elapsed().as_secs_f64();
-
-            let (editor_snapshots, file_diffs) = editor_events.drain();
-            transcribe_and_write(
-                &mut *transcriber,
-                std::mem::take(&mut buffered_chunks),
-                sample_rate,
-                std::mem::take(&mut pre_transcribed),
-                period_start,
-                editor_snapshots,
-                file_diffs,
-                time_base_secs,
-                session_id.as_ref(),
-            )?;
-
-            time_base_secs += elapsed;
-            last_drain = Instant::now();
-            period_start = Instant::now();
-
-            if let Some(ref mut detector) = silence_detector {
-                detector.reset();
-            }
-
-            // Acknowledge flush by deleting sentinel (best-effort)
-            let _ = fs::remove_file(&flush_sentinel);
+        if state.check_flush()? {
             continue;
         }
-
-        // 4. Sleep before next poll.
         thread::sleep(Duration::from_millis(DAEMON_LOOP_POLL_MS));
-    }
-
-    Ok(())
-}
-
-/// Transcribe a completed speech segment on the fly and append to pre_transcribed.
-fn transcribe_segment(
-    transcriber: &mut dyn super::transcribe::Transcriber,
-    speech_chunks: &[AudioChunk],
-    sample_rate: u32,
-    period_start: Instant,
-    pre_transcribed: &mut Vec<Word>,
-) -> anyhow::Result<()> {
-    let offset = speech_chunks[0]
-        .instant
-        .duration_since(period_start)
-        .as_secs_f64();
-    let samples_16k = audio::resample(
-        &audio::flatten_chunks(speech_chunks),
-        sample_rate,
-        TRANSCRIPTION_SAMPLE_RATE,
-    )?;
-
-    tracing::debug!(
-        duration_secs = samples_16k.len() as f64 / TRANSCRIPTION_SAMPLE_RATE as f64,
-        offset_secs = offset,
-        "Transcribing speech segment on the fly"
-    );
-
-    let words = transcriber.transcribe(&samples_16k)?;
-    for w in &words {
-        pre_transcribed.push(Word {
-            start_secs: w.start_secs + offset,
-            end_secs: w.end_secs + offset,
-            text: w.text.clone(),
-        });
-    }
-
-    // Feed context for next segment (Whisper uses it, Parakeet ignores).
-    let ctx: String = pre_transcribed
-        .iter()
-        .rev()
-        .take(TRANSCRIPTION_CONTEXT_WORDS)
-        .map(|w| w.text.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
-    transcriber.set_context(&ctx);
-
-    Ok(())
-}
-
-/// Transcribe remaining audio, combine with pre-transcribed words, merge with
-/// editor events, and write the pending file as JSON.
-#[allow(clippy::too_many_arguments)]
-fn transcribe_and_write(
-    transcriber: &mut dyn super::transcribe::Transcriber,
-    remaining_chunks: Vec<AudioChunk>,
-    sample_rate: u32,
-    pre_transcribed: Vec<Word>,
-    period_start: Instant,
-    editor_snapshots: Vec<Event>,
-    file_diffs: Vec<Event>,
-    time_base_secs: f64,
-    session_id: Option<&SessionId>,
-) -> anyhow::Result<()> {
-    let mut all_words = pre_transcribed;
-
-    // Transcribe any remaining buffered audio (the in-progress segment).
-    if !remaining_chunks.is_empty() {
-        let remaining_samples = audio::flatten_chunks(&remaining_chunks);
-        let remaining_duration = remaining_samples.len() as f64 / sample_rate as f64;
-
-        if remaining_duration >= MIN_TRANSCRIPTION_DURATION_SECS {
-            let offset = remaining_chunks[0]
-                .instant
-                .duration_since(period_start)
-                .as_secs_f64();
-
-            tracing::info!(
-                duration_secs = remaining_duration,
-                "Transcribing remaining audio..."
-            );
-
-            let samples_16k =
-                audio::resample(&remaining_samples, sample_rate, TRANSCRIPTION_SAMPLE_RATE)?;
-            let words = transcriber.transcribe(&samples_16k)?;
-            for w in &words {
-                all_words.push(Word {
-                    start_secs: w.start_secs + offset,
-                    end_secs: w.end_secs + offset,
-                    text: w.text.clone(),
-                });
-            }
-        } else {
-            tracing::debug!(
-                duration_secs = remaining_duration,
-                "Remaining audio too short, skipping."
-            );
-        }
-    }
-
-    if all_words.is_empty() && editor_snapshots.is_empty() && file_diffs.is_empty() {
-        tracing::debug!("No content captured, discarding.");
-        return Ok(());
-    }
-
-    let mut events: Vec<Event> = Vec::new();
-
-    for word in &all_words {
-        events.push(Event::Words {
-            offset_secs: word.start_secs + time_base_secs,
-            text: word.text.clone(),
-        });
-    }
-
-    events.extend(editor_snapshots);
-    events.extend(file_diffs);
-
-    // Sort and compress/merge events, then serialize as JSON with absolute paths.
-    merge::compress_and_merge(&mut events);
-
-    if events.is_empty() {
-        tracing::debug!("No content captured after merge, discarding.");
-        return Ok(());
-    }
-
-    let json = serde_json::to_string(&events)?;
-
-    let ts = utc_now().replace(':', "-");
-    if let Some(sid) = session_id {
-        let dir = pending_dir(sid);
-        fs::create_dir_all(&dir)?;
-        let path = dir.join(format!("{ts}.json"));
-        crate::util::atomic_write_str(&path, &json)?;
-        tracing::info!(path = %path, "Narration written");
-    } else {
-        let path = cache_dir().join("narration.json");
-        crate::util::atomic_write_str(&path, &json)?;
-        tracing::info!(path = %path, "Narration written");
     }
 
     Ok(())

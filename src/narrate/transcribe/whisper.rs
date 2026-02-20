@@ -76,15 +76,35 @@ impl super::Transcriber for WhisperTranscriber {
         for (chunk_idx, chunk) in chunks.iter().enumerate() {
             let offset_secs = (chunk_idx * MAX_CHUNK_SAMPLES) as f64 / SAMPLE_RATE as f64;
 
+            // Greedy decoding with best_of=1: fastest strategy, picks the single
+            // most likely token at each step. Beam search would improve accuracy
+            // on ambiguous segments but costs ~5x more. For real-time narration
+            // with on-the-fly transcription, latency matters more than polish.
             let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+
+            // Enable per-token timestamps so we can assign each word a time
+            // offset within the segment. This is essential for interleaving
+            // speech with editor events in chronological order.
             params.set_token_timestamps(true);
+
+            // max_len=1 forces Whisper to emit one segment per token (word).
+            // Without this, Whisper batches tokens into multi-word segments,
+            // making per-word timestamp resolution impossible.
             params.set_max_len(1);
+
             params.set_print_progress(false);
             params.set_print_realtime(false);
             params.set_print_special(false);
             params.set_print_timestamps(false);
+
+            // English-only: avoids the language detection pass and uses the
+            // English-specific vocabulary, improving both speed and accuracy.
             params.set_language(Some("en"));
-            // Allow context to carry forward across chunks within the same state.
+
+            // Allow context to carry forward across chunks within the same
+            // state. This helps Whisper maintain coherence when audio is split
+            // at 4-minute boundaries — the model can reference tokens from the
+            // prior chunk to resolve ambiguous words.
             params.set_no_context(false);
 
             if let Some(ref prompt) = self.initial_prompt {

@@ -22,7 +22,7 @@ be performed as specified, please do it.
 | 3 | [Module Reorganization](./phase-03-module-reorg.md) | Done (6733577) | Phase 2 |
 | 4 | [Unsafe Elimination & Dependency Upgrades](./phase-04-unsafe-elimination.md) | Done (2393beb) | Phase 3 |
 | 5 | [Error Handling Audit](./phase-05-error-handling.md) | Done (066144d) | Phase 3 |
-| 6 | [Recording Daemon Improvements](./phase-06-daemon-improvements.md) | Not started | Phases 4, 5 |
+| 6 | [Recording Daemon Improvements](./phase-06-daemon-improvements.md) | Done | Phases 4, 5 |
 | 7 | [Agent Trait Generalization](./phase-07-agent-generalization.md) | Not started | Phases 3, 5 |
 | 8 | [UX Improvements](./phase-08-ux-improvements.md) | Not started | Phases 4, 6 |
 | 9 | [Test Hardening](./phase-09-test-hardening.md) | Not started | Phase 3 |
@@ -77,11 +77,11 @@ be performed as specified, please do it.
 - [x] 5.6 `auto_upgrade_hooks`: already rate-limited by version check (066144d)
 
 ### Phase 6: Recording Daemon Improvements
-- [ ] 6.1 Reorder daemon startup
-- [ ] 6.2 Remove 200ms sleep in `spawn_daemon`
-- [ ] 6.3 Extract `DaemonState` struct
-- [ ] 6.4 Signal handler for graceful lock cleanup
-- [ ] 6.5 Add more commentary to audio and transcription logic
+- [x] 6.1 Reorder daemon startup
+- [x] 6.2 Remove 200ms sleep in `spawn_daemon`
+- [x] 6.3 Extract `DaemonState` struct
+- [x] 6.4 Signal handler for graceful lock cleanup
+- [x] 6.5 Add more commentary to audio and transcription logic
 
 ### Phase 7: Agent Trait Generalization
 - [ ] 7.1 Refactor hook logic into generic + agent-specific
