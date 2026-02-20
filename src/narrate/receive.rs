@@ -148,47 +148,32 @@ pub(crate) fn archive_pending(files: &[PathBuf], session_id: &SessionId) {
     let _ = fs::remove_dir(&dir);
 }
 
-/// Try to acquire an exclusive lock file. Returns the path on success.
-fn try_lock(lock_path: &Utf8Path) -> Option<LockGuard> {
+/// Try to acquire an exclusive lock file via the `lockfile` crate.
+///
+/// If the lock is held by a dead process (stale), cleans up and retries once.
+fn try_lock(lock_path: &Utf8Path) -> Option<lockfile::Lockfile> {
     if let Some(parent) = lock_path.parent() {
         let _ = fs::create_dir_all(parent); // Best-effort: will fail at open if missing
     }
 
-    // Use O_CREAT | O_EXCL for atomic creation
-    match fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(lock_path)
-    {
-        Ok(_) => {
+    match lockfile::Lockfile::create(lock_path) {
+        Ok(lock) => {
             // Best-effort PID write for stale lock detection.
             let _ = fs::write(lock_path, std::process::id().to_string());
-            Some(LockGuard {
-                path: lock_path.to_path_buf(),
-            })
+            Some(lock)
         }
         Err(_) => {
-            // Check if the lock is stale (process no longer exists)
-            if let Ok(content) = fs::read_to_string(lock_path)
-                && let Ok(pid) = content.trim().parse::<u32>()
-                && !super::process_alive(pid as i32)
-            {
+            // Check if the lock is stale (process no longer exists).
+            if super::record::is_lock_stale(lock_path) {
                 let _ = fs::remove_file(lock_path); // Best-effort stale lock cleanup
-                return try_lock(lock_path);
+                // Retry once.
+                if let Ok(lock) = lockfile::Lockfile::create(lock_path) {
+                    let _ = fs::write(lock_path, std::process::id().to_string());
+                    return Some(lock);
+                }
             }
             None
         }
-    }
-}
-
-/// RAII guard that removes the lock file on drop.
-struct LockGuard {
-    path: Utf8PathBuf,
-}
-
-impl Drop for LockGuard {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path); // Best-effort: lock may already be gone
     }
 }
 

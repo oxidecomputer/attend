@@ -41,7 +41,8 @@ pub fn session_start() -> anyhow::Result<()> {
         let _ = fs::remove_file(cp); // Best-effort: stale cache file may not exist
     }
 
-    // Auto-upgrade hooks on version mismatch.
+    // Auto-upgrade hooks on version mismatch. Runs at most once per binary
+    // version: the version is saved after the attempt regardless of outcome.
     auto_upgrade_hooks();
 
     let bin = std::env::current_exe()

@@ -53,7 +53,6 @@ pub fn run(
     signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&interrupted))?;
 
     let resized = Arc::new(AtomicBool::new(false));
-    #[cfg(unix)]
     signal_hook::flag::register(signal_hook::consts::SIGWINCH, Arc::clone(&resized))?;
 
     // Alternate screen isolates watch output from scrollback.

@@ -179,7 +179,6 @@ pub fn daemon() -> anyhow::Result<()> {
     // Create a new session so the daemon survives if the parent's process
     // group is killed (e.g. Zed's task runner cleaning up after toggle exits).
     // Intentionally ignored: may fail if already session leader (e.g. run manually).
-    #[cfg(unix)]
     let _ = nix::unistd::setsid();
 
     let cwd = camino::Utf8PathBuf::try_from(std::env::current_dir().unwrap_or_default())
