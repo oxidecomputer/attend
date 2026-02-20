@@ -41,6 +41,7 @@ fn render_ctx(
     render_with_mode(entries, cwd, Mode::Markers, context)
 }
 
+/// A cursor renders with the ❘ marker at the correct column.
 #[test]
 fn cursor_on_line() {
     let (dir, path) = setup("main.rs", SAMPLE);
@@ -59,6 +60,7 @@ fn cursor_on_line() {
     ");
 }
 
+/// A multi-line selection renders with ⟦⟧ markers spanning lines.
 #[test]
 fn multi_line_selection() {
     let (dir, path) = setup("main.rs", SAMPLE);
@@ -79,6 +81,7 @@ fn multi_line_selection() {
     ");
 }
 
+/// A single-line partial selection renders with ⟦⟧ around the selected text.
 #[test]
 fn single_line_partial_selection() {
     let (dir, path) = setup("main.rs", SAMPLE);
@@ -97,6 +100,7 @@ fn single_line_partial_selection() {
     ");
 }
 
+/// Multiple selections in one file each get their own header and markers.
 #[test]
 fn multiple_selections_one_file() {
     let (dir, path) = setup("main.rs", SAMPLE);
@@ -123,6 +127,7 @@ fn multiple_selections_one_file() {
     ");
 }
 
+/// Multiple files render as separate blocks with a blank line separator.
 #[test]
 fn multiple_files() {
     let dir = tempfile::tempdir().unwrap();
@@ -159,6 +164,7 @@ fn multiple_files() {
         ");
 }
 
+/// A selection starting at column 1 places ⟦ at the line start.
 #[test]
 fn selection_at_line_start() {
     let (dir, path) = setup("main.rs", SAMPLE);
@@ -178,6 +184,7 @@ fn selection_at_line_start() {
         ");
 }
 
+/// A cursor at the end of a line renders after the last character.
 #[test]
 fn selection_at_line_end() {
     let (dir, path) = setup("main.rs", SAMPLE);
@@ -196,6 +203,7 @@ fn selection_at_line_end() {
         ");
 }
 
+/// Color mode uses ANSI escapes (bold, dim, inverse) instead of Unicode markers.
 #[test]
 fn color_mode_cursor() {
     let (dir, path) = setup("main.rs", "hello\n");
@@ -216,6 +224,7 @@ fn color_mode_cursor() {
     assert!(result.contains("lo"));
 }
 
+/// Color mode wraps selected text in INVERSE/RESET escape pairs.
 #[test]
 fn color_mode_selection() {
     let (dir, path) = setup("main.rs", "hello world\n");
@@ -232,6 +241,7 @@ fn color_mode_selection() {
     assert!(result.contains(&format!("{}llo w{}", ansi::INVERSE, ansi::RESET)));
 }
 
+/// A cursor position string "5:12" parses to a Selection with equal start and end.
 #[test]
 fn parse_display_cursor() {
     let sel: Selection = "5:12".parse().unwrap();
@@ -239,6 +249,7 @@ fn parse_display_cursor() {
     assert_eq!(sel.end, Position::of(5, 12).unwrap());
 }
 
+/// A range string "19:40-24:6" parses to a Selection with distinct start and end.
 #[test]
 fn parse_display_range() {
     let sel: Selection = "19:40-24:6".parse().unwrap();
@@ -246,6 +257,7 @@ fn parse_display_range() {
     assert_eq!(sel.end, Position::of(24, 6).unwrap());
 }
 
+/// Display and parse are inverses for both ranges and cursors.
 #[test]
 fn parse_display_roundtrip() {
     let original = Selection {
@@ -265,6 +277,7 @@ fn parse_display_roundtrip() {
     assert_eq!(parsed, cursor);
 }
 
+/// Compact format "path pos pos path pos" parses into file entries with selections.
 #[test]
 fn parse_compact_basic() {
     let entries = parse_compact("src/foo.rs 5:12 19:40-24:6 src/bar.rs 10:1").unwrap();
@@ -275,6 +288,7 @@ fn parse_compact_basic() {
     assert_eq!(entries[1].selections.len(), 1);
 }
 
+/// Comma-separated positions within a file are accepted.
 #[test]
 fn parse_compact_with_commas() {
     let entries = parse_compact("src/foo.rs 5:12, 10:3 src/bar.rs 1:1").unwrap();
@@ -283,6 +297,7 @@ fn parse_compact_with_commas() {
     assert_eq!(entries[1].selections.len(), 1);
 }
 
+/// Quoted paths with spaces are parsed correctly.
 #[test]
 fn parse_compact_quoted_path() {
     let entries = parse_compact(r#""path with spaces/foo.rs" 5:12"#).unwrap();
@@ -291,6 +306,7 @@ fn parse_compact_quoted_path() {
     assert_eq!(entries[0].selections.len(), 1);
 }
 
+/// Unquoted multi-word paths are joined by the concatenation heuristic.
 #[test]
 fn parse_compact_concatenation_heuristic() {
     let entries = parse_compact("path with spaces/foo.rs 5:12").unwrap();
@@ -299,6 +315,7 @@ fn parse_compact_concatenation_heuristic() {
     assert_eq!(entries[0].selections.len(), 1);
 }
 
+/// Paths are displayed relative to cwd when provided.
 #[test]
 fn render_with_cwd() {
     let (dir, path) = setup("test.rs", "hello\nworld\n");
@@ -317,6 +334,7 @@ fn render_with_cwd() {
         ");
 }
 
+/// Context lines before and after the selection are included.
 #[test]
 fn context_before_after() {
     let (dir, path) = setup("main.rs", SAMPLE);
@@ -341,6 +359,7 @@ fn context_before_after() {
     ");
 }
 
+/// Context is clamped to file boundaries (no out-of-bounds lines).
 #[test]
 fn context_clamps_to_file_bounds() {
     let (dir, path) = setup("main.rs", SAMPLE);
@@ -364,6 +383,7 @@ fn context_clamps_to_file_bounds() {
         ");
 }
 
+/// Context extends around both ends of a multi-line selection.
 #[test]
 fn context_around_selection() {
     let (dir, path) = setup("main.rs", SAMPLE);
@@ -389,6 +409,7 @@ fn context_around_selection() {
     ");
 }
 
+/// Overlapping context windows from nearby selections merge into one group.
 #[test]
 fn merged_overlapping_contexts() {
     let (dir, path) = setup("main.rs", SAMPLE);
@@ -422,6 +443,7 @@ fn merged_overlapping_contexts() {
         ");
 }
 
+/// Non-overlapping selections render as separate groups.
 #[test]
 fn separate_non_overlapping_contexts() {
     // 6-line file, cursors at 1 and 6 with 0 context: two separate groups
@@ -449,6 +471,7 @@ fn separate_non_overlapping_contexts() {
         ");
 }
 
+/// A single-char selection (col, col+1) displays as a cursor, not a range.
 #[test]
 fn cursor_like_display() {
     // Single-char selection (start.col + 1 == end.col) should display as cursor
@@ -469,6 +492,7 @@ fn cursor_like_display() {
     ");
 }
 
+/// Full extent renders the entire file with the cursor marker.
 #[test]
 fn full_file_cursor() {
     let (dir, path) = setup("small.rs", "aaa\nbbb\nccc\n");
@@ -488,6 +512,7 @@ fn full_file_cursor() {
         ");
 }
 
+/// Full extent renders the entire file with selection markers.
 #[test]
 fn full_file_selection() {
     let (dir, path) = setup("small.rs", "aaa\nbbb\nccc\nddd\n");
@@ -626,11 +651,13 @@ fn arb_fuzz_string() -> impl Strategy<Value = String> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(200))]
 
+    /// parse_compact never panics on arbitrary ASCII input.
     #[test]
     fn parse_compact_no_panic(input in arb_fuzz_string()) {
         let _ = parse_compact(&input);
     }
 
+    /// Display -> parse round-trip preserves file paths and selections.
     #[test]
     fn parse_compact_round_trip(
         paths in proptest::collection::vec("[a-z]{1,8}/[a-z]{1,8}\\.[a-z]{1,3}", 1..4),
@@ -666,6 +693,7 @@ proptest! {
         }
     }
 
+    /// Position tokens (line:col and line:col-line:col) are always recognized.
     #[test]
     fn position_tokens_recognized(
         path in "[a-z]{1,5}/[a-z]{1,5}\\.[a-z]{1,3}",
@@ -688,6 +716,7 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(300))]
 
+    /// compute_groups partitions all input selections exactly once across groups.
     #[test]
     fn groups_partition_all_selections(
         sels in proptest::collection::vec(arb_selection(), 1..10),
@@ -711,6 +740,7 @@ proptest! {
         }
     }
 
+    /// Groups are sorted by first line number.
     #[test]
     fn groups_sorted_by_first_line(
         sels in proptest::collection::vec(arb_selection(), 1..10),
@@ -730,6 +760,7 @@ proptest! {
         }
     }
 
+    /// Consecutive groups have a gap of at least 2 lines (maximally merged).
     #[test]
     fn groups_maximally_merged(
         sels in proptest::collection::vec(arb_selection(), 1..10),
@@ -749,6 +780,7 @@ proptest! {
         }
     }
 
+    /// Every group has first_line <= last_line.
     #[test]
     fn groups_valid_ranges(
         sels in proptest::collection::vec(arb_selection(), 1..10),
@@ -768,6 +800,7 @@ proptest! {
         }
     }
 
+    /// Every group's line range covers the visible range of all its selections.
     #[test]
     fn group_covers_its_selections(
         sels in proptest::collection::vec(arb_selection(), 1..10),
@@ -806,6 +839,7 @@ proptest! {
         }
     }
 
+    /// Full extent always yields exactly one group.
     #[test]
     fn full_extent_single_group(
         sels in proptest::collection::vec(arb_selection(), 1..10),
@@ -817,6 +851,7 @@ proptest! {
         prop_assert_eq!(groups.len(), 1, "Full extent should yield exactly 1 group");
     }
 
+    /// Empty selection list produces no groups.
     #[test]
     fn empty_selections_empty_groups(
         total_lines in 1usize..50,
@@ -835,24 +870,28 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(300))]
 
+    /// Cursor-like selections display without a dash separator.
     #[test]
     fn display_sel_cursor_like_no_dash(sel in arb_cursor_like()) {
         let d = sel.display_header();
         prop_assert!(!d.contains('-'), "cursor-like display should not contain dash: {}", d);
     }
 
+    /// Range selections display with a dash separator.
     #[test]
     fn display_sel_range_has_dash(sel in arb_range_selection()) {
         let d = sel.display_header();
         prop_assert!(d.contains('-'), "range display should contain dash: {}", d);
     }
 
+    /// A selection where start == end is cursor-like.
     #[test]
     fn cursor_is_cursor_like(pos in arb_position()) {
         let sel = Selection { start: pos, end: pos };
         prop_assert!(sel.is_cursor_like());
     }
 
+    /// A selection spanning exactly one character is cursor-like.
     #[test]
     fn single_char_is_cursor_like(pos in arb_position()) {
         let end = Position::of(pos.line.get(), pos.col.get() + 1).unwrap();
@@ -860,6 +899,7 @@ proptest! {
         prop_assert!(sel.is_cursor_like());
     }
 
+    /// A selection spanning more than one character is not cursor-like.
     #[test]
     fn range_not_cursor_like(sel in arb_range_selection()) {
         prop_assert!(!sel.is_cursor_like());
@@ -873,6 +913,7 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]
 
+    /// Rendering never panics for arbitrary file content and selections.
     #[test]
     fn render_never_panics(
         (content, sels) in arb_file_with_selections(),
@@ -884,6 +925,7 @@ proptest! {
         let _ = render_with_mode(&entries, Some(utf8_dir(&dir)), mode, extent);
     }
 
+    /// Markers mode output contains no ANSI escape sequences.
     #[test]
     fn markers_mode_no_ansi(
         (content, sels) in arb_file_with_selections(),
@@ -898,6 +940,7 @@ proptest! {
         );
     }
 
+    /// Color mode output contains no Unicode marker characters.
     #[test]
     fn color_mode_no_unicode_markers(
         (content, sels) in arb_file_with_selections(),
@@ -911,6 +954,7 @@ proptest! {
         prop_assert!(!result.contains(SEL_CLOSE), "Color output must not contain ⟧");
     }
 
+    /// Non-empty output always ends with a newline.
     #[test]
     fn output_ends_with_newline(
         (content, sels) in arb_file_with_selections(),
@@ -925,6 +969,7 @@ proptest! {
         }
     }
 
+    /// Every line follows the indent structure: path (0), header (2), content (4 spaces).
     #[test]
     fn output_line_indent_structure(
         (content, sels) in arb_file_with_selections(),
@@ -946,6 +991,7 @@ proptest! {
         }
     }
 
+    /// Markers and Color modes produce the same number of output lines.
     #[test]
     fn modes_structural_equivalence(
         (content, sels) in arb_file_with_selections(),
@@ -971,6 +1017,7 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(200))]
 
+    /// Full extent in Markers mode renders every file line, preserving content after dedent.
     #[test]
     fn full_mode_content_preservation(
         (content, sels) in arb_file_with_selections(),
@@ -1018,6 +1065,7 @@ proptest! {
         }
     }
 
+    /// Selection brackets are always balanced and never go negative depth.
     #[test]
     fn markers_balanced_and_nested(
         (content, sels) in arb_file_with_selections(),
@@ -1038,6 +1086,7 @@ proptest! {
         prop_assert_eq!(depth, 0, "unbalanced brackets: final depth {}", depth);
     }
 
+    /// Cursor marker appears at the exact column specified, verified against an oracle.
     #[test]
     fn cursor_column_oracle(
         content in arb_file_content(),
@@ -1083,6 +1132,7 @@ proptest! {
         prop_assert_eq!(rendered, expected.as_str(), "cursor oracle mismatch");
     }
 
+    /// Selection markers bracket the exact columns specified, verified against an oracle.
     #[test]
     fn single_line_selection_oracle(
         content in arb_file_content(),
@@ -1142,6 +1192,7 @@ proptest! {
         prop_assert_eq!(rendered, expected.as_str(), "selection oracle mismatch");
     }
 
+    /// ANSI escape state resets by end of each line (no leaked highlighting).
     #[test]
     fn color_mode_no_escape_leak(
         (content, sels) in arb_file_with_selections(),
@@ -1192,6 +1243,7 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(300))]
 
+    /// Line events for any set of selections are sorted by column.
     #[test]
     fn line_events_sorted(
         sels in proptest::collection::vec(arb_selection(), 1..6),
@@ -1204,6 +1256,7 @@ proptest! {
         }
     }
 
+    /// A line far beyond all selections produces no events.
     #[test]
     fn line_events_empty_for_distant_line(
         sels in proptest::collection::vec(
@@ -1230,6 +1283,7 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]
 
+    /// The number of cursor markers equals the number of cursor-like selections within bounds.
     #[test]
     fn markers_cursor_count(
         (content, sels) in arb_file_with_selections(),
@@ -1251,6 +1305,7 @@ proptest! {
         );
     }
 
+    /// The number of open brackets equals the number of range selections within bounds.
     #[test]
     fn markers_bracket_pair_count(
         (content, sels) in arb_file_with_selections(),
@@ -1280,6 +1335,7 @@ proptest! {
         );
     }
 
+    /// Full extent renders no selection header lines.
     #[test]
     fn full_extent_no_headers(
         (content, sels) in arb_file_with_selections(),
@@ -1297,6 +1353,7 @@ proptest! {
         }
     }
 
+    /// Full extent renders exactly as many content lines as the file has.
     #[test]
     fn full_extent_line_count(
         (content, sels) in arb_file_with_selections(),

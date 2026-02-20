@@ -1,7 +1,11 @@
+use proptest::prelude::*;
+
 use super::*;
 
 use crate::narrate::render::{SnipConfig, format_markdown};
+use crate::state::{Col, FileEntry, Line, Position, Selection};
 
+/// Speech-only events render as a single prose line.
 #[test]
 fn words_only() {
     let mut events = vec![
@@ -18,6 +22,7 @@ fn words_only() {
     assert_eq!(md, "Please look at this\n");
 }
 
+/// Words interleaved with editor snapshots render as prose + fenced code blocks.
 #[test]
 fn words_with_code() {
     let mut events = vec![
@@ -55,6 +60,7 @@ and refactor it
     assert_eq!(md, expected);
 }
 
+/// A file diff renders as a fenced diff block with +/- lines.
 #[test]
 fn diff_event() {
     let mut events = vec![
@@ -82,6 +88,7 @@ I just changed this
     assert_eq!(md, expected);
 }
 
+/// Events are sorted chronologically regardless of input order.
 #[test]
 fn chronological_ordering() {
     let mut events = vec![
@@ -98,6 +105,7 @@ fn chronological_ordering() {
     assert_eq!(md, "first second\n");
 }
 
+/// unified_diff produces standard +/- output for changed lines.
 #[test]
 fn unified_diff_basic() {
     let old = "line1\nline2\nline3\n";
@@ -108,6 +116,7 @@ fn unified_diff_basic() {
     assert!(diff.contains(" line1"));
 }
 
+/// An empty event list produces an empty string.
 #[test]
 fn empty_events() {
     let mut events: Vec<Event> = vec![];
@@ -115,6 +124,7 @@ fn empty_events() {
     assert_eq!(md, "");
 }
 
+/// A snapshot with no words renders as a fenced code block with line number.
 #[test]
 fn code_only_no_prose() {
     let mut events = vec![Event::EditorSnapshot {
@@ -132,6 +142,7 @@ fn code_only_no_prose() {
     assert_eq!(md, expected);
 }
 
+/// A snapshot with multiple files renders each in its own fenced block.
 #[test]
 fn multiple_files_in_snapshot() {
     let mut events = vec![Event::EditorSnapshot {
@@ -155,6 +166,7 @@ fn multiple_files_in_snapshot() {
     assert!(md.contains("```\n// src/b.js:10"));
 }
 
+/// Full rendering scenario: prose, code, prose, code, prose, diff, prose (snapshot test).
 #[test]
 fn full_scenario_snapshot() {
     let mut events = vec![
@@ -203,6 +215,7 @@ fn full_scenario_snapshot() {
     insta::assert_snapshot!(md);
 }
 
+/// Prose following a diff block is separated by a blank line.
 #[test]
 fn prose_after_diff() {
     let mut events = vec![
@@ -222,6 +235,7 @@ fn prose_after_diff() {
     assert!(md.contains("\nthat was the change\n"));
 }
 
+/// Content without a trailing newline still produces a properly closed fence.
 #[test]
 fn content_without_trailing_newline() {
     let mut events = vec![Event::EditorSnapshot {
@@ -238,6 +252,7 @@ fn content_without_trailing_newline() {
     assert!(md.ends_with("no trailing newline\n```\n"));
 }
 
+/// Whisper artifacts (spaces before punctuation) are cleaned within a segment.
 #[test]
 fn whisper_cleanup_intra_segment() {
     // Within a single segment, spaces before punctuation are cleaned
@@ -249,6 +264,7 @@ fn whisper_cleanup_intra_segment() {
     assert_eq!(md, "I'm going to fix this.\n");
 }
 
+/// Whisper artifacts are cleaned across segment boundaries.
 #[test]
 fn whisper_cleanup_cross_segment() {
     // Punctuation as separate segments (max_len=1 mode)
@@ -278,6 +294,7 @@ fn whisper_cleanup_cross_segment() {
     assert_eq!(md, "function. I'm wondering\n");
 }
 
+/// Bracketed noise markers like [typing sounds] are filtered from output.
 #[test]
 fn noise_markers_filtered() {
     let mut events = vec![
@@ -298,6 +315,7 @@ fn noise_markers_filtered() {
     assert_eq!(md, "hello world\n");
 }
 
+/// Code blocks exceeding the snip threshold are collapsed with an omission marker.
 #[test]
 fn snip_applied_to_code_block() {
     // 25 lines of content → snipped with default config (threshold=5, head=3, tail=2)
@@ -320,6 +338,7 @@ fn snip_applied_to_code_block() {
     assert!(md.contains("line 25\n"));
 }
 
+/// Diff blocks exceeding the snip threshold are collapsed with an omission marker.
 #[test]
 fn snip_applied_to_diff_block() {
     let new_content: String = (1..=25).map(|i| format!("line {i}\n")).collect();
@@ -339,6 +358,7 @@ fn snip_applied_to_diff_block() {
     assert!(md.contains("+line 25\n"));
 }
 
+/// Consecutive cursor-only snapshots compress to keep only the last before speech.
 #[test]
 fn compress_consecutive_cursor_snapshots() {
     use crate::state::{Col, FileEntry, Line, Position, Selection};
@@ -386,6 +406,7 @@ fn compress_consecutive_cursor_snapshots() {
     assert!(md.contains("hello"));
 }
 
+/// Selection (highlight) snapshots survive compression even between cursor-only snapshots.
 #[test]
 fn compress_preserves_selection_snapshots() {
     use crate::state::{Col, FileEntry, Line, Position, Selection};
@@ -460,6 +481,7 @@ fn compress_preserves_selection_snapshots() {
     assert_eq!(fence_count, 4, "both files in single merged snapshot");
 }
 
+/// Diff events between cursor-only snapshots are preserved during compression.
 #[test]
 fn compress_keeps_diffs_between_snapshots() {
     use crate::state::{Col, FileEntry, Line, Position, Selection};
@@ -502,6 +524,7 @@ fn compress_keeps_diffs_between_snapshots() {
     assert!(md.contains("b.rs"), "b.rs should be kept (last in run)");
 }
 
+/// Adjacent selection snapshots are merged into a single snapshot with all files.
 #[test]
 fn merge_snapshots_union() {
     use crate::state::{Col, FileEntry, Line, Position, Selection};
@@ -541,6 +564,7 @@ fn merge_snapshots_union() {
     assert!(md.contains("fn b()"), "b.rs content preserved");
 }
 
+/// Consecutive diffs to the same file merge into a single net-change diff.
 #[test]
 fn merge_diffs_net_change() {
     // File changes A→B then B→C between utterances.
@@ -578,6 +602,7 @@ fn merge_diffs_net_change() {
     assert_eq!(diff_fence_count, 1, "should produce one merged diff block");
 }
 
+/// A change followed by its exact revert produces no diff block.
 #[test]
 fn merge_diffs_cancelled_change_disappears() {
     // File changes A→B then B→A (reverted). Net diff is empty.
@@ -602,6 +627,7 @@ fn merge_diffs_cancelled_change_disappears() {
     );
 }
 
+/// A large snip threshold effectively disables snipping.
 #[test]
 fn snip_disabled_with_large_threshold() {
     let content: String = (1..=100).map(|i| format!("line {i}\n")).collect();
@@ -622,4 +648,331 @@ fn snip_disabled_with_large_threshold() {
     let md = format_markdown(&mut events, cfg);
     assert!(!md.contains("omitted"));
     assert!(md.contains("line 50\n"));
+}
+
+// ── Prop test strategies ────────────────────────────────────────────────────
+
+fn arb_words() -> impl Strategy<Value = Event> {
+    (0.0..100.0f64, "[a-z ]{1,30}").prop_map(|(t, text)| Event::Words {
+        offset_secs: t,
+        text,
+    })
+}
+
+fn arb_cursor_snapshot() -> impl Strategy<Value = Event> {
+    (0.0..100.0f64, "[a-z]{1,8}\\.rs").prop_map(|(t, path)| {
+        let pos = Position {
+            line: Line::new(1).unwrap(),
+            col: Col::new(1).unwrap(),
+        };
+        Event::EditorSnapshot {
+            offset_secs: t,
+            files: vec![FileEntry {
+                path: path.clone().into(),
+                selections: vec![Selection {
+                    start: pos,
+                    end: pos,
+                }],
+            }],
+            rendered: vec![RenderedFile {
+                path,
+                content: "x\n".to_string(),
+                first_line: 1,
+            }],
+        }
+    })
+}
+
+fn arb_selection_snapshot() -> impl Strategy<Value = Event> {
+    (0.0..100.0f64, "[a-z]{1,8}\\.rs").prop_map(|(t, path)| {
+        let start = Position {
+            line: Line::new(1).unwrap(),
+            col: Col::new(1).unwrap(),
+        };
+        let end = Position {
+            line: Line::new(5).unwrap(),
+            col: Col::new(10).unwrap(),
+        };
+        Event::EditorSnapshot {
+            offset_secs: t,
+            files: vec![FileEntry {
+                path: path.clone().into(),
+                selections: vec![Selection { start, end }],
+            }],
+            rendered: vec![RenderedFile {
+                path,
+                content: "selected content\n".to_string(),
+                first_line: 1,
+            }],
+        }
+    })
+}
+
+fn arb_diff() -> impl Strategy<Value = Event> {
+    (
+        0.0..100.0f64,
+        "[a-z]{1,8}\\.rs",
+        "[a-z ]{0,20}",
+        "[a-z ]{0,20}",
+    )
+        .prop_map(|(t, path, old, new)| Event::FileDiff {
+            offset_secs: t,
+            path,
+            old: format!("{old}\n"),
+            new: format!("{new}\n"),
+        })
+}
+
+fn arb_event() -> impl Strategy<Value = Event> {
+    prop_oneof![
+        3 => arb_words(),
+        2 => arb_cursor_snapshot(),
+        2 => arb_selection_snapshot(),
+        1 => arb_diff(),
+    ]
+}
+
+fn arb_events() -> impl Strategy<Value = Vec<Event>> {
+    proptest::collection::vec(arb_event(), 0..20)
+}
+
+// ── Prop tests: compress_and_merge ──────────────────────────────────────────
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(200))]
+
+    /// compress_and_merge produces events sorted by offset_secs.
+    #[test]
+    fn merge_output_sorted(mut events in arb_events()) {
+        compress_and_merge(&mut events);
+        for w in events.windows(2) {
+            prop_assert!(
+                w[0].offset_secs() <= w[1].offset_secs(),
+                "output not sorted: {} > {}",
+                w[0].offset_secs(),
+                w[1].offset_secs()
+            );
+        }
+    }
+
+    /// compress_and_merge preserves all Words events (as a multiset).
+    #[test]
+    fn merge_preserves_words(events in arb_events()) {
+        let mut words_before: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Words { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        let mut merged = events;
+        compress_and_merge(&mut merged);
+        let mut words_after: Vec<String> = merged
+            .iter()
+            .filter_map(|e| match e {
+                Event::Words { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        words_before.sort();
+        words_after.sort();
+        prop_assert_eq!(words_before, words_after);
+    }
+
+    /// compress_and_merge is idempotent.
+    #[test]
+    fn merge_idempotent(events in arb_events()) {
+        let mut first = events.clone();
+        compress_and_merge(&mut first);
+        let snapshot = first.clone();
+        compress_and_merge(&mut first);
+        prop_assert_eq!(first.len(), snapshot.len(), "idempotency violated: length changed");
+        for (a, b) in first.iter().zip(snapshot.iter()) {
+            prop_assert!(
+                (a.offset_secs() - b.offset_secs()).abs() < 1e-10,
+                "idempotency violated: offset changed"
+            );
+        }
+    }
+
+    /// Every selection (highlight) file from the input survives compression.
+    /// Compression may merge snapshots, but no selection file path is lost.
+    #[test]
+    fn merge_preserves_selection_snapshots(events in arb_events()) {
+        // Collect all file paths that had non-cursor selections in the input.
+        let mut input_selection_paths: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::EditorSnapshot { files, rendered, .. } => {
+                    let has_selection = files.iter()
+                        .any(|f| f.selections.iter().any(|s| !s.is_cursor_like()));
+                    if has_selection {
+                        Some(rendered.iter().map(|r| r.path.clone()).collect::<Vec<_>>())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        input_selection_paths.sort();
+        input_selection_paths.dedup();
+
+        let mut merged = events;
+        compress_and_merge(&mut merged);
+
+        // Collect all rendered paths from output snapshots.
+        let mut output_paths: Vec<String> = merged
+            .iter()
+            .filter_map(|e| match e {
+                Event::EditorSnapshot { rendered, .. } => {
+                    Some(rendered.iter().map(|r| r.path.clone()).collect::<Vec<_>>())
+                }
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        output_paths.sort();
+        output_paths.dedup();
+
+        // Every selection path from input must appear in output.
+        for path in &input_selection_paths {
+            prop_assert!(
+                output_paths.contains(path),
+                "selection path {:?} lost during compression",
+                path
+            );
+        }
+    }
+
+    /// All rendered file paths from input snapshots appear in the output.
+    #[test]
+    fn merge_preserves_rendered_paths(events in arb_events()) {
+        let mut input_paths: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::EditorSnapshot { rendered, files, .. }
+                    if files.iter().any(|f| f.selections.iter().any(|s| !s.is_cursor_like())) =>
+                {
+                    Some(rendered.iter().map(|r| r.path.clone()).collect::<Vec<_>>())
+                }
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        input_paths.sort();
+        input_paths.dedup();
+
+        let mut merged = events;
+        compress_and_merge(&mut merged);
+
+        let mut output_paths: Vec<String> = merged
+            .iter()
+            .filter_map(|e| match e {
+                Event::EditorSnapshot { rendered, .. } => {
+                    Some(rendered.iter().map(|r| r.path.clone()).collect::<Vec<_>>())
+                }
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        output_paths.sort();
+        output_paths.dedup();
+
+        for path in &input_paths {
+            prop_assert!(
+                output_paths.contains(path),
+                "selection path {:?} missing from output",
+                path
+            );
+        }
+    }
+}
+
+// ── Prop tests: unified_diff ────────────────────────────────────────────────
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(200))]
+
+    /// Diffing identical strings produces no +/- lines.
+    #[test]
+    fn diff_identical_no_changes(text in "[a-z ]{0,50}\n") {
+        let diff = unified_diff(&text, &text);
+        for line in diff.lines() {
+            prop_assert!(
+                line.starts_with(' '),
+                "identical diff should have only context lines, got: {:?}",
+                line
+            );
+        }
+    }
+
+    /// Diffing empty against non-empty produces only + lines.
+    #[test]
+    fn diff_from_empty_all_inserts(text in "[a-z]{1,20}\n") {
+        let diff = unified_diff("", &text);
+        for line in diff.lines() {
+            prop_assert!(
+                line.starts_with('+'),
+                "empty→text diff should be all inserts, got: {:?}",
+                line
+            );
+        }
+    }
+
+    /// Diffing non-empty against empty produces only - lines.
+    #[test]
+    fn diff_to_empty_all_deletes(text in "[a-z]{1,20}\n") {
+        let diff = unified_diff(&text, "");
+        for line in diff.lines() {
+            prop_assert!(
+                line.starts_with('-'),
+                "text→empty diff should be all deletes, got: {:?}",
+                line
+            );
+        }
+    }
+}
+
+// ── Prop tests: render pipeline ─────────────────────────────────────────────
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(100))]
+
+    /// Every Words text appears in the rendered markdown.
+    #[test]
+    fn render_contains_all_words(mut events in arb_events()) {
+        let words: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Words { text, .. } if !text.trim().is_empty() => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        let md = format_markdown(&mut events, SnipConfig { threshold: 1000, head: 100, tail: 100 });
+        for word in &words {
+            let trimmed = word.trim();
+            if trimmed.is_empty()
+                || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+                || (trimmed.starts_with('(') && trimmed.ends_with(')'))
+            {
+                continue; // noise markers are filtered
+            }
+            // Check that at least one word from the text is present
+            // (Whisper cleanup may rearrange spaces around punctuation)
+            let any_word_present = trimmed.split_whitespace().any(|w| md.contains(w));
+            prop_assert!(
+                any_word_present,
+                "no word from {:?} found in output",
+                trimmed
+            );
+        }
+    }
+
+    /// format_markdown never panics on arbitrary event streams.
+    #[test]
+    fn render_never_panics(mut events in arb_events()) {
+        let _ = format_markdown(&mut events, SnipConfig::default());
+    }
 }

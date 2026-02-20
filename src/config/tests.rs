@@ -1,16 +1,19 @@
 use super::*;
 
+/// Loading config from a nonexistent path returns defaults (empty include_dirs).
 #[test]
 fn load_missing_dir() {
     let config = Config::load(Utf8Path::new("/nonexistent/path"));
     assert!(config.include_dirs.is_empty());
 }
 
+/// Loading a nonexistent config file returns None.
 #[test]
 fn load_file_missing() {
     assert!(load_file(Path::new("/nonexistent/config.toml")).is_none());
 }
 
+/// A valid TOML file with include_dirs is parsed correctly.
 #[test]
 fn load_file_valid_toml() {
     let dir = tempfile::tempdir().unwrap();
@@ -23,6 +26,7 @@ fn load_file_valid_toml() {
     );
 }
 
+/// An empty TOML file deserializes to defaults (all fields None/empty).
 #[test]
 fn load_file_empty_toml() {
     let dir = tempfile::tempdir().unwrap();
@@ -34,6 +38,7 @@ fn load_file_empty_toml() {
     assert!(config.model.is_none());
 }
 
+/// Engine and model fields are parsed from TOML.
 #[test]
 fn load_file_engine_and_model() {
     let dir = tempfile::tempdir().unwrap();
@@ -44,6 +49,7 @@ fn load_file_engine_and_model() {
     assert_eq!(config.model, Some(Utf8PathBuf::from("/custom/model")));
 }
 
+/// When parent and child both set engine, the closest (child) wins.
 #[test]
 fn engine_closest_wins() {
     let dir = tempfile::tempdir().unwrap();
@@ -64,6 +70,7 @@ fn engine_closest_wins() {
     assert_eq!(config.engine, Some(Engine::Parakeet));
 }
 
+/// Hierarchical config walk merges include_dirs from both child and parent.
 #[test]
 fn hierarchical_walk() {
     let dir = tempfile::tempdir().unwrap();

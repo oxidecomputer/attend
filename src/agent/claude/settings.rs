@@ -40,3 +40,6 @@ fn settings_path(project: Option<&Path>) -> anyhow::Result<PathBuf> {
 pub mod install;
 pub mod uninstall;
 pub use {install::install, uninstall::uninstall};
+
+#[cfg(test)]
+mod tests;

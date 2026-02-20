@@ -6,6 +6,7 @@ use super::*;
 use crate::narrate::merge::{Event, RenderedFile};
 use crate::state::SessionId;
 
+/// Collecting pending files from a nonexistent session returns empty.
 #[test]
 fn collect_pending_empty_dir() {
     let sid = SessionId::from("nonexistent-session");
@@ -13,12 +14,14 @@ fn collect_pending_empty_dir() {
     assert!(files.is_empty());
 }
 
+/// An empty file list produces no narration output.
 #[test]
 fn read_pending_empty() {
     let cwd = Utf8Path::new("/project");
     assert!(read_pending(&[], cwd, &[]).is_none());
 }
 
+/// A single JSON file with a Words event renders as prose.
 #[test]
 fn read_pending_single_json() {
     let dir = tempfile::tempdir().unwrap();
@@ -36,6 +39,7 @@ fn read_pending_single_json() {
     assert!(!result.contains("<narration>"));
 }
 
+/// Editor snapshots for files outside the cwd are filtered out.
 #[test]
 fn read_pending_filters_by_cwd() {
     let dir = tempfile::tempdir().unwrap();
@@ -76,6 +80,7 @@ fn read_pending_filters_by_cwd() {
     );
 }
 
+/// Files under include_dirs pass the cwd filter.
 #[test]
 fn read_pending_includes_extra_dirs() {
     let dir = tempfile::tempdir().unwrap();
@@ -101,6 +106,7 @@ fn read_pending_includes_extra_dirs() {
     assert!(result.contains("/shared/utils.rs"));
 }
 
+/// Words events always pass the cwd filter.
 #[test]
 fn filter_events_keeps_words() {
     let cwd = Utf8Path::new("/project");
@@ -112,6 +118,7 @@ fn filter_events_keeps_words() {
     assert_eq!(events.len(), 1);
 }
 
+/// Diffs for files outside cwd are dropped.
 #[test]
 fn filter_events_drops_outside_diff() {
     let cwd = Utf8Path::new("/project");
@@ -125,6 +132,7 @@ fn filter_events_drops_outside_diff() {
     assert!(events.is_empty());
 }
 
+/// Paths are made relative to cwd after filtering.
 #[test]
 fn relativize_events_strips_prefix() {
     let cwd = Utf8Path::new("/project");
@@ -160,23 +168,52 @@ fn relativize_events_strips_prefix() {
     }
 }
 
-/// read_pending returns raw markdown without narration tags.
+/// Multiple JSON files are merged chronologically into one markdown document
+/// with prose and fenced code blocks interleaved.
 #[test]
-fn read_pending_returns_raw_markdown() {
+fn read_pending_merges_multiple_files() {
     let dir = tempfile::tempdir().unwrap();
-    let events = vec![Event::Words {
-        offset_secs: 0.0,
-        text: "test message".to_string(),
+
+    // First file: words + editor snapshot
+    let events1 = vec![
+        Event::Words {
+            offset_secs: 0.0,
+            text: "look at this".to_string(),
+        },
+        Event::EditorSnapshot {
+            offset_secs: 1.0,
+            files: vec![],
+            rendered: vec![RenderedFile {
+                path: "/project/src/main.rs".to_string(),
+                content: "fn main() {}\n".to_string(),
+                first_line: 1,
+            }],
+        },
+    ];
+    // Second file: words timestamped after the first file's events.
+    let events2 = vec![Event::Words {
+        offset_secs: 2.0,
+        text: "refactor that".to_string(),
     }];
-    let path = dir.path().join("test.json");
-    fs::write(&path, serde_json::to_string(&events).unwrap()).unwrap();
+
+    let f1 = dir.path().join("2026-02-18T10-00-00Z.json");
+    let f2 = dir.path().join("2026-02-18T10-00-01Z.json");
+    fs::write(&f1, serde_json::to_string(&events1).unwrap()).unwrap();
+    fs::write(&f2, serde_json::to_string(&events2).unwrap()).unwrap();
 
     let cwd = Utf8Path::new("/project");
-    let result = read_pending(&[path], cwd, &[]).unwrap();
-    assert!(result.contains("test message"));
-    assert!(!result.contains("<narration>"));
+    let result = read_pending(&[f1, f2], cwd, &[]).unwrap();
+    // Prose from both files appears.
+    assert!(result.contains("look at this"));
+    assert!(result.contains("refactor that"));
+    // Code block from the snapshot appears.
+    assert!(result.contains("```"));
+    assert!(result.contains("fn main()"));
+    // Path is relativized.
+    assert!(result.contains("src/main.rs"));
 }
 
+/// Lock guard removes the lock file on drop and prevents double-acquisition.
 #[test]
 fn lock_guard_cleanup() {
     let dir = tempfile::tempdir().unwrap();
@@ -196,6 +233,7 @@ fn lock_guard_cleanup() {
 
 // -- Integration: collect -> read -> archive cycle --
 
+/// Full cycle: collect pending files, read into markdown, archive moves files.
 #[test]
 fn collect_read_archive_round_trip() {
     let base = tempfile::tempdir().unwrap();

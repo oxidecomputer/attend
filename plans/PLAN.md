@@ -25,7 +25,7 @@ be performed as specified, please do it.
 | 6 | [Recording Daemon Improvements](./phase-06-daemon-improvements.md) | Done | Phases 4, 5 |
 | 7 | [Agent Trait Generalization](./phase-07-agent-generalization.md) | Done (35571a3) | Phases 3, 5 |
 | 8 | [UX Improvements](./phase-08-ux-improvements.md) | Done (774ecae) | Phases 4, 6 |
-| 9 | [Test Hardening](./phase-09-test-hardening.md) | Not started | Phase 3 |
+| 9 | [Test Hardening](./phase-09-test-hardening.md) | Done | Phase 3 |
 | 10 | [merge.rs Deep Refactor](./phase-10-merge-refactor.md) | Not started | Phase 9 |
 | 11 | [Persistent Daemon](./phase-11-persistent-daemon.md) | Not started | Phases 6, 8 |
 
@@ -105,10 +105,10 @@ be performed as specified, please do it.
 - [x] 8.11 Research agent-driven walkthrough via Zed ACP: see phase-08 notes
 
 ### Phase 9: Test Hardening
-- [ ] 9.1 Test documentation pass
-- [ ] 9.2 install/uninstall test coverage
-- [ ] 9.3 Prop test expansion
-- [ ] 9.4 Silence detector integration test
+- [x] 9.1 Test documentation pass
+- [x] 9.2 install/uninstall test coverage
+- [x] 9.3 Prop test expansion
+- [x] 9.4 Silence detector integration test
 
 ### Phase 10: merge.rs Deep Refactor
 - [ ] 10.1 Comprehensive test suite for merge.rs

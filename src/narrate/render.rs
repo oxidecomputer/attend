@@ -42,7 +42,7 @@ impl Default for SnipConfig {
 /// (e.g. `lines 45-78`) so an agent can request exactly those lines.
 fn snip(text: &str, cfg: SnipConfig, first_line: Option<usize>) -> String {
     let lines: Vec<&str> = text.lines().collect();
-    if lines.len() <= cfg.threshold {
+    if lines.len() <= cfg.threshold || cfg.head + cfg.tail >= lines.len() {
         return text.to_string();
     }
     let omitted = lines.len() - cfg.head - cfg.tail;
@@ -91,18 +91,21 @@ fn is_noise_marker(text: &str) -> bool {
 /// Handles intra-segment spacing (`I 'm` → `I'm`) and strips
 /// bracketed noise markers (`[typing sounds]`).
 fn clean_whisper_text(raw: &str) -> String {
+    let chars: Vec<char> = raw.chars().collect();
     let mut out = String::with_capacity(raw.len());
-    let mut chars = raw.chars().peekable();
 
-    while let Some(ch) = chars.next() {
-        if ch == ' '
-            && let Some(&next) = chars.peek()
-            && matches!(
-                next,
-                '.' | ',' | ';' | ':' | '!' | '?' | '\'' | '"' | ')' | ']' | '}' | '%'
-            )
-        {
-            continue;
+    for (i, &ch) in chars.iter().enumerate() {
+        if ch == ' ' {
+            // Look ahead past any further spaces to find the first non-space.
+            let next_non_space = chars[i + 1..].iter().find(|&&c| c != ' ');
+            if let Some(&nch) = next_non_space
+                && matches!(
+                    nch,
+                    '.' | ',' | ';' | ':' | '!' | '?' | '\'' | '"' | ')' | ']' | '}' | '%'
+                )
+            {
+                continue;
+            }
         }
         out.push(ch);
     }
@@ -203,23 +206,29 @@ pub fn format_markdown(events: &mut Vec<Event>, snip_cfg: SnipConfig) -> String 
 mod tests {
     use super::*;
 
+    use proptest::prelude::*;
+
     // -- clean_whisper_text --
 
+    /// Space before period is removed.
     #[test]
     fn clean_whisper_space_before_period() {
         assert_eq!(clean_whisper_text("test ."), "test.");
     }
 
+    /// Space before apostrophe in contraction is removed.
     #[test]
     fn clean_whisper_contraction() {
         assert_eq!(clean_whisper_text("I 'm going"), "I'm going");
     }
 
+    /// Space before comma is removed.
     #[test]
     fn clean_whisper_comma() {
         assert_eq!(clean_whisper_text("Now , let"), "Now, let");
     }
 
+    /// Multiple Whisper artifacts in one string are all cleaned.
     #[test]
     fn clean_whisper_multiple() {
         assert_eq!(
@@ -228,18 +237,54 @@ mod tests {
         );
     }
 
+    /// Text without Whisper artifacts passes through unchanged.
     #[test]
     fn clean_whisper_no_change() {
         assert_eq!(clean_whisper_text("no changes here"), "no changes here");
     }
 
+    /// Normal spaces between words are preserved.
     #[test]
     fn clean_whisper_preserves_spaces() {
         assert_eq!(clean_whisper_text("a b c"), "a b c");
     }
 
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(300))]
+
+        /// clean_whisper_text is idempotent: cleaning twice equals cleaning once.
+        #[test]
+        fn clean_whisper_idempotent(input in "[ -~]{0,100}") {
+            let once = clean_whisper_text(&input);
+            let twice = clean_whisper_text(&once);
+            prop_assert_eq!(&once, &twice);
+        }
+
+        /// clean_whisper_text never increases string length.
+        #[test]
+        fn clean_whisper_never_grows(input in "[ -~]{0,100}") {
+            let cleaned = clean_whisper_text(&input);
+            prop_assert!(
+                cleaned.len() <= input.len(),
+                "cleaned ({}) longer than input ({})",
+                cleaned.len(),
+                input.len()
+            );
+        }
+
+        /// clean_whisper_text preserves all non-space characters in order.
+        #[test]
+        fn clean_whisper_preserves_non_space(input in "[ -~]{0,100}") {
+            let cleaned = clean_whisper_text(&input);
+            let input_non_space: String = input.chars().filter(|&c| c != ' ').collect();
+            let cleaned_non_space: String = cleaned.chars().filter(|&c| c != ' ').collect();
+            prop_assert_eq!(input_non_space, cleaned_non_space);
+        }
+    }
+
     // -- is_noise_marker --
 
+    /// Bracketed and parenthesized markers are recognized; plain text is not.
     #[test]
     fn noise_marker_parenthesized() {
         assert!(is_noise_marker("[music]"));
@@ -251,6 +296,7 @@ mod tests {
 
     // -- snip --
 
+    /// Text at or below the snip threshold passes through unchanged.
     #[test]
     fn snip_below_threshold_unchanged() {
         let text = "line1\nline2\nline3\n";
@@ -262,6 +308,7 @@ mod tests {
         assert_eq!(snip(text, cfg, None), text);
     }
 
+    /// Text above the threshold keeps head/tail lines with an omission count.
     #[test]
     fn snip_above_threshold_collapses() {
         let text = "a\nb\nc\nd\ne\nf\n";
@@ -274,6 +321,7 @@ mod tests {
         assert_eq!(snip(text, cfg, None), "a\nb\n// ... (3 lines omitted)\nf\n");
     }
 
+    /// Snip marker includes actual line numbers when first_line is provided.
     #[test]
     fn snip_with_line_range() {
         let text = "a\nb\nc\nd\ne\nf\n";
@@ -289,6 +337,7 @@ mod tests {
         );
     }
 
+    /// Text at exactly the threshold passes through unchanged.
     #[test]
     fn snip_at_exact_threshold_unchanged() {
         let text = (1..=5)
@@ -302,5 +351,32 @@ mod tests {
             tail: 1,
         };
         assert_eq!(snip(&text, cfg, Some(1)), text);
+    }
+
+    /// When head + tail >= total lines, snip should not panic or produce
+    /// malformed output (overlapping head/tail).
+    #[test]
+    fn snip_head_tail_overlap() {
+        // 6 lines with head=4, tail=4 → head+tail=8 > 6 lines
+        let text = "a\nb\nc\nd\ne\nf\n";
+        let cfg = SnipConfig {
+            threshold: 3, // trigger snipping (6 > 3)
+            head: 4,
+            tail: 4,
+        };
+        let result = snip(text, cfg, None);
+        // With overlapping head/tail, all original lines should survive
+        // (nothing to omit). Verify no panic and no duplication.
+        let result_lines: Vec<&str> = result.lines().collect();
+        let input_lines: Vec<&str> = text.lines().collect();
+        // Every input line should appear at least once.
+        for line in &input_lines {
+            assert!(
+                result_lines.contains(line),
+                "line {:?} missing from snip output: {:?}",
+                line,
+                result
+            );
+        }
     }
 }

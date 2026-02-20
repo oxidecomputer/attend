@@ -8,12 +8,14 @@ use super::*;
 
 // -- process_alive tests --
 
+/// The current process is reported as alive.
 #[test]
 fn process_alive_current_pid() {
     let pid = std::process::id() as i32;
     assert!(process_alive(pid));
 }
 
+/// A very high PID (i32::MAX) is reported as not alive.
 #[test]
 fn process_alive_dead_pid() {
     // PID 0 is the kernel's swapper; sending signal to it from unprivileged
@@ -25,6 +27,7 @@ fn process_alive_dead_pid() {
 
 // -- is_lock_stale tests (via record module) --
 
+/// A lock file containing the current process PID is not stale.
 #[test]
 fn is_lock_stale_with_live_pid() {
     let dir = tempfile::tempdir().unwrap();
@@ -34,6 +37,7 @@ fn is_lock_stale_with_live_pid() {
     assert!(!record::is_lock_stale(&lock));
 }
 
+/// A lock file containing a dead PID (i32::MAX) is stale.
 #[test]
 fn is_lock_stale_with_dead_pid() {
     let dir = tempfile::tempdir().unwrap();
@@ -42,6 +46,7 @@ fn is_lock_stale_with_dead_pid() {
     assert!(record::is_lock_stale(&lock));
 }
 
+/// A nonexistent lock file is not reported as stale.
 #[test]
 fn is_lock_stale_no_file() {
     let dir = tempfile::tempdir().unwrap();
@@ -49,6 +54,7 @@ fn is_lock_stale_no_file() {
     assert!(!record::is_lock_stale(&lock));
 }
 
+/// A lock file with non-numeric content is not reported as stale.
 #[test]
 fn is_lock_stale_invalid_content() {
     let dir = tempfile::tempdir().unwrap();
@@ -59,6 +65,7 @@ fn is_lock_stale_invalid_content() {
 
 // -- clean tests --
 
+/// Archive cleanup removes files older than the threshold and empty session dirs.
 #[test]
 fn clean_removes_old_files() {
     let dir = tempfile::tempdir().unwrap();
@@ -87,6 +94,7 @@ fn clean_removes_old_files() {
     assert!(!session_dir.exists());
 }
 
+/// When no files expire (huge threshold), directories and files are untouched.
 #[test]
 fn clean_preserves_nonempty_dirs() {
     let dir = tempfile::tempdir().unwrap();
@@ -94,35 +102,77 @@ fn clean_preserves_nonempty_dirs() {
     let session_dir = archive_root.join("test-session");
     std::fs::create_dir_all(&session_dir).unwrap();
 
-    std::fs::write(session_dir.join("a.json"), "old").unwrap();
-    std::fs::write(session_dir.join("b.json"), "new").unwrap();
+    std::fs::write(session_dir.join("a.json"), "data-a").unwrap();
+    std::fs::write(session_dir.join("b.json"), "data-b").unwrap();
 
-    // Remove with zero threshold — all files gone, dir removed.
-    let count = clean_archive_dir(&archive_root, std::time::Duration::ZERO);
-    assert_eq!(count, 2);
-    assert!(!session_dir.exists());
+    // Huge threshold: nothing is old enough to remove.
+    let count = clean_archive_dir(&archive_root, std::time::Duration::from_secs(365 * 86400));
+    assert_eq!(count, 0, "no files should be removed");
+    assert!(session_dir.exists(), "session dir should be preserved");
+    assert!(session_dir.join("a.json").exists(), "a.json should survive");
+    assert!(session_dir.join("b.json").exists(), "b.json should survive");
 }
 
+/// All expired files are removed, and the now-empty session directory is cleaned up.
+#[test]
+fn clean_removes_all_and_empty_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let archive_root = dir.path().join("archive");
+    let session_dir = archive_root.join("test-session");
+    std::fs::create_dir_all(&session_dir).unwrap();
+
+    std::fs::write(session_dir.join("a.json"), "old").unwrap();
+    std::fs::write(session_dir.join("b.json"), "old").unwrap();
+
+    // Zero threshold: everything is "expired."
+    let count = clean_archive_dir(&archive_root, std::time::Duration::ZERO);
+    assert_eq!(count, 2);
+    assert!(!session_dir.exists(), "empty dir should be removed");
+}
+
+/// An explicit --session flag overrides any listening session.
 #[test]
 fn resolve_session_flag_takes_precedence() {
     let result = resolve_session(Some("my-session".to_string()));
     assert_eq!(result, Some(SessionId::from("my-session")));
 }
 
+/// resolve_session(None) reads the listening file. Writing a known session ID
+/// to the file, then calling resolve_session(None), returns that session ID.
+/// Whitespace is trimmed.
 #[test]
-fn resolve_session_no_flag_no_listening() {
-    // When no flag and no listening file exists, returns None
-    // (depends on whether listening file exists on disk, so just test the flag path)
-    let result = resolve_session(Some("test".to_string()));
-    assert_eq!(result.unwrap(), SessionId::from("test"));
+fn resolve_session_reads_listening_file() {
+    use crate::state::listening_path;
+
+    let path = listening_path().expect("cache dir should be available in test");
+
+    // Save any existing content so we can restore it.
+    let original = std::fs::read_to_string(&path).ok();
+
+    // Write a known session ID (with whitespace to verify trimming).
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "  test-session-xyz\n").unwrap();
+    let result = resolve_session(None);
+
+    // Restore original state.
+    match original {
+        Some(content) => std::fs::write(&path, content).unwrap(),
+        None => {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
+    assert_eq!(result, Some(SessionId::from("test-session-xyz")));
 }
 
+/// The cache directory path ends with "attend".
 #[test]
 fn cache_dir_is_under_attend() {
     let dir = cache_dir();
     assert!(dir.ends_with("attend"));
 }
 
+/// The pending directory path includes the session ID.
 #[test]
 fn pending_dir_includes_session() {
     let sid = SessionId::from("abc-123");
@@ -130,6 +180,7 @@ fn pending_dir_includes_session() {
     assert!(dir.ends_with("pending/abc-123") || dir.ends_with("pending\\abc-123"));
 }
 
+/// The archive directory path includes the session ID.
 #[test]
 fn archive_dir_includes_session() {
     let sid = SessionId::from("abc-123");
