@@ -1,10 +1,12 @@
 //! JSONC parsing utilities for Zed config files.
 //!
-//! Zed uses JSON with `//` line comments and trailing commas (JSONC).
-//! These functions strip comments and trailing commas before handing
-//! the content to `serde_json`.
+//! Zed uses JSON with comments and trailing commas (JSONC). Parsing is
+//! delegated to the `jsonc-parser` crate; writing emits standard JSON
+//! (comments are not preserved on write).
 
 use std::fs;
+
+use jsonc_parser::ParseOptions;
 
 /// Read a Zed JSONC config file as a JSON array, or empty vec if missing/invalid.
 pub(super) fn read_jsonc_array(path: &std::path::Path) -> Vec<serde_json::Value> {
@@ -35,90 +37,10 @@ pub(super) fn write_json_array(
     Ok(())
 }
 
-/// Parse a JSONC string (Zed's config format: `//` comments + trailing commas).
-pub(super) fn parse_jsonc<T: serde::de::DeserializeOwned>(input: &str) -> serde_json::Result<T> {
-    let stripped = strip_json_comments(input);
-    let clean = strip_trailing_commas(&stripped);
-    serde_json::from_str(&clean)
-}
-
-/// Strip `//` line comments from JSON content (Zed supports comments in JSON).
-pub(super) fn strip_json_comments(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    for line in input.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("//") {
-            continue;
-        }
-        if let Some(idx) = find_line_comment(line) {
-            out.push_str(&line[..idx]);
-        } else {
-            out.push_str(line);
-        }
-        out.push('\n');
-    }
-    out
-}
-
-/// Strip trailing commas before `]` and `}` (Zed allows trailing commas in JSONC).
-pub(super) fn strip_trailing_commas(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut in_string = false;
-    let mut escaped = false;
-
-    for i in 0..bytes.len() {
-        if escaped {
-            escaped = false;
-            out.push(bytes[i]);
-            continue;
-        }
-        match bytes[i] {
-            b'\\' if in_string => {
-                escaped = true;
-                out.push(bytes[i]);
-            }
-            b'"' => {
-                in_string = !in_string;
-                out.push(bytes[i]);
-            }
-            b',' if !in_string => {
-                // Look ahead past whitespace for ] or }
-                let rest = &bytes[i + 1..];
-                let next = rest.iter().find(|&&b| !b.is_ascii_whitespace());
-                if next.is_some_and(|&b| b == b']' || b == b'}') {
-                    continue; // skip trailing comma
-                }
-                out.push(bytes[i]);
-            }
-            _ => {
-                out.push(bytes[i]);
-            }
-        }
-    }
-
-    String::from_utf8(out).unwrap_or_else(|_| input.to_string())
-}
-
-/// Find the position of a `//` comment that's not inside a JSON string.
-pub(super) fn find_line_comment(line: &str) -> Option<usize> {
-    let mut in_string = false;
-    let mut escaped = false;
-    let bytes = line.as_bytes();
-
-    for i in 0..bytes.len() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match bytes[i] {
-            b'\\' if in_string => escaped = true,
-            b'"' => in_string = !in_string,
-            b'/' if !in_string && i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
-                return Some(i);
-            }
-            _ => {}
-        }
-    }
-    None
+/// Parse a JSONC string into any deserializable type.
+pub(super) fn parse_jsonc<T: serde::de::DeserializeOwned>(input: &str) -> anyhow::Result<T> {
+    let value = jsonc_parser::parse_to_serde_value(input, &ParseOptions::default())
+        .map_err(|e| anyhow::anyhow!("JSONC parse error: {e}"))?
+        .unwrap_or(serde_json::Value::Null);
+    Ok(serde_json::from_value(value)?)
 }
