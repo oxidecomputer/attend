@@ -13,8 +13,8 @@ Point Claude at this file to resume work.
 | Phase | Name | Status | Depends On |
 |-------|------|--------|------------|
 | 1 | [Foundation](./phase-01-foundation.md) | Done (003a47d) | — |
-| 2 | [Type Safety & Config Simplification](./phase-02-type-safety.md) | Done (9927fbd) | Phase 1 |
-| 3 | [Module Reorganization](./phase-03-module-reorg.md) | Partial (3c1acc8) | Phase 2 |
+| 2 | [Type Safety & Config Simplification](./phase-02-type-safety.md) | Done (6990ff3) | Phase 1 |
+| 3 | [Module Reorganization](./phase-03-module-reorg.md) | Done (512ad49) | Phase 2 |
 | 4 | [Unsafe Elimination & Dependency Upgrades](./phase-04-unsafe-elimination.md) | Not started | Phase 3 |
 | 5 | [Error Handling Audit](./phase-05-error-handling.md) | Not started | Phase 3 |
 | 6 | [Recording Daemon Improvements](./phase-06-daemon-improvements.md) | Not started | Phases 4, 5 |
@@ -40,17 +40,17 @@ Point Claude at this file to resume work.
 - [x] 2.2 Eliminate `RawConfig`
 - [x] 2.3 Add `Config::merge` method
 - [x] 2.4 Camino migration (zero `to_string_lossy` / `to_str().unwrap_or_default()`)
-- [ ] 2.5 Introduce `SessionId` newtype (WallClock, ModelPath dropped)
+- [x] 2.5 Introduce `SessionId` newtype (WallClock, ModelPath dropped)
 
 ### Phase 3: Module Reorganization
 - [x] 3.1 `state.rs` split — extracted `atomic_write` to `src/util.rs`
-- [ ] 3.2 `json.rs` split — deferred
-- [ ] 3.3 `cli/mod.rs` split — deferred
+- [x] 3.2 `json.rs` split — completed (1e31c01, 5acf9c3)
+- [x] 3.3 `cli/mod.rs` split — extracted glance, look, install handlers (512ad49)
 - [x] 3.4 `narrate/mod.rs` — extracted `status.rs` and `clean.rs`
-- [ ] 3.5 `narrate/capture.rs` split — deferred
-- [ ] 3.6 `editor/zed.rs` submodule directory — deferred
-- [ ] 3.7 `merge.rs` extract `render_markdown` — deferred
-- [ ] 3.8 `watch.rs` split — deferred
+- [~] 3.5 `narrate/capture.rs` split — skipped (211 lines, well-organized as-is)
+- [x] 3.6 `editor/zed.rs` submodule directory — split into db, jsonc, keybindings, tasks, health (7a3c126)
+- [x] 3.7 `merge.rs` extract `render_markdown` — split into narrate/render.rs (cc1e2ae)
+- [x] 3.8 `watch.rs` split — extracted terminal helpers to src/terminal.rs (ee29bdd)
 - [x] 3.9 `editor/mod.rs` cleanup — removed `watch_paths`/`all_watch_paths` dead code
 - [x] 3.10 Future-proof editor trait — added design note on RawEditor
 
