@@ -7,7 +7,7 @@ use camino::Utf8PathBuf;
 use serde::Deserialize;
 
 use super::Agent;
-use crate::hook::{HookInput, StopDecision};
+use crate::hook::{HookDecision, HookInput};
 use crate::state::{EditorState, SessionId};
 
 /// Raw JSON payload from Claude Code hook stdin.
@@ -27,6 +27,8 @@ struct ClaudeHookStdin {
 const HOOK_KEY_SESSION_START: &str = "SessionStart";
 const HOOK_KEY_USER_PROMPT_SUBMIT: &str = "UserPromptSubmit";
 const HOOK_KEY_STOP: &str = "Stop";
+const HOOK_KEY_PRE_TOOL_USE: &str = "PreToolUse";
+const HOOK_KEY_POST_TOOL_USE: &str = "PostToolUse";
 
 /// Claude Code agent backend.
 pub struct Claude;
@@ -81,10 +83,10 @@ impl Agent for Claude {
         Ok(())
     }
 
-    fn attend_result(&self, decision: &StopDecision) -> anyhow::Result<()> {
+    fn attend_result(&self, decision: &HookDecision) -> anyhow::Result<()> {
         match decision {
-            StopDecision::Silent => {}
-            StopDecision::SessionMoved => {
+            HookDecision::Silent => {}
+            HookDecision::SessionMoved => {
                 let response = serde_json::json!({
                     "decision": "approve",
                     "reason": "Narration has moved to a session with another agent. \
@@ -93,14 +95,14 @@ impl Agent for Claude {
                 });
                 println!("{}", serde_json::to_string(&response)?);
             }
-            StopDecision::PendingNarration { content } => {
+            HookDecision::PendingNarration { content } => {
                 let response = serde_json::json!({
                     "decision": "block",
                     "reason": content
                 });
                 println!("{}", serde_json::to_string(&response)?);
             }
-            StopDecision::StartReceiver => {
+            HookDecision::StartReceiver => {
                 let response = serde_json::json!({
                     "decision": "block",
                     "reason": "Run `attend listen` in the background to wait for the next narration."
@@ -224,28 +226,37 @@ fn install(bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
     existing = existing || before > ups_vec.len();
     ups_vec.push(prompt_hook);
 
-    // Stop hook (narration delivery)
-    {
-        let stop_cmd = format!("{bin_cmd} hook stop --agent claude");
-        let stop_hook = serde_json::json!({
+    // Narration delivery hooks: Stop, PreToolUse, PostToolUse.
+    // All three run the same check-and-deliver logic. PreToolUse and
+    // PostToolUse ensure narration arrives between tools within a single
+    // response, not just at the end.
+    for (key, subcommand) in [
+        (HOOK_KEY_STOP, "stop"),
+        (HOOK_KEY_PRE_TOOL_USE, "pre-tool-use"),
+        (HOOK_KEY_POST_TOOL_USE, "post-tool-use"),
+    ] {
+        let cmd = format!("{bin_cmd} hook {subcommand} --agent claude");
+        let hook = serde_json::json!({
             "hooks": [
                 {
                     "type": "command",
-                    "command": stop_cmd,
+                    "command": cmd,
                     "timeout": 10
                 }
             ]
         });
 
-        let stop_arr = hooks_obj
-            .entry(HOOK_KEY_STOP)
+        let arr = hooks_obj
+            .entry(key)
             .or_insert_with(|| serde_json::json!([]));
-        let stop_vec = stop_arr.as_array_mut().context("Stop is not an array")?;
+        let vec = arr
+            .as_array_mut()
+            .context(format!("{key} is not an array"))?;
 
-        let before = stop_vec.len();
-        stop_vec.retain(|entry| !entry_has_attend_cmd(entry, Some(bin_cmd)));
-        existing = existing || before > stop_vec.len();
-        stop_vec.push(stop_hook);
+        let before = vec.len();
+        vec.retain(|entry| !entry_has_attend_cmd(entry, Some(bin_cmd)));
+        existing = existing || before > vec.len();
+        vec.push(hook);
     }
 
     // Pre-authorize `attend look` so Claude doesn't prompt for every look call.
@@ -317,6 +328,8 @@ fn uninstall(project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
         HOOK_KEY_SESSION_START,
         HOOK_KEY_USER_PROMPT_SUBMIT,
         HOOK_KEY_STOP,
+        HOOK_KEY_PRE_TOOL_USE,
+        HOOK_KEY_POST_TOOL_USE,
     ];
     for key in &hook_keys {
         if let Some(arr) = hooks.get_mut(*key).and_then(|v| v.as_array_mut()) {

@@ -20,12 +20,12 @@ pub struct HookInput {
     pub stop_hook_active: bool,
 }
 
-/// Structured stop decision with semantic variants.
+/// Structured hook decision with semantic variants.
 ///
-/// Produced by the shared `stop_decision` logic, consumed by each agent's
+/// Produced by the shared `hook_decision` logic, consumed by each agent's
 /// `attend_result` method to render agent-specific output.
 #[derive(Debug, PartialEq)]
-pub enum StopDecision {
+pub enum HookDecision {
     /// No output needed.
     Silent,
     /// Narration moved to another session.
@@ -164,7 +164,7 @@ pub fn stop(agent: &dyn Agent) -> anyhow::Result<()> {
         (None, Vec::new())
     };
 
-    let decision = stop_decision(
+    let decision = hook_decision(
         input.session_id.as_ref(),
         listening.as_ref(),
         pending_content,
@@ -173,7 +173,7 @@ pub fn stop(agent: &dyn Agent) -> anyhow::Result<()> {
     );
 
     // Archive pending files when delivering narration.
-    if matches!(&decision, StopDecision::PendingNarration { .. })
+    if matches!(&decision, HookDecision::PendingNarration { .. })
         && !pending_files.is_empty()
         && let Some(ref sid) = listening
     {
@@ -199,41 +199,41 @@ fn is_attend_prompt(input: &HookInput) -> bool {
 /// block. We use it as a safety valve: if we already told the agent to start
 /// a receiver and it's re-stopping, approve rather than risk an infinite
 /// block loop (e.g. if the receiver hasn't created its lock file yet).
-fn stop_decision(
+fn hook_decision(
     hook_session_id: Option<&SessionId>,
     listening_session: Option<&SessionId>,
     pending_content: Option<String>,
     receiver_alive: bool,
     stop_hook_active: bool,
-) -> StopDecision {
+) -> HookDecision {
     match (listening_session, hook_session_id) {
         // We are the active listening session — check for narration.
         (Some(listening_sid), Some(hook_sid)) if listening_sid == hook_sid => {}
         // Narration is active in a different session.
-        (Some(_), Some(_)) => return StopDecision::SessionMoved,
+        (Some(_), Some(_)) => return HookDecision::SessionMoved,
         // No listening session at all — approve silently.
-        _ => return StopDecision::Silent,
+        _ => return HookDecision::Silent,
     }
 
     // We are the active session. Pending narration always takes priority —
     // deliver it regardless of stop_hook_active.
     if let Some(content) = pending_content {
-        return StopDecision::PendingNarration { content };
+        return HookDecision::PendingNarration { content };
     }
 
     // No narration. If a receiver is running, it will handle future delivery.
     if receiver_alive {
-        return StopDecision::Silent;
+        return HookDecision::Silent;
     }
 
     // No receiver. On re-invocation after a previous block, approve to avoid
     // an infinite loop (the agent already got the "start receiver" message).
     if stop_hook_active {
-        return StopDecision::Silent;
+        return HookDecision::Silent;
     }
 
     // First attempt, no receiver — ask the agent to start one.
-    StopDecision::StartReceiver
+    HookDecision::StartReceiver
 }
 
 /// Check whether a background `receive --wait` process is alive.

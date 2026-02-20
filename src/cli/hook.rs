@@ -28,6 +28,16 @@ pub enum HookEvent {
         #[arg(long, short, value_parser = agent_value_parser())]
         agent: String,
     },
+    /// Deliver pending narration before a tool executes.
+    PreToolUse {
+        #[arg(long, short, value_parser = agent_value_parser())]
+        agent: String,
+    },
+    /// Deliver pending narration after a tool executes.
+    PostToolUse {
+        #[arg(long, short, value_parser = agent_value_parser())]
+        agent: String,
+    },
 }
 
 impl HookEvent {
@@ -42,7 +52,9 @@ impl HookEvent {
                 let agent = resolve_agent(&agent)?;
                 crate::hook::user_prompt(agent, None)
             }
-            HookEvent::Stop { agent } => {
+            HookEvent::Stop { agent }
+            | HookEvent::PreToolUse { agent }
+            | HookEvent::PostToolUse { agent } => {
                 let agent = resolve_agent(&agent)?;
                 crate::hook::stop(agent)
             }

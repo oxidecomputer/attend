@@ -4,8 +4,8 @@ mod claude;
 use anyhow::Context;
 use camino::Utf8PathBuf;
 
+use crate::hook::HookDecision;
 pub use crate::hook::HookInput;
-use crate::hook::StopDecision;
 use crate::state::{EditorState, SessionId};
 
 /// A backend that can parse input, render output, and install/uninstall hooks.
@@ -27,7 +27,7 @@ pub trait Agent: Sync {
     /// Emit /attend activation response.
     fn attend_activate(&self, session_id: &SessionId) -> anyhow::Result<()>;
     /// Emit stop decision.
-    fn attend_result(&self, decision: &StopDecision) -> anyhow::Result<()>;
+    fn attend_result(&self, decision: &HookDecision) -> anyhow::Result<()>;
 
     // --- Install ---
 

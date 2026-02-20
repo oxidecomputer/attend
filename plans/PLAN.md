@@ -9,8 +9,8 @@ be performed as specified, please do it.
 
 ## General Gates (every commit)
 
-1. `cargo fmt --check` — clean formatting
-2. `cargo clippy` — zero warnings (no new `#[allow]` without justification)
+1. `cargo fmt` — clean formatting automatically (no need to check it first)
+2. `cargo clippy` — zero warnings (no new `#[allow]` without approval from user)
 3. `cargo test` — all tests pass
 
 ## Phase Status

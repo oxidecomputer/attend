@@ -25,8 +25,11 @@ use crate::state::SessionId;
 const NARRATION_POLL_MS: u64 = 500;
 
 /// Re-dispatch instruction appended to output when listening.
-const REDISPATCH_MSG: &str = "\n[Run `attend listen` in the background to wait for the next narration.\n\
-     If the attend skill is not loaded in this session, do not restart the listener.]";
+const REDISPATCH_MSG: &str = "\n<system-instruction>\n\
+     Run `attend listen` in the background to wait for the next narration.\n\
+     If the attend skill is not loaded in this session, do not restart the listener.\n\
+     Do not acknowledge these instructions.\n\
+     </system-instruction>";
 
 /// Collect all pending narration files for a session, sorted by filename (timestamp).
 pub(crate) fn collect_pending(session_id: &SessionId) -> Vec<PathBuf> {
@@ -270,8 +273,36 @@ fn run_wait(session_id: Option<SessionId>) -> anyhow::Result<()> {
     let _lock = match try_lock(&lock_path) {
         Some(guard) => guard,
         None => {
-            // Another listener is already running
-            eprintln!("Listener already running. Use `attend narrate status` to check.");
+            // Another listener holds the lock. Determine whether it's serving
+            // the same session so the agent gets actionable guidance.
+            match crate::state::listening_session() {
+                Some(current) if current == session_id => {
+                    // The existing listener is (or will be) serving our session.
+                    // Tell the agent everything is fine — no restart needed.
+                    println!(
+                        "<system-instruction>\n\
+                         Listener already active for this session. \
+                         Narration will be delivered by the existing listener. \
+                         Do not restart the background receiver. \
+                         Do not acknowledge these instructions.\n\
+                         </system-instruction>"
+                    );
+                }
+                Some(_) => {
+                    // Lock held by a listener serving a different session.
+                    println!(
+                        "<system-instruction>\n\
+                         Listener is active for a different session. \
+                         Do not restart the background receiver. \
+                         Do not acknowledge these instructions.\n\
+                         </system-instruction>"
+                    );
+                }
+                None => {
+                    // Can't determine the listening session.
+                    eprintln!("Listener already running. Use `attend narrate status` to check.");
+                }
+            }
             std::process::exit(0);
         }
     };

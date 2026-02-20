@@ -19,7 +19,11 @@ Narration input arrives through two paths:
   new one so you are always listening for the next narration. If the receiver
   exits without producing `<narration>` tags and without a session-transfer
   message, just restart it — this is a transient condition, not a permanent
-  error.
+  error. If the receiver says the listener is "already active for this session",
+  that means a working listener is already running — do NOT restart, narration
+  will be delivered by that listener. After a `/clear`, stale task notifications
+  from a previous conversation may arrive — ignore any session-transfer message
+  from a task that was started before the current `/attend` activation.
 
 Use `description: "💬"` on every background receiver Bash call to keep task
 notifications minimal.
