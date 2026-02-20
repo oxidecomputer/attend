@@ -10,6 +10,7 @@ mod editor;
 mod hook;
 mod narrate;
 mod state;
+mod terminal;
 mod util;
 mod view;
 mod watch;
