@@ -9,14 +9,14 @@ Narration input arrives through two paths:
 - **Stop hook** (non-blocking): delivers pending narration when you stop.
   No action needed — the hook handles this automatically.
 - **Background receiver** (blocking): polls until narration arrives, then
-  prints it and exits. When this background task completes, immediately
-  start a new one so you are always listening for the next narration.
-  If the receiver exits without producing `<narration>` tags and without
-  a session-transfer message, restart it silently — this is a transient
-  condition, not a permanent error.
+  prints it and exits. When this background task completes, immediately start a
+  new one so you are always listening for the next narration. If the receiver
+  exits without producing `<narration>` tags and without a session-transfer
+  message, restart it silently — this is a transient condition, not a permanent
+  error.
 
-Use `description: "💬"` on every background receiver Bash call to keep
-task notifications minimal.
+Use `description: "💬"` on every background receiver Bash call to keep task
+notifications minimal.
 
 Narration arrives wrapped in `<narration>` tags. It contains the user's spoken
 words interleaved with code blocks showing what they were looking at and diff
@@ -24,8 +24,9 @@ blocks showing what code they changed. Treat it as the user's message — respon
 to what they said and asked.
 
 If narration contains only cursor/selection movements with no spoken words,
-silently restart the listener without commenting to the user. These are
-incidental editor movements, not intentional messages.
+restart the listener without producing ANY output — no text, no status messages,
+nothing. Just call the Bash tool to restart. These are incidental editor
+movements, not intentional messages.
 
 Keep in mind that you are only able to see editor actions (cursors, selections,
 file contents, diffs) from within your own current working directory, as a

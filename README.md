@@ -71,12 +71,30 @@ hooks from `attend` will respect your preferences. To manually assign key
 bindings, bind the tasks "attend: toggle narration" and "attend: start
 narration".
 
-Alternatively, if you use a hotkey manager that can assgn commands to keys, you
+#### macOS
+
+Alternatively, if you use a hotkey manager that can assign commands to keys, you
 can bind *global* hotkeys to `attend narrate start` and `attend narrate toggle`.
 On macOS, you can [bind a global keyboard shortcut to a script using the
 Shortcuts
 app](https://support.apple.com/guide/shortcuts-mac/launch-a-shortcut-from-another-app-apd163eb9f95/mac).
 Your favorite Linux distribution almost certainly has some way to do this too.
+
+#### iTerm2
+
+iTerm2 does not pick up the globally set hotkeys in the manner described above.
+To use the same keybindings from iTerm2, add key mappings under Settings > Keys
+> Key Bindings:
+
+1. Click **+** to add a new binding.
+2. Set the shortcut (e.g. `⌘;`), action **Run Coprocess**, and command:
+   `~/.cargo/bin/attend narrate toggle`
+3. Ensure it is marked to apply to all sessions.
+3. Repeat for `⌘:` with command: `~/.cargo/bin/attend narrate start`
+
+You must use the full path to the binary (`~/.cargo/bin/attend`) because
+iTerm2 coprocesses run under `/bin/sh`, which does not have `~/.cargo/bin`
+in its PATH.
 
 ### Agent integration
 
@@ -102,6 +120,19 @@ expand this with `include_dirs` in the config file
 Run `attend narrate status` to check that everything is wired up correctly. It
 shows whether narration is recording, which engine and session are active,
 whether the editor integration is healthy, and whether any narration is pending.
+
+#### Microphone permissions (macOS)
+
+The recording daemon needs microphone access. macOS prompts for permission the
+first time the daemon is launched from a given parent process. If narration
+starts but produces no speech, check **System Settings > Privacy & Security >
+Microphone** and ensure the **focused app** has microphone permissions,
+because the keyboard shortcut is triggering the script from within that app's
+context.
+
+If the permission prompt never appeared, the daemon may have been blocked
+silently. Try running `attend narrate toggle` directly in a terminal to trigger
+the prompt.
 
 ### Transcription model
 
@@ -129,9 +160,10 @@ To change the engine, see [Configuration](#configuration).
 All fields are optional:
 
 ```toml
-engine = "parakeet"                    # transcription engine: "parakeet" or "whisper"
-model = "/path/to/custom/model"        # custom model path (auto-downloaded if omitted)
+engine = "parakeet"                        # transcription engine: "parakeet" or "whisper"
+model = "/path/to/custom/model"            # custom model path (auto-downloaded if omitted)
 include_dirs = ["/path/to/other/project"]  # additional dirs visible to the agent
+archive_retention = "7d"                   # auto-prune old narrations ("forever" to disable)
 ```
 
 ## Uninstall
@@ -225,10 +257,11 @@ Show narration system status, including a report of any problems that are detect
 
 In case of problems in the agent harness, you don't want to lose your narration and
 have to say it all over again! That's why `attend` maintains an archive of all your
-narrations. Until cleaned, they persist indefinitely.
+narrations. By default, archives older than 7 days are automatically pruned after
+each narration delivery (configurable via `archive_retention` in the config file).
 
-You can remove old archived narration files using this command, which defaults to
-cleaning everything older than 7 days.
+You can also remove old archived narration files manually using this command, which
+defaults to cleaning everything older than 7 days.
 
 ### Editor integration
 
