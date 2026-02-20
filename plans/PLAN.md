@@ -23,7 +23,7 @@ be performed as specified, please do it.
 | 4 | [Unsafe Elimination & Dependency Upgrades](./phase-04-unsafe-elimination.md) | Done (2393beb) | Phase 3 |
 | 5 | [Error Handling Audit](./phase-05-error-handling.md) | Done (066144d) | Phase 3 |
 | 6 | [Recording Daemon Improvements](./phase-06-daemon-improvements.md) | Done | Phases 4, 5 |
-| 7 | [Agent Trait Generalization](./phase-07-agent-generalization.md) | Done | Phases 3, 5 |
+| 7 | [Agent Trait Generalization](./phase-07-agent-generalization.md) | Done (35571a3) | Phases 3, 5 |
 | 8 | [UX Improvements](./phase-08-ux-improvements.md) | Not started | Phases 4, 6 |
 | 9 | [Test Hardening](./phase-09-test-hardening.md) | Not started | Phase 3 |
 | 10 | [merge.rs Deep Refactor](./phase-10-merge-refactor.md) | Not started | Phase 9 |
@@ -89,6 +89,7 @@ be performed as specified, please do it.
 - [x] 7.2 Split narration instructions (done by architecture: no separate code needed)
 - [x] 7.3 Track project-specific installations
 - [ ] 7.4 Research skill format generalization (deferred: trait boundary from 7.1 is prerequisite)
+- [x] 7.5 EXTENDING.md rewrite, claude asset reorg into claude/ subfolder (35571a3)
 
 ### Phase 8: UX Improvements
 - [ ] 8.1 Model download during `/attend` activation
