@@ -34,7 +34,30 @@ pub struct Name;
 
 impl Editor for Name {
     fn name(&self) -> &'static str { "<name>" }
-    fn query(&self) -> anyhow::Result<Option<QueryResult>> { ... }
+
+    fn query(&self) -> anyhow::Result<Option<QueryResult>> {
+        // Return open tabs with byte-offset selections.
+        // Return Ok(None) when the editor isn't running or has no data.
+        Ok(None)
+    }
+
+    fn install_narration(&self, bin_cmd: &str) -> anyhow::Result<()> {
+        // Register hotkeys/tasks that run `{bin_cmd} narrate toggle` and
+        // `{bin_cmd} narrate start`. Zed installs tasks.json entries +
+        // keymap.json bindings.
+        Ok(())
+    }
+
+    fn uninstall_narration(&self) -> anyhow::Result<()> {
+        // Remove whatever install_narration() added.
+        Ok(())
+    }
+
+    fn check_narration(&self) -> anyhow::Result<Vec<String>> {
+        // Return diagnostic warnings. Empty vec = healthy.
+        // Zed checks for stale task paths and missing keybindings.
+        Ok(Vec::new())
+    }
 }
 ```
 
