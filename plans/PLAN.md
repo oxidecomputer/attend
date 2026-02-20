@@ -14,7 +14,7 @@ Point Claude at this file to resume work.
 |-------|------|--------|------------|
 | 1 | [Foundation](./phase-01-foundation.md) | Done (003a47d) | — |
 | 2 | [Type Safety & Config Simplification](./phase-02-type-safety.md) | Done (6990ff3) | Phase 1 |
-| 3 | [Module Reorganization](./phase-03-module-reorg.md) | Done (512ad49) | Phase 2 |
+| 3 | [Module Reorganization](./phase-03-module-reorg.md) | Done (6733577) | Phase 2 |
 | 4 | [Unsafe Elimination & Dependency Upgrades](./phase-04-unsafe-elimination.md) | Not started | Phase 3 |
 | 5 | [Error Handling Audit](./phase-05-error-handling.md) | Not started | Phase 3 |
 | 6 | [Recording Daemon Improvements](./phase-06-daemon-improvements.md) | Not started | Phases 4, 5 |
@@ -47,7 +47,7 @@ Point Claude at this file to resume work.
 - [x] 3.2 `json.rs` split — completed (1e31c01, 5acf9c3)
 - [x] 3.3 `cli/mod.rs` split — extracted glance, look, install handlers (512ad49)
 - [x] 3.4 `narrate/mod.rs` — extracted `status.rs` and `clean.rs`
-- [~] 3.5 `narrate/capture.rs` split — skipped (211 lines, well-organized as-is)
+- [x] 3.5 `narrate/capture.rs` split — editor_capture.rs + diff_capture.rs (6733577)
 - [x] 3.6 `editor/zed.rs` submodule directory — split into db, jsonc, keybindings, tasks, health (7a3c126)
 - [x] 3.7 `merge.rs` extract `render_markdown` — split into narrate/render.rs (cc1e2ae)
 - [x] 3.8 `watch.rs` split — extracted terminal helpers to src/terminal.rs (ee29bdd)
