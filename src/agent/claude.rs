@@ -125,7 +125,7 @@ impl Agent for Claude {
 /// Uses `claude_skill_body.md` — the same body as the installed SKILL.md,
 /// so the instructions stay consistent with the skill template.
 fn narration_instructions(bin_cmd: &str) -> String {
-    let body = format!(include_str!("claude_skill_body.md"), bin_cmd = bin_cmd);
+    let body = format!(include_str!("claude/skill_body.md"), bin_cmd = bin_cmd);
     format!("\n<narration-instructions>\n{body}</narration-instructions>\n")
 }
 
@@ -368,10 +368,10 @@ fn install_skill_file(bin_cmd: &str, project: Option<&Path>) -> anyhow::Result<(
     let skill_content = format!(
         "{}{}",
         format_args!(
-            include_str!("claude_skill_frontmatter.md"),
+            include_str!("claude/skill_frontmatter.md"),
             bin_cmd = bin_cmd
         ),
-        format_args!(include_str!("claude_skill_body.md"), bin_cmd = bin_cmd),
+        format_args!(include_str!("claude/skill_body.md"), bin_cmd = bin_cmd),
     );
 
     crate::util::atomic_write_str(skill_dir.join("SKILL.md"), &skill_content)?;
