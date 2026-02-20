@@ -13,8 +13,9 @@ editor/          Reads state from editor backends (Zed, etc.)
 
 agent/           Hook installation and output rendering for each agent
   mod.rs           Agent trait, backend registry, resolve_bin_cmd
-  claude.rs        Claude Code: settings.json hooks, SKILL.md, permissions
-  claude/          Claude-specific assets
+  messages/        Shared message templates (protocol descriptions, guidance)
+  claude/          Claude Code agent backend
+    mod.rs           Agent trait impl (delegates to submodules)
     ...
 ```
 
@@ -128,24 +129,26 @@ database. A VS Code backend would likely:
 ## Adding a new agent
 
 An agent integration has two sides: **hook orchestration** (shared logic in
-`hook.rs` that handles session lifecycle, caching, and narration delivery) and
+`hook/` that handles session lifecycle, caching, and narration delivery) and
 **agent-specific rendering** (how each agent parses input and formats output).
 
 The `Agent` trait in `src/agent/mod.rs` covers the agent-specific side. The
-shared orchestration lives in `hook.rs` and calls into the trait.
+shared orchestration lives in `hook/` and calls into the trait.
 
 ### How hooks work
 
-When you run `attend install --agent <agent>`, it's meant to install three hooks
-into the agent's settings:
+When you run `attend install --agent <agent>`, hooks are installed into the
+agent's settings. Five hook events drive the integration:
 
 | Hook              | When it fires                    | What the orchestrator does                                       |
 |-------------------|----------------------------------|------------------------------------------------------------------|
 | `SessionStart`    | Session start, clear, compact    | Clear per-session cache, auto-upgrade hooks, emit instructions   |
 | `UserPromptSubmit`| Before each user prompt          | Detect `/attend`, or query + deduplicate + emit editor context   |
-| `Stop`            | Session stops or tool completes  | Compute stop decision, deliver pending narration                 |
+| `Stop`            | Session stops                    | Deliver pending narration or guidance                            |
+| `PreToolUse`      | Before each tool call            | Deliver pending narration between tools within a response        |
+| `PostToolUse`     | After each tool call             | Deliver pending narration between tools within a response        |
 
-The orchestrator (`hook.rs`) calls `agent.parse_hook_input()` to get a
+The orchestrator (`hook/`) calls `agent.parse_hook_input()` to get a
 `HookInput`, then calls the appropriate agent output method based on the
 event. The agent never sees raw hook logic — it just parses input and
 renders output.
@@ -156,35 +159,48 @@ renders output.
 pub struct HookInput {
     pub session_id: Option<SessionId>,
     pub cwd: Option<Utf8PathBuf>,
-    pub prompt: Option<String>,       // UserPrompt hook only
-    pub stop_hook_active: bool,       // Re-invocation after a previous block
+    pub kind: HookKind,
+}
+
+pub enum HookKind {
+    SessionStart,
+    UserPrompt { prompt: Option<String> },
+    Stop { stop_hook_active: bool },
+    ToolUse { bash_command: Option<String> },
 }
 ```
 
 Claude reads this from JSON on stdin. Other agents might read environment
 variables, a socket, or a config file.
 
-### `StopDecision` described semantic outcomes from a stop hook
+### `HookDecision` describes semantic outcomes
 
-The stop hook doesn't hardcode textual output. It computes a semantic decision
-that each agent renders in its own format:
+The hook orchestrator computes a semantic decision that each agent renders
+in its own format:
 
-| Variant             | Meaning                                              |
-|---------------------|------------------------------------------------------|
-| `Silent`            | No output needed                                     |
-| `SessionMoved`      | Narration is active in a different session           |
-| `PendingNarration`  | Narration content ready to deliver                   |
-| `StartReceiver`     | No receiver running: agent should start one          |
+| Variant                    | Meaning                                                  |
+|----------------------------|----------------------------------------------------------|
+| `Silent`                   | No output needed                                         |
+| `PendingNarration`         | Narration content ready to deliver (blocks)              |
+| `Guidance(reason, effect)` | Operational guidance with block or approve effect        |
 
-### 1. Create the agent module — `src/agent/<name>.rs`
+Guidance reasons:
 
-Implement the `Agent` trait:
+| Reason                | Meaning                                            |
+|-----------------------|----------------------------------------------------|
+| `SessionMoved`        | Narration is active in a different session         |
+| `StartReceiver`       | No receiver running: agent should start one        |
+| `ListenerAlreadyActive` | A listener is already running for this session   |
+
+### 1. Create the agent module — `src/agent/<name>/`
+
+Create a directory with at least a `mod.rs` implementing the `Agent` trait:
 
 ```rust
 use camino::Utf8PathBuf;
 
 use super::Agent;
-use crate::hook::{HookInput, StopDecision};
+use crate::hook::{HookDecision, HookInput, HookType};
 use crate::state::{EditorState, SessionId};
 
 pub struct Name;
@@ -194,9 +210,9 @@ impl Agent for Name {
 
     // --- Input ---
 
-    fn parse_hook_input(&self) -> HookInput {
+    fn parse_hook_input(&self, hook_type: HookType) -> HookInput {
         // Read from whatever source this agent provides (stdin, env, etc.)
-        // Return HookInput with session_id, cwd, prompt, stop_hook_active.
+        // Return HookInput with session_id, cwd, and hook-type-specific kind.
         HookInput::default()
     }
 
@@ -204,50 +220,53 @@ impl Agent for Name {
 
     fn session_start(&self, input: &HookInput, is_listening: bool) -> anyhow::Result<()> {
         // Emit instructions for the agent session.
-        // If is_listening, also emit narration skill instructions.
+        // If is_listening, also emit narration instructions.
         Ok(())
     }
 
     fn editor_context(&self, state: &EditorState) -> anyhow::Result<()> {
-        // Render editor state (open files, cursors, selections) in an
-        // agent-specific manner (i.e. to stdout).
+        // Render editor state (open files, cursors, selections) to stdout.
         Ok(())
     }
 
     fn attend_activate(&self, session_id: &SessionId) -> anyhow::Result<()> {
-        // Acknowledge /attend activation in an agent-specific manner (i.e. to
-        // stdout).
+        // Acknowledge narration activation to stdout.
         Ok(())
     }
 
-    fn attend_result(&self, decision: &StopDecision) -> anyhow::Result<()> {
-        // Output the stop decision in agent-specific manner (i.e. to stdout).
+    fn attend_result(&self, decision: &HookDecision, hook_type: HookType) -> anyhow::Result<()> {
+        // Render the hook decision to stdout. hook_type controls whether
+        // guidance should block or approve (e.g., PreToolUse approves
+        // StartReceiver rather than blocking).
         Ok(())
     }
 
     // --- Install/Uninstall ---
 
     fn install(&self, bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
-        // Write hook commands into the agent's settings.
-        // Commands are: {bin_cmd} hook --agent <name> session-start
-        //               {bin_cmd} hook --agent <name> user-prompt
-        //               {bin_cmd} hook --agent <name> stop
+        // Write hook commands and a skill explaining what to do into the agent's settings.
+        // Commands: {bin_cmd} hook session-start --agent <name>
+        //           {bin_cmd} hook user-prompt --agent <name>
+        //           {bin_cmd} hook stop --agent <name>
+        //           {bin_cmd} hook pre-tool-use --agent <name>
+        //           {bin_cmd} hook post-tool-use --agent <name>
         Ok(())
     }
 
     fn uninstall(&self, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
-        // Remove hook entries from the agent's settings.
+        // Remove hook entries and skill from the agent's settings.
         Ok(())
     }
 }
 ```
 
-See `src/agent/claude.rs` for a complete example. Key implementation notes:
+See `src/agent/claude/` for a complete example. Key implementation notes:
 
 - **Input**: Claude reads JSON from stdin (`{ "session_id": "...", "cwd": "...", "prompt": "..." }`). Other agents will have different input sources.
-- **Output**: Different agent harnesses might have different ways to send output from a hook to the agent. The agent captures it and presents it to the user. Claude uses `<system-reminder>` XML tags and JSON responses via stdout, but others may use entirely different formats or interfaces.
-- **Install**: Claude writes to `~/.claude/settings.json` (global) or `.claude/settings.local.json` (project). It also installs a SKILL.md file for discoverability and pre-authorizes tool permissions. Other tools will have settings elsewhere.
+- **Output**: Claude emits JSON responses to stdout (`{ "decision": "block", "reason": "..." }`). Other agents may use entirely different formats.
+- **Install**: Claude writes to `~/.claude/settings.json` (global) or `.claude/settings.local.json` (project). It also installs a SKILL.md file and pre-authorizes tool permissions. Other agents will have settings elsewhere.
 - **Idempotency**: `install()` must be safe to call repeatedly. Remove existing entries before adding new ones so the binary path stays current.
+- **Non-interference**: Installation and uninstallation must not interfere with other settings and tools.
 
 ### 2. Register the backend — `src/agent/mod.rs`
 
@@ -268,33 +287,59 @@ pub const AGENTS: &[&'static dyn Agent] = &[
 The CLI (`hook --agent <name> ...`, `install --agent <name>`, etc.)
 is built automatically from the registered backends.
 
-### 3. Agent-specific instructions (optional)
+### 3. Shared message templates
 
-Agents often need instructions that teach them how to interact with attend.
-Claude uses three layers:
+Most message templates live in `src/agent/messages/` and are shared across
+all agents. Use `include_str!` to embed them:
 
-1. **Session-start instructions** (`src/instructions.txt`): Emitted on every
-   session start. Explains the `<editor-context>` format and the `attend look`
-   command. These are intended to be agent-agnostic, but you may emit other
-   instructions if you need to.
+| Template | Purpose | Placeholders |
+|----------|---------|--------------|
+| `editor_context_instructions.txt` | How to interpret `<editor-context>` tags and use `attend look` | `{bin_cmd}` |
+| `narration_protocol.md` | Full narration protocol: silence requirement, two delivery paths, receiver restart behavior, `<narration>` tag format, cursor-only handling, `include_dirs` | None |
+| `narration_pause.txt` | "Pause and consider narration before using tools" | None |
+| `activate_response.txt` | Confirmation when narration is activated | None |
+| `guidance_session_moved.txt` | "Narration moved to another session" | None |
+| `guidance_start_receiver.txt` | "Start the receiver" nudge | None |
+| `guidance_listener_active.txt` | "Listener already running" | None |
 
-2. **Skill file** (frontmatter + body): Installed to the agent's skill
-   directory for discoverability. Declares allowed tools and explains how to
-   activate and use narration mode.
+These cover the attend protocol — what narration is, how to behave, what
+operational messages mean. Your agent gets all of this for free.
 
-3. **Narration re-emission**: When `is_listening` is true on session start
-   (after context compaction), re-emit narration instructions so the agent
-   knows to restart its background receiver.
+Agent-specific templates go in `src/agent/<name>/messages/`. Claude keeps
+two files there:
 
-Other agents may not need all three layers, but should at minimum emit
-instructions on session start explaining how to interpret editor context.
+- `skill_frontmatter.md` — YAML metadata for Claude Code's skill system
+- `skill_body.md` — Claude-specific activation instructions (how to run the
+  listener in the background, tool description hints) plus a
+  `{narration_protocol}` placeholder that pulls in the shared protocol
+
+Your agent may want to use different content because of differences in how its
+execution harness operates.
+
+### 4. Agent-specific instructions
+
+Agents need instructions that teach them how to interact with attend. The shared
+templates handle protocol-level content. Your agent adds mechanism-specific
+content explaining how to actually execute commands in its environment.
+
+At minimum, your agent should:
+
+1. **On session start**: emit `editor_context_instructions.txt` (formatted
+   with `bin_cmd`) so the agent knows how to interpret editor context.
+2. **On narration activation**: emit `activate_response.txt` so the agent
+   knows to start listening. Include your own activation instructions
+   explaining how to run `attend listen` in your agent's execution model.
+3. **On narration re-emission** (session start with `is_listening = true`):
+   re-emit narration instructions so the agent restarts the receiver after
+   context compaction or clear.
 
 ### Checklist
 
-- [ ] `src/agent/<name>.rs` — `pub struct Name` + `impl Agent for Name`
+- [ ] `src/agent/<name>/mod.rs` — `pub struct Name` + `impl Agent for Name`
 - [ ] `src/agent/mod.rs` — `mod <name>;` declaration
 - [ ] `src/agent/mod.rs` — add `&<name>::Name` to `AGENTS`
-- [ ] Instructions template for the agent (optional but recommended)
+- [ ] Use shared templates from `src/agent/messages/` for protocol content
+- [ ] Add agent-specific templates for activation and execution instructions
 - [ ] Test hook install/uninstall round-trips cleanly
 
 ## Supporting infrastructure
@@ -317,9 +362,11 @@ project-local config from accumulating.
 
 Narration reaches the agent through two paths:
 
-1. **Stop hook** (non-blocking): When the session stops, the stop hook
-   collects pending narration files, renders them as markdown wrapped in
-   `<narration>` tags, and delivers via `attend_result(PendingNarration)`.
+1. **Hook delivery** (non-blocking): The Stop, PreToolUse, and PostToolUse
+   hooks collect pending narration files, render them as markdown wrapped in
+   `<narration>` tags, and deliver via `attend_result(PendingNarration)`.
+   PreToolUse and PostToolUse ensure narration arrives between tools within
+   a single response, not just at the end.
 
 2. **Background receiver** (blocking): When `attend_result(StartReceiver)`
    fires, the agent starts `attend listen` in the background. The receiver
@@ -332,3 +379,16 @@ Narration reaches the agent through two paths:
 Both paths filter narration context to the project scope (cwd + `include_dirs`)
 and relativize paths before delivery, so that there is no leak of file contents
 from outside the agent's permissioned path.
+
+### Receiver output protocol
+
+The `attend listen` receiver is agent-agnostic. It uses a standard output
+protocol based on XML tags:
+
+- Narration content is wrapped in `<narration>` tags
+- Operational instructions (restart, conflict) are wrapped in
+  `<system-instruction>` tags
+
+Each agent's instructions teach its LLM to expect this format. If an agent's
+LLM requires fundamentally different framing, it can implement a custom
+listener, but the default protocol works well for LLMs that handle XML tags.
