@@ -89,7 +89,7 @@ To use the same keybindings from iTerm2, add key mappings under Settings > Keys
 1. Click **+** to add a new binding.
 2. Set the shortcut (e.g. `⌘;`), action **Run Coprocess**, and command:
    `~/.cargo/bin/attend narrate toggle`
-3. Ensure it is marked to apply to all sessions.
+3. Ensure it is marked as "Apply to current session" (we only want it to run once at a time).
 3. Repeat for `⌘:` with command: `~/.cargo/bin/attend narrate start`
 
 You must use the full path to the binary (`~/.cargo/bin/attend`) because

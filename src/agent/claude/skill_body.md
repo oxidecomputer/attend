@@ -1,8 +1,14 @@
 Activate narration mode: run `{bin_cmd} listen` in the background (Bash with
-`run_in_background: true`, `description: "💬"`). Do nothing else.
+`run_in_background: true`, `description: "💬"`). Do not acknowledge activation
+or produce any other output.
 
 IMPORTANT: Use the exact command `{bin_cmd} listen` as written — it has been
 whitelisted during installation. Do not expand or rewrite the path.
+
+The narration loop must be **completely silent**. Never produce output about
+listener state — no "listening", "restarting", "standing by", or any other
+status commentary. The user knows they are in narration mode. The only
+visible output should be your responses to actual narration content.
 
 Narration input arrives through two paths:
 
@@ -12,7 +18,7 @@ Narration input arrives through two paths:
   prints it and exits. When this background task completes, immediately start a
   new one so you are always listening for the next narration. If the receiver
   exits without producing `<narration>` tags and without a session-transfer
-  message, restart it silently — this is a transient condition, not a permanent
+  message, just restart it — this is a transient condition, not a permanent
   error.
 
 Use `description: "💬"` on every background receiver Bash call to keep task
@@ -24,14 +30,10 @@ blocks showing what code they changed. Treat it as the user's message — respon
 to what they said and asked.
 
 If narration contains only cursor/selection movements with no spoken words,
-restart the listener without producing ANY output — no text, no status messages,
-nothing. Just call the Bash tool to restart. These are incidental editor
-movements, not intentional messages.
+just restart the listener. These are incidental editor movements, not
+intentional messages.
 
-Keep in mind that you are only able to see editor actions (cursors, selections,
-file contents, diffs) from within your own current working directory, as a
-security precaution to prevent undesired disclosure. If the user navigates to
-other parts of the filesystem in their editor, they may refer to files you can't
-see. If they do this, remind them that you can't follow them in their editor,
-and suggest they can add directories to `.attend/config.toml` (or
-`~/.config/attend/config.toml`) under `include_dirs`.
+Editor context is scoped to your current working directory. If the user
+references files you can't see, they may have navigated outside it — suggest
+adding paths to `include_dirs` in `.attend/config.toml` (or
+`~/.config/attend/config.toml`).
