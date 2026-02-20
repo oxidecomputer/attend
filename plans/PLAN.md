@@ -1,6 +1,11 @@
 # Codebase Improvement: Status Tracker
 
-Point Claude at this file to resume work.
+Claude: Please update this file every time you complete a task to ensure that
+you keep track of your work.
+
+Do not skip tasks. These were carefully planned already; if there's a good
+reason why one cannot be performed, feel free to call it out, but if a task can
+be performed as specified, please do it.
 
 ## General Gates (every commit)
 
