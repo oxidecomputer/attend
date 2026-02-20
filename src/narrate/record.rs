@@ -233,8 +233,7 @@ pub fn daemon() -> anyhow::Result<()> {
                 buffered_chunks.push(chunk);
 
                 // Partition: chunks whose instant < silence_start are speech.
-                let split =
-                    buffered_chunks.partition_point(|c| c.instant < silence_start);
+                let split = buffered_chunks.partition_point(|c| c.instant < silence_start);
                 let speech: Vec<_> = buffered_chunks.drain(..split).collect();
                 // Discard trailing silence chunks.
                 buffered_chunks.clear();
@@ -329,8 +328,7 @@ fn transcribe_segment(
         .instant
         .duration_since(period_start)
         .as_secs_f64();
-    let samples_16k =
-        audio::resample(&audio::flatten_chunks(speech_chunks), sample_rate, 16000)?;
+    let samples_16k = audio::resample(&audio::flatten_chunks(speech_chunks), sample_rate, 16000)?;
 
     tracing::debug!(
         duration_secs = samples_16k.len() as f64 / 16_000.0,
@@ -451,4 +449,3 @@ fn transcribe_and_write(
 
     Ok(())
 }
-

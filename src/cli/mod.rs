@@ -330,12 +330,18 @@ impl Command {
             } => {
                 let uninstall_all = agent.is_empty() && editor.is_empty();
                 let agents: Vec<String> = if uninstall_all {
-                    crate::agent::AGENTS.iter().map(|a| a.name().to_string()).collect()
+                    crate::agent::AGENTS
+                        .iter()
+                        .map(|a| a.name().to_string())
+                        .collect()
                 } else {
                     agent
                 };
                 let editors: Vec<String> = if uninstall_all {
-                    crate::editor::EDITORS.iter().map(|e| e.name().to_string()).collect()
+                    crate::editor::EDITORS
+                        .iter()
+                        .map(|e| e.name().to_string())
+                        .collect()
                 } else {
                     editor
                 };
