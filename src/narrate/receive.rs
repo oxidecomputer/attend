@@ -219,15 +219,12 @@ fn run_once(session_id: Option<SessionId>) -> anyhow::Result<()> {
     };
 
     let files = collect_pending(&session_id);
-    match read_pending(&files, &cwd, &config.include_dirs) {
-        Some(content) => {
-            print!("{content}");
-            archive_pending(&files, &session_id);
-            auto_prune(&config);
-            Ok(())
-        }
-        None => std::process::exit(1),
+    if let Some(content) = read_pending(&files, &cwd, &config.include_dirs) {
+        print!("{content}");
+        archive_pending(&files, &session_id);
+        auto_prune(&config);
     }
+    Ok(())
 }
 
 /// Polling wait: hold a lock, poll for narration, detect session steal.
