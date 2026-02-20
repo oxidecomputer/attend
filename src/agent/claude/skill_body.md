@@ -11,6 +11,9 @@ Narration input arrives through two paths:
 - **Background receiver** (blocking): polls until narration arrives, then
   prints it and exits. When this background task completes, immediately
   start a new one so you are always listening for the next narration.
+  If the receiver exits without producing `<narration>` tags and without
+  a session-transfer message, restart it silently — this is a transient
+  condition, not a permanent error.
 
 Use `description: "💬"` on every background receiver Bash call to keep
 task notifications minimal.
