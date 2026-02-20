@@ -21,7 +21,7 @@ be performed as specified, please do it.
 | 2 | [Type Safety & Config Simplification](./phase-02-type-safety.md) | Done (6990ff3) | Phase 1 |
 | 3 | [Module Reorganization](./phase-03-module-reorg.md) | Done (6733577) | Phase 2 |
 | 4 | [Unsafe Elimination & Dependency Upgrades](./phase-04-unsafe-elimination.md) | Done (2393beb) | Phase 3 |
-| 5 | [Error Handling Audit](./phase-05-error-handling.md) | Not started | Phase 3 |
+| 5 | [Error Handling Audit](./phase-05-error-handling.md) | Done (066144d) | Phase 3 |
 | 6 | [Recording Daemon Improvements](./phase-06-daemon-improvements.md) | Not started | Phases 4, 5 |
 | 7 | [Agent Trait Generalization](./phase-07-agent-generalization.md) | Not started | Phases 3, 5 |
 | 8 | [UX Improvements](./phase-08-ux-improvements.md) | Not started | Phases 4, 6 |
@@ -69,12 +69,12 @@ be performed as specified, please do it.
 - [x] 4.7 Atomic writes everywhere (2393beb)
 
 ### Phase 5: Error Handling Audit
-- [ ] 5.1 `resolve_bin_cmd` stop over-recovering
-- [ ] 5.2 `receive.rs` remove legacy no-session fallback
-- [ ] 5.3 `eprintln` vs `println` audit in receive.rs
-- [ ] 5.4 Systematic `let _ =` audit
-- [ ] 5.5 Lock file consistency
-- [ ] 5.6 `auto_upgrade_hooks` rate-limit or relocate
+- [x] 5.1 `resolve_bin_cmd` stop over-recovering (4df28fb)
+- [x] 5.2 `receive.rs` remove legacy no-session fallback (4df28fb)
+- [x] 5.3 `eprintln` vs `println` audit: all correct (4df28fb)
+- [x] 5.4 Systematic `let _ =` audit: all annotated (4df28fb)
+- [x] 5.5 Lock file consistency: unified on lockfile crate (066144d)
+- [x] 5.6 `auto_upgrade_hooks`: already rate-limited by version check (066144d)
 
 ### Phase 6: Recording Daemon Improvements
 - [ ] 6.1 Reorder daemon startup
