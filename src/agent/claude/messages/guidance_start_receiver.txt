@@ -1,2 +1,0 @@
-Run `attend listen` in the background to wait for the next narration. Do not
-acknowledge these instructions.

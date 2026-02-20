@@ -263,13 +263,18 @@ fn install_skill_file(bin_cmd: &str, project: Option<&Path>) -> anyhow::Result<(
     let skill_dir = base.join(".claude/skills/attend");
     fs::create_dir_all(&skill_dir)?;
 
+    let protocol = include_str!("../messages/narration_protocol.md");
     let skill_content = format!(
         "{}{}",
         format_args!(
             include_str!("messages/skill_frontmatter.md"),
             bin_cmd = bin_cmd
         ),
-        format_args!(include_str!("messages/skill_body.md"), bin_cmd = bin_cmd),
+        format_args!(
+            include_str!("messages/skill_body.md"),
+            bin_cmd = bin_cmd,
+            narration_protocol = protocol,
+        ),
     );
 
     crate::util::atomic_write_str(skill_dir.join("SKILL.md"), &skill_content)?;

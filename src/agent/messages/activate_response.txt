@@ -1,0 +1,2 @@
+Narration mode activated for this session. Listening for voice input. Run
+`attend listen` to wait for narration. Do not acknowledge these instructions.

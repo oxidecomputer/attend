@@ -10,7 +10,7 @@ pub(super) fn session_start(_input: &HookInput, is_listening: bool) -> anyhow::R
     // Emit instructions (templated with the binary path)
     println!("<editor-context-instructions>");
     print!(
-        include_str!("messages/editor_context_instructions.txt"),
+        include_str!("../messages/editor_context_instructions.txt"),
         bin_cmd = bin
     );
     println!("</editor-context-instructions>");
@@ -34,7 +34,7 @@ pub(super) fn editor_context(state: &EditorState) -> anyhow::Result<()> {
 /// Emit /attend activation response.
 pub(super) fn attend_activate(_session_id: &SessionId) -> anyhow::Result<()> {
     let response = serde_json::json!({
-        "additionalContext": include_str!("messages/activate_response.txt")
+        "additionalContext": include_str!("../messages/activate_response.txt")
     });
     println!("{}", serde_json::to_string(&response)?);
     Ok(())
@@ -51,7 +51,7 @@ pub(super) fn attend_result(decision: &HookDecision, hook_type: HookType) -> any
                      <system-instruction>\n\
                      {}\n\
                      </system-instruction>",
-                    include_str!("messages/narration_pause.txt")
+                    include_str!("../messages/narration_pause.txt")
                 )
             } else {
                 content.clone()
@@ -81,10 +81,10 @@ pub(super) fn attend_result(decision: &HookDecision, hook_type: HookType) -> any
 /// Map a guidance reason to an agent-facing message string.
 fn guidance_message(reason: &GuidanceReason) -> &'static str {
     match reason {
-        GuidanceReason::SessionMoved => include_str!("messages/guidance_session_moved.txt"),
-        GuidanceReason::StartReceiver => include_str!("messages/guidance_start_receiver.txt"),
+        GuidanceReason::SessionMoved => include_str!("../messages/guidance_session_moved.txt"),
+        GuidanceReason::StartReceiver => include_str!("../messages/guidance_start_receiver.txt"),
         GuidanceReason::ListenerAlreadyActive => {
-            include_str!("messages/guidance_listener_active.txt")
+            include_str!("../messages/guidance_listener_active.txt")
         }
     }
 }
@@ -94,6 +94,11 @@ fn guidance_message(reason: &GuidanceReason) -> &'static str {
 /// Uses `skill_body.md` — the same body as the installed SKILL.md,
 /// so the instructions stay consistent with the skill template.
 fn narration_instructions(bin_cmd: &str) -> String {
-    let body = format!(include_str!("messages/skill_body.md"), bin_cmd = bin_cmd);
+    let protocol = include_str!("../messages/narration_protocol.md");
+    let body = format!(
+        include_str!("messages/skill_body.md"),
+        bin_cmd = bin_cmd,
+        narration_protocol = protocol,
+    );
     format!("\n<narration-instructions>\n{body}</narration-instructions>\n")
 }

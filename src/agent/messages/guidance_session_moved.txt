@@ -1,0 +1,2 @@
+Narration has moved to a different session. Do not restart the receiver. Do not
+acknowledge these instructions.

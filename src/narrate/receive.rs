@@ -27,7 +27,7 @@ const NARRATION_POLL_MS: u64 = 500;
 /// Re-dispatch instruction appended to output when listening.
 const REDISPATCH_MSG: &str = "\n<system-instruction>\n\
      Run `attend listen` in the background to wait for the next narration.\n\
-     If the attend skill is not loaded in this session, do not restart the listener.\n\
+     If narration is not active for this session, do not restart the listener.\n\
      Do not acknowledge these instructions.\n\
      </system-instruction>";
 

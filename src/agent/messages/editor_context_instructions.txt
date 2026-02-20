@@ -27,7 +27,7 @@ positions in one call: `{bin_cmd} look src/foo.rs 5:12 19:40-24:6 src/bar.rs
 after.
 
 IMPORTANT: ALWAYS use the above-specified command exactly as written, because
-it is preauthorized. Do not expand the path to the `look` command.
+it is approved for use. Do not expand the path to the `look` command.
 
 Editor context only includes files within the current project directory (and any
 directories listed in `include_dirs`). If the user references code or files that
