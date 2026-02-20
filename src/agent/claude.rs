@@ -187,7 +187,8 @@ fn install(bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
     let mut output =
         serde_json::to_string_pretty(&settings).context("cannot serialize settings")?;
     output.push('\n');
-    fs::write(&settings_path, output).context("cannot write settings file")?;
+    crate::util::atomic_write_str(&settings_path, &output)
+        .map_err(|e| anyhow::anyhow!("cannot write settings file: {e}"))?;
 
     // SKILL.md for /attend discoverability
     install_skill_file(bin_cmd, project.as_deref().map(|p| p.as_std_path()))?;
@@ -251,7 +252,8 @@ fn uninstall(project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
         let mut output =
             serde_json::to_string_pretty(&settings).context("cannot serialize settings")?;
         output.push('\n');
-        fs::write(&settings_path, output).context("cannot write settings file")?;
+        crate::util::atomic_write_str(&settings_path, &output)
+            .map_err(|e| anyhow::anyhow!("cannot write settings file: {e}"))?;
         println!("Removed hooks from {}", settings_path.display());
     } else {
         println!("No attend hooks found in {}", settings_path.display());
@@ -279,6 +281,6 @@ fn install_skill_file(bin_cmd: &str, project: Option<&Path>) -> anyhow::Result<(
         format_args!(include_str!("claude_skill_body.md"), bin_cmd = bin_cmd),
     );
 
-    fs::write(skill_dir.join("SKILL.md"), skill_content)?;
+    crate::util::atomic_write_str(skill_dir.join("SKILL.md"), &skill_content)?;
     Ok(())
 }

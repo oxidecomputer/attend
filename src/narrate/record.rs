@@ -131,17 +131,14 @@ fn spawn_daemon() -> anyhow::Result<()> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        // SAFETY: pre_exec requires unsafe because it runs between fork and exec.
-        // setsid() is async-signal-safe and has no preconditions.
-        unsafe {
-            cmd.pre_exec(|| {
-                nix::unistd::setsid().map_err(|e| std::io::Error::from_raw_os_error(e as i32))?;
-                Ok(())
-            });
-        }
+    use std::os::unix::process::CommandExt;
+    // SAFETY: pre_exec requires unsafe because it runs between fork and exec.
+    // setsid() is async-signal-safe and has no preconditions.
+    unsafe {
+        cmd.pre_exec(|| {
+            nix::unistd::setsid().map_err(|e| std::io::Error::from_raw_os_error(e as i32))?;
+            Ok(())
+        });
     }
 
     cmd.spawn()?;
@@ -469,11 +466,11 @@ fn transcribe_and_write(
         let dir = pending_dir(sid);
         fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{ts}.json"));
-        fs::write(&path, &json)?;
+        crate::util::atomic_write_str(&path, &json)?;
         tracing::info!(path = %path, "Narration written");
     } else {
         let path = cache_dir().join("narration.json");
-        fs::write(&path, &json)?;
+        crate::util::atomic_write_str(&path, &json)?;
         tracing::info!(path = %path, "Narration written");
     }
 

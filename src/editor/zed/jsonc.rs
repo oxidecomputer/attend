@@ -33,7 +33,7 @@ pub(super) fn write_json_array(
     }
     let mut output = serde_json::to_string_pretty(items)?;
     output.push('\n');
-    fs::write(path, output)?;
+    crate::util::atomic_write_str(path, &output)?;
     Ok(())
 }
 

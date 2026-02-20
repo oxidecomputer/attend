@@ -1,8 +1,8 @@
 //! Shared utility functions.
 
+use std::path::Path;
 use std::{fs, io};
 
-use camino::Utf8Path;
 use chrono::Utc;
 use serde::Serialize;
 
@@ -11,9 +11,10 @@ use serde::Serialize;
 /// Creates `<path>.tmp`, calls the writer closure, then renames to `<path>`.
 /// This prevents readers from seeing partially-written files.
 pub(crate) fn atomic_write(
-    path: &Utf8Path,
+    path: impl AsRef<Path>,
     f: impl FnOnce(&mut fs::File) -> io::Result<()>,
 ) -> io::Result<()> {
+    let path = path.as_ref();
     let tmp = path.with_extension("tmp");
     let mut file = fs::File::create(&tmp)?;
     match f(&mut file) {
@@ -23,6 +24,11 @@ pub(crate) fn atomic_write(
             Err(e)
         }
     }
+}
+
+/// Atomically write string content to a file (convenience wrapper).
+pub(crate) fn atomic_write_str(path: impl AsRef<Path>, content: &str) -> io::Result<()> {
+    atomic_write(path, |f| io::Write::write_all(f, content.as_bytes()))
 }
 
 /// Return the current UTC time as an ISO 8601 string (e.g. `2026-02-18T15:30:45Z`).

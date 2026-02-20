@@ -143,7 +143,10 @@ impl SilenceDetector {
 
 /// Cheap linear-interpolation resample from any device rate to 16 kHz i16.
 ///
-/// Quality is adequate for VAD (which internally downsamples to 8 kHz anyway).
+/// Linear interpolation (rather than sinc/rubato) is intentional: WebRTC VAD
+/// internally downsamples to 8 kHz, so the extra quality of sinc interpolation
+/// would be immediately discarded. The transcription path in `audio::resample`
+/// uses rubato for the higher-quality resampling that Whisper/Parakeet need.
 fn downsample_to_vad(samples: &[f32], from_rate: u32) -> Vec<i16> {
     if from_rate == VAD_RATE {
         return samples.iter().map(|&s| f32_to_i16(s)).collect();
