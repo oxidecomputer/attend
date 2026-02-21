@@ -88,12 +88,10 @@ pub(crate) fn read_pending(
 fn filter_events(events: &mut Vec<Event>, cwd: &Utf8Path, include_dirs: &[Utf8PathBuf]) {
     events.retain_mut(|event| match event {
         Event::Words { .. } => true,
-        Event::EditorSnapshot {
-            rendered, files, ..
-        } => {
-            rendered.retain(|r| path_included(&r.path, cwd, include_dirs));
+        Event::EditorSnapshot { regions, files, .. } => {
+            regions.retain(|r| path_included(&r.path, cwd, include_dirs));
             files.retain(|f| path_included(f.path.as_str(), cwd, include_dirs));
-            !rendered.is_empty()
+            !regions.is_empty()
         }
         Event::FileDiff { path, .. } => path_included(path, cwd, include_dirs),
     });
@@ -112,9 +110,9 @@ fn path_included(path: &str, cwd: &Utf8Path, include_dirs: &[Utf8PathBuf]) -> bo
 fn relativize_events(events: &mut [Event], cwd: &Utf8Path) {
     for event in events.iter_mut() {
         match event {
-            Event::EditorSnapshot { rendered, .. } => {
-                for file in rendered.iter_mut() {
-                    file.path = relativize_str(&file.path, cwd);
+            Event::EditorSnapshot { regions, .. } => {
+                for region in regions.iter_mut() {
+                    region.path = relativize_str(&region.path, cwd);
                 }
             }
             Event::FileDiff { path, .. } => {

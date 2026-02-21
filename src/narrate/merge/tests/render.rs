@@ -30,10 +30,11 @@ fn words_with_code() {
         Event::EditorSnapshot {
             offset_secs: 1.0,
             files: vec![],
-            rendered: vec![RenderedFile {
+            regions: vec![CapturedRegion {
                 path: "src/main.rs".to_string(),
                 content: "fn main() {\n    println!(\"hello\");\n}\n".to_string(),
                 first_line: 1,
+                selections: vec![],
             }],
         },
         Event::Words {
@@ -127,10 +128,11 @@ fn code_only_no_prose() {
     let mut events = vec![Event::EditorSnapshot {
         offset_secs: 0.0,
         files: vec![],
-        rendered: vec![RenderedFile {
+        regions: vec![CapturedRegion {
             path: "src/lib.rs".to_string(),
             content: "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n".to_string(),
             first_line: 42,
+            selections: vec![],
         }],
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
@@ -145,16 +147,18 @@ fn multiple_files_in_snapshot() {
     let mut events = vec![Event::EditorSnapshot {
         offset_secs: 0.0,
         files: vec![],
-        rendered: vec![
-            RenderedFile {
+        regions: vec![
+            CapturedRegion {
                 path: "src/a.py".to_string(),
                 content: "def foo():\n    pass\n".to_string(),
                 first_line: 1,
+                selections: vec![],
             },
-            RenderedFile {
+            CapturedRegion {
                 path: "src/b.js".to_string(),
                 content: "const x = 1;\n".to_string(),
                 first_line: 10,
+                selections: vec![],
             },
         ],
     }];
@@ -174,10 +178,11 @@ fn full_scenario_snapshot() {
             Event::EditorSnapshot {
                 offset_secs: 1.5,
                 files: vec![],
-                rendered: vec![RenderedFile {
+                regions: vec![CapturedRegion {
                     path: "src/main.rs".to_string(),
                     content: "fn parse_config(path: &Path) -> Result<Config> {\n    let raw = std::fs::read_to_string(path)?;\n    toml::from_str(&raw)\n}\n".to_string(),
                     first_line: 42,
+                    selections: vec![],
                 }],
             },
             Event::Words {
@@ -187,10 +192,11 @@ fn full_scenario_snapshot() {
             Event::EditorSnapshot {
                 offset_secs: 4.0,
                 files: vec![],
-                rendered: vec![RenderedFile {
+                regions: vec![CapturedRegion {
                     path: "src/lib.rs".to_string(),
                     content: "pub struct Config {\n    pub name: String,\n    pub timeout: Duration,\n}\n".to_string(),
                     first_line: 8,
+                    selections: vec![],
                 }],
             },
             Event::Words {
@@ -238,10 +244,11 @@ fn content_without_trailing_newline() {
     let mut events = vec![Event::EditorSnapshot {
         offset_secs: 0.0,
         files: vec![],
-        rendered: vec![RenderedFile {
+        regions: vec![CapturedRegion {
             path: "f.rs".to_string(),
             content: "no trailing newline".to_string(),
             first_line: 1,
+            selections: vec![],
         }],
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
@@ -320,10 +327,11 @@ fn snip_applied_to_code_block() {
     let mut events = vec![Event::EditorSnapshot {
         offset_secs: 0.0,
         files: vec![],
-        rendered: vec![RenderedFile {
+        regions: vec![CapturedRegion {
             path: "big.rs".to_string(),
             content,
             first_line: 1,
+            selections: vec![],
         }],
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
@@ -362,10 +370,11 @@ fn code_only_scenario_snapshot() {
         Event::EditorSnapshot {
             offset_secs: 0.0,
             files: vec![],
-            rendered: vec![RenderedFile {
+            regions: vec![CapturedRegion {
                 path: "src/config.rs".to_string(),
                 content: "pub struct Config {\n    pub name: String,\n}\n".to_string(),
                 first_line: 1,
+                selections: vec![],
             }],
         },
         Event::FileDiff {
@@ -420,10 +429,11 @@ fn snip_disabled_with_large_threshold() {
     let mut events = vec![Event::EditorSnapshot {
         offset_secs: 0.0,
         files: vec![],
-        rendered: vec![RenderedFile {
+        regions: vec![CapturedRegion {
             path: "big.rs".to_string(),
             content: content.clone(),
             first_line: 1,
+            selections: vec![],
         }],
     }];
     let md = format_markdown(&mut events, cfg);

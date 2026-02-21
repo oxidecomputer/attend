@@ -140,19 +140,24 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                 out.push_str(&cleaned);
                 in_prose = true;
             }
-            Event::EditorSnapshot { rendered, .. } => {
+            Event::EditorSnapshot { regions, .. } => {
                 if in_prose {
                     out.push('\n');
                     in_prose = false;
                 }
-                for file in rendered {
+                for region in regions {
                     if !out.is_empty() && !out.ends_with('\n') {
                         out.push('\n');
                     }
                     out.push('\n');
-                    let snipped = snip(&file.content, snip_cfg, Some(file.first_line as usize));
+                    let annotated = crate::view::apply_markers(
+                        &region.content,
+                        region.first_line,
+                        &region.selections,
+                    );
+                    let snipped = snip(&annotated, snip_cfg, Some(region.first_line as usize));
                     out.push_str("```\n");
-                    out.push_str(&format!("// {}:{}\n", file.path, file.first_line));
+                    out.push_str(&format!("// {}:{}\n", region.path, region.first_line));
                     out.push_str(&snipped);
                     if !snipped.ends_with('\n') {
                         out.push('\n');

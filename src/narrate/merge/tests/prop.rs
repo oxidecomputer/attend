@@ -20,19 +20,21 @@ fn arb_cursor_snapshot() -> impl Strategy<Value = Event> {
             line: Line::new(1).unwrap(),
             col: Col::new(1).unwrap(),
         };
+        let sel = Selection {
+            start: pos,
+            end: pos,
+        };
         Event::EditorSnapshot {
             offset_secs: t,
             files: vec![FileEntry {
                 path: path.clone().into(),
-                selections: vec![Selection {
-                    start: pos,
-                    end: pos,
-                }],
+                selections: vec![sel],
             }],
-            rendered: vec![RenderedFile {
+            regions: vec![CapturedRegion {
                 path,
                 content: "x\n".to_string(),
                 first_line: 1,
+                selections: vec![sel],
             }],
         }
     })
@@ -48,16 +50,18 @@ fn arb_selection_snapshot() -> impl Strategy<Value = Event> {
             line: Line::new(5).unwrap(),
             col: Col::new(10).unwrap(),
         };
+        let sel = Selection { start, end };
         Event::EditorSnapshot {
             offset_secs: t,
             files: vec![FileEntry {
                 path: path.clone().into(),
-                selections: vec![Selection { start, end }],
+                selections: vec![sel],
             }],
-            rendered: vec![RenderedFile {
+            regions: vec![CapturedRegion {
                 path,
                 content: "selected content\n".to_string(),
                 first_line: 1,
+                selections: vec![sel],
             }],
         }
     })
@@ -160,11 +164,11 @@ proptest! {
         let mut input_selection_paths: Vec<String> = events
             .iter()
             .filter_map(|e| match e {
-                Event::EditorSnapshot { files, rendered, .. } => {
+                Event::EditorSnapshot { files, regions, .. } => {
                     let has_selection = files.iter()
                         .any(|f| f.selections.iter().any(|s| !s.is_cursor_like()));
                     if has_selection {
-                        Some(rendered.iter().map(|r| r.path.clone()).collect::<Vec<_>>())
+                        Some(regions.iter().map(|r| r.path.clone()).collect::<Vec<_>>())
                     } else {
                         None
                     }
@@ -179,12 +183,12 @@ proptest! {
         let mut merged = events;
         compress_and_merge(&mut merged);
 
-        // Collect all rendered paths from output snapshots.
+        // Collect all region paths from output snapshots.
         let mut output_paths: Vec<String> = merged
             .iter()
             .filter_map(|e| match e {
-                Event::EditorSnapshot { rendered, .. } => {
-                    Some(rendered.iter().map(|r| r.path.clone()).collect::<Vec<_>>())
+                Event::EditorSnapshot { regions, .. } => {
+                    Some(regions.iter().map(|r| r.path.clone()).collect::<Vec<_>>())
                 }
                 _ => None,
             })
@@ -203,16 +207,16 @@ proptest! {
         }
     }
 
-    /// All rendered file paths from selection snapshots appear in the output.
+    /// All region file paths from selection snapshots appear in the output.
     #[test]
     fn merge_preserves_rendered_paths(events in arb_events()) {
         let mut input_paths: Vec<String> = events
             .iter()
             .filter_map(|e| match e {
-                Event::EditorSnapshot { rendered, files, .. }
+                Event::EditorSnapshot { regions, files, .. }
                     if files.iter().any(|f| f.selections.iter().any(|s| !s.is_cursor_like())) =>
                 {
-                    Some(rendered.iter().map(|r| r.path.clone()).collect::<Vec<_>>())
+                    Some(regions.iter().map(|r| r.path.clone()).collect::<Vec<_>>())
                 }
                 _ => None,
             })
@@ -227,8 +231,8 @@ proptest! {
         let mut output_paths: Vec<String> = merged
             .iter()
             .filter_map(|e| match e {
-                Event::EditorSnapshot { rendered, .. } => {
-                    Some(rendered.iter().map(|r| r.path.clone()).collect::<Vec<_>>())
+                Event::EditorSnapshot { regions, .. } => {
+                    Some(regions.iter().map(|r| r.path.clone()).collect::<Vec<_>>())
                 }
                 _ => None,
             })
@@ -260,7 +264,7 @@ proptest! {
         );
     }
 
-    /// No empty sentinels survive: EditorSnapshot with empty rendered list
+    /// No empty sentinels survive: EditorSnapshot with empty regions list
     /// and FileDiff with empty path are both removed.
     #[test]
     fn merge_no_empty_sentinels(events in arb_events()) {
@@ -268,10 +272,10 @@ proptest! {
         compress_and_merge(&mut merged);
         for (i, e) in merged.iter().enumerate() {
             match e {
-                Event::EditorSnapshot { rendered, .. } => {
+                Event::EditorSnapshot { regions, .. } => {
                     prop_assert!(
-                        !rendered.is_empty(),
-                        "empty rendered list at index {i}"
+                        !regions.is_empty(),
+                        "empty regions list at index {i}"
                     );
                 }
                 Event::FileDiff { path, .. } => {

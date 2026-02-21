@@ -4,7 +4,7 @@ mod parse;
 use std::io::IsTerminal;
 
 use camino::{Utf8Path, Utf8PathBuf};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::state::FileEntry;
 use crate::state::resolve::relativize;
@@ -274,6 +274,125 @@ fn strip_indent(s: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n")
         + if s.ends_with('\n') { "\n" } else { "" }
+}
+
+// ---------------------------------------------------------------------------
+// CapturedRegion: raw content + selections for deferred rendering
+// ---------------------------------------------------------------------------
+
+/// A region of a file captured from an editor snapshot.
+///
+/// Stores raw (untrimmed, un-annotated) file content plus the selection
+/// positions that were active at capture time. Marker annotation (⟦⟧❘) is
+/// deferred to [`apply_markers`] at render time.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CapturedRegion {
+    /// Display path of the file (relative or absolute).
+    pub path: String,
+    /// Raw untrimmed lines for this region, joined with newlines.
+    pub content: String,
+    /// 1-based line number of the first line in `content`.
+    pub first_line: u32,
+    /// Absolute file positions of selections/cursors within this region.
+    pub selections: Vec<Selection>,
+}
+
+/// Capture raw file regions from editor entries, parallel to [`render_json`]
+/// but without baking in selection markers.
+///
+/// Returns one [`CapturedRegion`] per selection group (context-merged range).
+pub fn capture_regions(
+    entries: &[FileEntry],
+    cwd: Option<&Utf8Path>,
+    extent: Extent,
+) -> anyhow::Result<Vec<CapturedRegion>> {
+    let mut regions = Vec::new();
+
+    for entry in entries {
+        let abs_path = if entry.path.is_absolute() {
+            entry.path.clone()
+        } else {
+            let base = match cwd {
+                Some(c) => c.to_path_buf(),
+                None => Utf8PathBuf::try_from(std::env::current_dir()?).map_err(|e| {
+                    anyhow::anyhow!(
+                        "non-UTF-8 working directory: {}",
+                        e.into_path_buf().display()
+                    )
+                })?,
+            };
+            base.join(&entry.path)
+        };
+
+        let display_path = relativize(&abs_path, cwd).to_string();
+
+        let content = match std::fs::read_to_string(&abs_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let lines: Vec<&str> = content.lines().collect();
+
+        let groups = Group::compute(&entry.selections, lines.len(), extent);
+
+        for group in &groups {
+            let raw = annotate::raw_line_range(&lines, group.first_line, group.last_line);
+            let sels = group.sels.iter().map(|s| **s).collect();
+            regions.push(CapturedRegion {
+                path: display_path.clone(),
+                content: raw,
+                first_line: group.first_line.get() as u32,
+                selections: sels,
+            });
+        }
+    }
+
+    Ok(regions)
+}
+
+/// Annotate raw content with ⟦⟧❘ selection markers.
+///
+/// Reuses [`render_line_range`] to handle dedent, column adjustment, and
+/// bracket balancing. Returns the annotated content with the 4-space output
+/// indent stripped.
+pub fn apply_markers(content: &str, first_line: u32, selections: &[Selection]) -> String {
+    if selections.is_empty() {
+        return content.to_string();
+    }
+
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.is_empty() {
+        return content.to_string();
+    }
+
+    // Shift selections so line numbers are relative to our content window,
+    // starting at line 1.
+    let offset = first_line.saturating_sub(1) as usize;
+    let shifted: Vec<Selection> = selections
+        .iter()
+        .map(|s| {
+            let mut shifted = *s;
+            shifted.start.line = Line::new(s.start.line.get().saturating_sub(offset).max(1))
+                .unwrap_or(Line::new(1).unwrap());
+            shifted.end.line = Line::new(s.end.line.get().saturating_sub(offset).max(1))
+                .unwrap_or(Line::new(1).unwrap());
+            shifted
+        })
+        .collect();
+
+    let sel_refs: Vec<&Selection> = shifted.iter().collect();
+    let first_rel = Line::new(1).unwrap();
+    let last_rel = Line::new(lines.len()).unwrap_or(Line::new(1).unwrap());
+
+    let mut out = String::new();
+    render_line_range(
+        &mut out,
+        &lines,
+        first_rel,
+        last_rel,
+        &sel_refs,
+        Mode::Markers,
+    );
+    strip_indent(&out)
 }
 
 #[cfg(test)]

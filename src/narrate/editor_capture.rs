@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use camino::{Utf8Path, Utf8PathBuf};
 
-use super::merge::{Event, RenderedFile};
+use super::merge::Event;
 use crate::state::{self, EditorState};
 use crate::view;
 
@@ -48,11 +48,11 @@ pub(super) fn spawn(
                 && changed_at.elapsed() >= Duration::from_millis(CURSOR_DWELL_MS)
             {
                 let offset_secs = start.elapsed().as_secs_f64();
-                let rendered = render_snapshot_files(pending_files, None);
+                let regions = capture_snapshot_regions(pending_files, None);
                 events.lock().unwrap().push(Event::EditorSnapshot {
                     offset_secs,
                     files: pending_files.clone(),
-                    rendered,
+                    regions,
                 });
                 pending_cursor = None;
             }
@@ -81,44 +81,25 @@ pub(super) fn spawn(
                 // Real selections are always intentional — emit immediately.
                 pending_cursor = None;
                 let offset_secs = start.elapsed().as_secs_f64();
-                let rendered = render_snapshot_files(&files, None);
+                let regions = capture_snapshot_regions(&files, None);
                 events.lock().unwrap().push(Event::EditorSnapshot {
                     offset_secs,
                     files,
-                    rendered,
+                    regions,
                 });
             }
         }
     })
 }
 
-/// Render file entries into `RenderedFile` entries for an editor snapshot.
-fn render_snapshot_files(files: &[state::FileEntry], cwd: Option<&Utf8Path>) -> Vec<RenderedFile> {
-    let mut rendered = Vec::new();
-
-    for file in files {
-        if file.selections.is_empty() {
-            continue;
-        }
-
-        let extent = view::Extent::Lines {
-            before: 1,
-            after: 1,
-        };
-        let Ok(payload) = view::render_json(std::slice::from_ref(file), cwd, extent) else {
-            continue;
-        };
-
-        for vf in payload.files {
-            for group in &vf.groups {
-                rendered.push(RenderedFile {
-                    path: vf.path.clone(),
-                    content: group.content.clone(),
-                    first_line: group.first_line.get() as u32,
-                });
-            }
-        }
-    }
-
-    rendered
+/// Capture file regions for an editor snapshot.
+fn capture_snapshot_regions(
+    files: &[state::FileEntry],
+    cwd: Option<&Utf8Path>,
+) -> Vec<view::CapturedRegion> {
+    let extent = view::Extent::Lines {
+        before: 1,
+        after: 1,
+    };
+    view::capture_regions(files, cwd, extent).unwrap_or_default()
 }

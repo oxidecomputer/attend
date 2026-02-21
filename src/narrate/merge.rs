@@ -10,9 +10,11 @@
 //!
 //! - **EditorSnapshot**: captured whenever the user's cursor or selection
 //!   changes. Contains both the raw `FileEntry` list (for archiving) and
-//!   pre-rendered content with selection markers. A snapshot is "cursor-only"
-//!   when every selection is a zero-width cursor; it is a "selection snapshot"
-//!   when any selection spans a range (a highlight the user is pointing at).
+//!   a list of [`CapturedRegion`]s with raw file content and selection
+//!   positions. Marker annotation is deferred to render time. A snapshot
+//!   is "cursor-only" when every selection is a zero-width cursor; it is a
+//!   "selection snapshot" when any selection spans a range (a highlight the
+//!   user is pointing at).
 //!
 //! - **FileDiff**: captured when a watched file's content changes on disk.
 //!   Carries the full `old` and `new` content so the merge pipeline can
@@ -39,8 +41,8 @@
 //!      pointing at code.
 //!
 //!    - **Snapshot union** ([`union_snapshots`]): folds the surviving
-//!      snapshots into a single snapshot whose rendered file list is the
-//!      deduplicated union of every file. This ensures every file the user
+//!      snapshots into a single snapshot whose region list is the
+//!      deduplicated union of every region. This ensures every file the user
 //!      looked at between two utterances appears in one cohesive code block.
 //!
 //!    - **Diff net-change** ([`net_change_diffs`]): groups diffs by file
@@ -59,6 +61,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::state::FileEntry;
+pub use crate::view::CapturedRegion;
 
 /// A timestamped event from one of the three capture streams.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,8 +80,8 @@ pub enum Event {
         /// Files with their selections at this point (retained for debugging/archive).
         #[allow(dead_code)]
         files: Vec<FileEntry>,
-        /// Pre-rendered view content (from `render_json`).
-        rendered: Vec<RenderedFile>,
+        /// Captured regions with raw content and selection positions.
+        regions: Vec<CapturedRegion>,
     },
     /// A file diff captured when file content changed.
     FileDiff {
@@ -91,17 +94,6 @@ pub enum Event {
         /// File content after the change.
         new: String,
     },
-}
-
-/// Pre-rendered file view for an editor snapshot.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RenderedFile {
-    /// Absolute path of the file.
-    pub path: String,
-    /// Rendered content with selection markers.
-    pub content: String,
-    /// First visible line number.
-    pub first_line: u32,
 }
 
 impl Event {
@@ -172,44 +164,42 @@ fn collapse_cursor_only(run: &mut Vec<Event>) {
     });
 }
 
-/// Fold all `EditorSnapshot`s into a single snapshot whose rendered file
-/// list is the deduplicated union of every file. Uses the last snapshot's
+/// Fold all `EditorSnapshot`s into a single snapshot whose region list
+/// is the deduplicated union of every region. Uses the last snapshot's
 /// offset as the merged offset (chronologically latest).
 ///
 /// **Input**: snapshots extracted from a run, in chronological order.
-/// **Output**: a single `(offset, files, rendered)` tuple, or `None` if
+/// **Output**: a single `(offset, files, regions)` tuple, or `None` if
 /// the input was empty.
 ///
-/// **Invariant**: every unique `(path, first_line, content)` from the
-/// input appears in the output exactly once.
+/// **Invariant**: every unique `CapturedRegion` from the input appears in
+/// the output exactly once (dedup via `PartialEq`).
 fn union_snapshots(
-    snapshots: Vec<(f64, Vec<FileEntry>, Vec<RenderedFile>)>,
-) -> Option<(f64, Vec<FileEntry>, Vec<RenderedFile>)> {
+    snapshots: Vec<(f64, Vec<FileEntry>, Vec<CapturedRegion>)>,
+) -> Option<(f64, Vec<FileEntry>, Vec<CapturedRegion>)> {
     if snapshots.is_empty() {
         return None;
     }
 
     let mut merged_files = Vec::new();
-    let mut merged_rendered = Vec::new();
+    let mut merged_regions = Vec::new();
     let mut last_offset = 0.0_f64;
 
-    for (offset, files, rendered) in snapshots {
+    for (offset, files, regions) in snapshots {
         last_offset = offset;
         for f in files {
             if !merged_files.contains(&f) {
                 merged_files.push(f);
             }
         }
-        for r in rendered {
-            if !merged_rendered.iter().any(|prev: &RenderedFile| {
-                prev.path == r.path && prev.first_line == r.first_line && prev.content == r.content
-            }) {
-                merged_rendered.push(r);
+        for r in regions {
+            if !merged_regions.contains(&r) {
+                merged_regions.push(r);
             }
         }
     }
 
-    Some((last_offset, merged_files, merged_rendered))
+    Some((last_offset, merged_files, merged_regions))
 }
 
 /// Collapse same-path diffs into net-change events (first `old`, last `new`).
@@ -274,9 +264,9 @@ fn process_run(mut run: Vec<Event>) -> Vec<Event> {
             Event::EditorSnapshot {
                 offset_secs,
                 files,
-                rendered,
+                regions,
             } => {
-                snapshots.push((offset_secs, files, rendered));
+                snapshots.push((offset_secs, files, regions));
             }
             Event::FileDiff {
                 offset_secs,
@@ -296,13 +286,13 @@ fn process_run(mut run: Vec<Event>) -> Vec<Event> {
     // Reassemble in chronological order.
     let mut result = Vec::with_capacity(1 + merged_diffs.len());
 
-    if let Some((offset_secs, files, rendered)) = merged_snap
-        && !rendered.is_empty()
+    if let Some((offset_secs, files, regions)) = merged_snap
+        && !regions.is_empty()
     {
         result.push(Event::EditorSnapshot {
             offset_secs,
             files,
-            rendered,
+            regions,
         });
     }
 

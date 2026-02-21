@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use camino::{Utf8Path, Utf8PathBuf};
 
 use super::*;
-use crate::narrate::merge::{Event, RenderedFile};
+use crate::narrate::merge::{CapturedRegion, Event};
 use crate::state::SessionId;
 
 /// Collecting pending files from a nonexistent session returns empty.
@@ -51,16 +51,18 @@ fn read_pending_filters_by_cwd() {
         Event::EditorSnapshot {
             offset_secs: 1.0,
             files: vec![],
-            rendered: vec![
-                RenderedFile {
+            regions: vec![
+                CapturedRegion {
                     path: "/project/src/main.rs".to_string(),
                     content: "fn main() {}\n".to_string(),
                     first_line: 1,
+                    selections: vec![],
                 },
-                RenderedFile {
+                CapturedRegion {
                     path: "/other/lib.rs".to_string(),
                     content: "fn other() {}\n".to_string(),
                     first_line: 1,
+                    selections: vec![],
                 },
             ],
         },
@@ -87,10 +89,11 @@ fn read_pending_includes_extra_dirs() {
     let events = vec![Event::EditorSnapshot {
         offset_secs: 0.0,
         files: vec![],
-        rendered: vec![RenderedFile {
+        regions: vec![CapturedRegion {
             path: "/shared/utils.rs".to_string(),
             content: "fn shared() {}\n".to_string(),
             first_line: 1,
+            selections: vec![],
         }],
     }];
     let path = dir.path().join("test.json");
@@ -140,10 +143,11 @@ fn relativize_events_strips_prefix() {
         Event::EditorSnapshot {
             offset_secs: 0.0,
             files: vec![],
-            rendered: vec![RenderedFile {
+            regions: vec![CapturedRegion {
                 path: "/project/src/lib.rs".to_string(),
                 content: "code\n".to_string(),
                 first_line: 1,
+                selections: vec![],
             }],
         },
         Event::FileDiff {
@@ -155,8 +159,8 @@ fn relativize_events_strips_prefix() {
     ];
     relativize_events(&mut events, cwd);
 
-    if let Event::EditorSnapshot { rendered, .. } = &events[0] {
-        assert_eq!(rendered[0].path, "src/lib.rs");
+    if let Event::EditorSnapshot { regions, .. } = &events[0] {
+        assert_eq!(regions[0].path, "src/lib.rs");
     } else {
         panic!("expected EditorSnapshot");
     }
@@ -183,10 +187,11 @@ fn read_pending_merges_multiple_files() {
         Event::EditorSnapshot {
             offset_secs: 1.0,
             files: vec![],
-            rendered: vec![RenderedFile {
+            regions: vec![CapturedRegion {
                 path: "/project/src/main.rs".to_string(),
                 content: "fn main() {}\n".to_string(),
                 first_line: 1,
+                selections: vec![],
             }],
         },
     ];

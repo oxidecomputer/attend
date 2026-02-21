@@ -2,6 +2,21 @@ use crate::state::{Col, Line, Selection};
 
 use super::{CURSOR, Extent, Mode, SEL_CLOSE, SEL_OPEN, ansi};
 
+/// Extract raw untrimmed lines for a range (1-based, inclusive).
+pub(super) fn raw_line_range(lines: &[&str], first: Line, last: Line) -> String {
+    let mut out = String::new();
+    for i in first.get()..=last.get() {
+        if i > first.get() {
+            out.push('\n');
+        }
+        if let Some(line) = lines.get(i - 1) {
+            out.push_str(line);
+        }
+    }
+    out.push('\n');
+    out
+}
+
 /// A group of selections with overlapping visible line ranges.
 pub(super) struct Group<'a> {
     /// Selections belonging to this group.

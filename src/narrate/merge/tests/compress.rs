@@ -9,19 +9,21 @@ fn cursor_snap(t: f64, path: &str) -> Event {
         line: Line::new(1).unwrap(),
         col: Col::new(1).unwrap(),
     };
+    let sel = Selection {
+        start: pos,
+        end: pos,
+    };
     Event::EditorSnapshot {
         offset_secs: t,
         files: vec![FileEntry {
             path: path.into(),
-            selections: vec![Selection {
-                start: pos,
-                end: pos,
-            }],
+            selections: vec![sel],
         }],
-        rendered: vec![RenderedFile {
+        regions: vec![CapturedRegion {
             path: path.to_string(),
             content: "x\n".to_string(),
             first_line: 1,
+            selections: vec![sel],
         }],
     }
 }
@@ -40,16 +42,18 @@ fn selection_snap_with(t: f64, path: &str, content: &str) -> Event {
         line: Line::new(5).unwrap(),
         col: Col::new(10).unwrap(),
     };
+    let sel = Selection { start, end };
     Event::EditorSnapshot {
         offset_secs: t,
         files: vec![FileEntry {
             path: path.into(),
-            selections: vec![Selection { start, end }],
+            selections: vec![sel],
         }],
-        rendered: vec![RenderedFile {
+        regions: vec![CapturedRegion {
             path: path.to_string(),
             content: content.to_string(),
             first_line: 1,
+            selections: vec![sel],
         }],
     }
 }
@@ -451,7 +455,7 @@ fn trailing_cursor_kept_without_speech() {
     // Both should survive (code-only narration).
     let has_trail = events
         .iter()
-        .any(|e| matches!(e, Event::EditorSnapshot { rendered, .. } if rendered.iter().any(|r| r.path == "trail.rs")));
+        .any(|e| matches!(e, Event::EditorSnapshot { regions, .. } if regions.iter().any(|r| r.path == "trail.rs")));
     assert!(has_trail, "trailing cursor kept in code-only narration");
 }
 
