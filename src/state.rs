@@ -48,8 +48,29 @@ impl From<&str> for SessionId {
     }
 }
 
+// Thread-local override for `cache_dir()`, used by tests to redirect
+// all state I/O to a temp directory without process-global mutation.
+#[cfg(test)]
+thread_local! {
+    static CACHE_DIR_OVERRIDE: std::cell::RefCell<Option<Utf8PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Set the thread-local cache directory override for tests.
+#[cfg(test)]
+pub(crate) fn set_cache_dir_override(dir: Option<Utf8PathBuf>) {
+    CACHE_DIR_OVERRIDE.with(|cell| *cell.borrow_mut() = dir);
+}
+
 /// Return the platform cache directory for attend.
 pub fn cache_dir() -> Option<Utf8PathBuf> {
+    #[cfg(test)]
+    {
+        let override_dir = CACHE_DIR_OVERRIDE.with(|cell| cell.borrow().clone());
+        if let Some(dir) = override_dir {
+            return Some(dir);
+        }
+    }
     let dir = dirs::cache_dir()?;
     let dir = Utf8PathBuf::try_from(dir).ok()?;
     Some(dir.join("attend"))

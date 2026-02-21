@@ -592,3 +592,533 @@ fn listen_command_empty() {
 fn listen_command_no_subcommand() {
     assert!(!is_listen_command("attend", "attend"));
 }
+
+// ---------------------------------------------------------------------------
+// Stateful (model-based) integration tests
+//
+// These tests exercise check_narration against real filesystem state in a
+// temp directory. A TestHarness redirects cache_dir() via the thread-local
+// override in state.rs, then manipulates files (listening marker, activated
+// markers, pending narration, receive lock) to simulate multi-session
+// scenarios. A MockAgent records the output calls so tests can assert on
+// the actual decisions made by the full check_narration code path.
+// ---------------------------------------------------------------------------
+
+use std::sync::Mutex;
+
+use camino::Utf8PathBuf;
+use tempfile::TempDir;
+
+use crate::agent::Agent;
+use crate::narrate::merge::Event;
+use crate::state::{self, EditorState, SessionId};
+
+/// What check_narration communicated back to the agent.
+#[derive(Debug)]
+enum Outcome {
+    /// `agent.attend_result` was called.
+    Decision(HookDecision),
+    /// `agent.deliver_narration` was called with this content.
+    Narration(String),
+}
+
+/// Mock agent that records hook output for assertion.
+///
+/// The `input` field is set by the harness before each call so
+/// `parse_hook_input` returns the right session/tool context.
+struct MockAgent {
+    input: Mutex<HookInput>,
+    outcome: Mutex<Option<Outcome>>,
+}
+
+impl MockAgent {
+    fn new(input: HookInput) -> Self {
+        Self {
+            input: Mutex::new(input),
+            outcome: Mutex::new(None),
+        }
+    }
+
+    fn take_outcome(&self) -> Outcome {
+        self.outcome
+            .lock()
+            .unwrap()
+            .take()
+            .expect("no outcome recorded: check_narration didn't call the agent")
+    }
+}
+
+impl Agent for MockAgent {
+    fn name(&self) -> &'static str {
+        "mock"
+    }
+
+    fn parse_hook_input(&self, _hook_type: HookType) -> HookInput {
+        std::mem::take(&mut *self.input.lock().unwrap())
+    }
+
+    fn session_start(&self, _input: &HookInput, _is_listening: bool) -> anyhow::Result<()> {
+        unimplemented!("not used by check_narration")
+    }
+
+    fn editor_context(&self, _state: &EditorState) -> anyhow::Result<()> {
+        unimplemented!("not used by check_narration")
+    }
+
+    fn attend_activate(&self, _session_id: &SessionId) -> anyhow::Result<()> {
+        unimplemented!("not used by check_narration")
+    }
+
+    fn deliver_narration(&self, content: &str) -> anyhow::Result<()> {
+        *self.outcome.lock().unwrap() = Some(Outcome::Narration(content.to_string()));
+        Ok(())
+    }
+
+    fn attend_result(&self, decision: &HookDecision, _hook_type: HookType) -> anyhow::Result<()> {
+        // Reconstruct the decision (HookDecision doesn't derive Clone).
+        let cloned = match decision {
+            HookDecision::Silent => HookDecision::Silent,
+            HookDecision::Guidance { reason, effect } => HookDecision::Guidance {
+                reason: reason.clone(),
+                effect: *effect,
+            },
+        };
+        *self.outcome.lock().unwrap() = Some(Outcome::Decision(cloned));
+        Ok(())
+    }
+
+    fn install(&self, _bin_cmd: &str, _project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
+        unimplemented!("not used by check_narration")
+    }
+
+    fn uninstall(&self, _project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
+        unimplemented!("not used by check_narration")
+    }
+}
+
+/// Test harness that redirects all state I/O to a temp directory.
+///
+/// On creation, sets the thread-local cache_dir override. On drop,
+/// clears it. Each test gets an isolated filesystem namespace.
+struct TestHarness {
+    _tmp: TempDir,
+    cache: Utf8PathBuf,
+}
+
+impl TestHarness {
+    fn new() -> Self {
+        let tmp = TempDir::new().expect("failed to create temp dir");
+        let cache = Utf8PathBuf::try_from(tmp.path().to_path_buf()).expect("non-UTF-8 temp dir");
+        state::set_cache_dir_override(Some(cache.clone()));
+        std::fs::create_dir_all(&cache).expect("failed to create cache dir");
+        Self { _tmp: tmp, cache }
+    }
+
+    /// Simulate `/attend` activation: write the listening file and the
+    /// activated marker, just like `user_prompt` does for `/attend`.
+    fn activate(&self, session_id: &SessionId) {
+        // Write listening file
+        let listening = self.cache.join("listening");
+        std::fs::write(&listening, session_id.as_str()).unwrap();
+        // Write activated marker
+        let marker = self.cache.join(format!("activated-{session_id}"));
+        std::fs::write(&marker, "").unwrap();
+        // Clear any stale moved marker (like user_prompt does)
+        let moved = self.cache.join(format!("moved-{session_id}"));
+        let _ = std::fs::remove_file(&moved);
+    }
+
+    /// Write a pending narration file for the given session.
+    ///
+    /// Creates a minimal Words event so the delivery path has content
+    /// to render. Returns the path of the created file.
+    fn write_pending(&self, session_id: &SessionId, text: &str) {
+        let dir = self.cache.join("pending").join(session_id.as_str());
+        std::fs::create_dir_all(&dir).unwrap();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap();
+        let filename = format!("{}.json", ts.as_nanos());
+        let events = vec![Event::Words {
+            offset_secs: 0.0,
+            text: text.to_string(),
+        }];
+        let content = serde_json::to_string(&events).unwrap();
+        std::fs::write(dir.join(filename), content).unwrap();
+    }
+
+    /// Simulate a running receiver by writing a lock file with our PID.
+    fn fake_receiver(&self) -> ReceiverGuard {
+        let lock_path = self.cache.join("receive.lock");
+        std::fs::write(&lock_path, std::process::id().to_string()).unwrap();
+        ReceiverGuard { lock_path }
+    }
+
+    /// Fire a hook and return what the agent was told.
+    fn fire_hook(
+        &self,
+        session_id: &SessionId,
+        hook_type: HookType,
+        is_listen: bool,
+        stop_hook_active: bool,
+    ) -> Outcome {
+        let kind = match hook_type {
+            HookType::Stop => HookKind::Stop { stop_hook_active },
+            HookType::PreToolUse | HookType::PostToolUse => {
+                if is_listen {
+                    HookKind::ToolUse {
+                        bash_command: Some(listen_command()),
+                    }
+                } else {
+                    HookKind::ToolUse {
+                        bash_command: Some("some-other-tool".to_string()),
+                    }
+                }
+            }
+            _ => HookKind::default(),
+        };
+
+        let input = HookInput {
+            session_id: Some(session_id.clone()),
+            cwd: Some(self.cache.clone()),
+            kind,
+        };
+
+        let agent = MockAgent::new(input);
+        check_narration(&agent, hook_type).expect("check_narration failed");
+        agent.take_outcome()
+    }
+
+    /// Assert the outcome is a specific decision.
+    fn assert_decision(outcome: &Outcome, expected: &HookDecision) {
+        match outcome {
+            Outcome::Decision(d) => assert_eq!(d, expected, "expected {expected:?}, got {d:?}"),
+            Outcome::Narration(c) => {
+                panic!("expected decision {expected:?}, got narration delivery: {c}")
+            }
+        }
+    }
+
+    /// Assert the outcome is narration delivery containing the given text.
+    fn assert_narration(outcome: &Outcome, expected_substring: &str) {
+        match outcome {
+            Outcome::Narration(content) => assert!(
+                content.contains(expected_substring),
+                "narration should contain {expected_substring:?}, got: {content}"
+            ),
+            Outcome::Decision(d) => {
+                panic!("expected narration containing {expected_substring:?}, got decision: {d:?}")
+            }
+        }
+    }
+}
+
+impl Drop for TestHarness {
+    fn drop(&mut self) {
+        state::set_cache_dir_override(None);
+    }
+}
+
+/// RAII guard that removes the fake receiver lock on drop.
+struct ReceiverGuard {
+    lock_path: Utf8PathBuf,
+}
+
+impl Drop for ReceiverGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.lock_path);
+    }
+}
+
+/// Build a bash command string that `is_attend_listen` will recognize,
+/// matching against the current test binary's filename.
+fn listen_command() -> String {
+    let exe = std::env::current_exe().expect("can't determine test binary path");
+    format!("{} listen", exe.display())
+}
+
+// ---------------------------------------------------------------------------
+// Scenario tests
+// ---------------------------------------------------------------------------
+
+/// **Scenario**: A session that never activated `/attend` should be
+/// completely invisible to the hook system.
+///
+/// **Flow**: An unrelated Claude Code session fires hooks while another
+/// session is actively listening. The non-participant should never see
+/// any narration-related output.
+#[test]
+fn non_participant_is_invisible() {
+    let h = TestHarness::new();
+    let active: SessionId = "active".into();
+    let bystander: SessionId = "bystander".into();
+
+    h.activate(&active);
+
+    // Bystander fires every hook type — all should be silent.
+    for &ht in &ALL_HOOK_TYPES {
+        let out = h.fire_hook(&bystander, ht, false, false);
+        TestHarness::assert_decision(&out, &HookDecision::Silent);
+    }
+
+    // Even with pending narration for the active session, bystander is silent.
+    h.write_pending(&active, "hello world");
+    for &ht in &ALL_HOOK_TYPES {
+        let out = h.fire_hook(&bystander, ht, false, false);
+        TestHarness::assert_decision(&out, &HookDecision::Silent);
+    }
+}
+
+/// **Scenario**: Full lifecycle of a single session from activation through
+/// narration delivery.
+///
+/// **Flow**: Session activates → first hook nudges to start receiver →
+/// receiver starts → hooks go silent → narration arrives → hook blocks
+/// with NarrationReady → `attend listen` delivers content → hooks go
+/// silent again.
+#[test]
+fn single_session_lifecycle() {
+    let h = TestHarness::new();
+    let s: SessionId = "session-1".into();
+
+    // Before activation: silent.
+    let out = h.fire_hook(&s, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::Silent);
+
+    // Activate.
+    h.activate(&s);
+
+    // No receiver yet: nudge to start one.
+    let out = h.fire_hook(&s, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::StartReceiver));
+
+    // Stop hook with no receiver: block (don't exit without a receiver).
+    let out = h.fire_hook(&s, HookType::Stop, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::block(GuidanceReason::StartReceiver));
+
+    // Start receiver.
+    let _receiver = h.fake_receiver();
+
+    // With receiver running: silent.
+    let out = h.fire_hook(&s, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::Silent);
+
+    let out = h.fire_hook(&s, HookType::Stop, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::Silent);
+
+    // Narration arrives.
+    h.write_pending(&s, "look at this function");
+
+    // General hook: block with NarrationReady.
+    let out = h.fire_hook(&s, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::block(GuidanceReason::NarrationReady));
+
+    // attend listen PreToolUse: delivers narration content.
+    let out = h.fire_hook(&s, HookType::PreToolUse, true, false);
+    TestHarness::assert_narration(&out, "look at this function");
+
+    // After delivery, pending is archived — hooks go silent again.
+    let out = h.fire_hook(&s, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::Silent);
+}
+
+/// **Scenario**: Session stealing — session B takes over narration from A.
+///
+/// **Flow**: A activates → B activates (steals) → A's hooks get advisory
+/// SessionMoved (once) then go silent → B's hooks behave as the active
+/// session → A's `attend listen` is blocked (anti-livelock).
+#[test]
+fn session_stealing() {
+    let h = TestHarness::new();
+    let a: SessionId = "session-a".into();
+    let b: SessionId = "session-b".into();
+
+    // A activates.
+    h.activate(&a);
+    let _receiver = h.fake_receiver();
+    let out = h.fire_hook(&a, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::Silent);
+
+    // B steals narration.
+    h.activate(&b);
+
+    // A's next general hook: advisory SessionMoved.
+    let out = h.fire_hook(&a, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::SessionMoved));
+
+    // A's second general hook: ratchet suppresses — silent.
+    let out = h.fire_hook(&a, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::Silent);
+
+    // A tries `attend listen`: blocked (anti-livelock).
+    let out = h.fire_hook(&a, HookType::PreToolUse, true, false);
+    TestHarness::assert_decision(&out, &HookDecision::block(GuidanceReason::SessionMoved));
+
+    // B is now the active session — needs a receiver.
+    // (The old receiver from A's time is still "alive" in the lock file.)
+    let out = h.fire_hook(&b, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::Silent);
+}
+
+/// **Scenario**: The SessionMoved ratchet resets when a session re-activates
+/// with `/attend`.
+///
+/// **Flow**: A activates → B steals → A gets SessionMoved (once) → A
+/// re-activates with /attend → B steals again → A gets SessionMoved
+/// again (ratchet was reset).
+#[test]
+fn moved_ratchet_resets_on_reactivation() {
+    let h = TestHarness::new();
+    let a: SessionId = "session-a".into();
+    let b: SessionId = "session-b".into();
+
+    // A activates, B steals.
+    h.activate(&a);
+    h.activate(&b);
+
+    // A gets SessionMoved once.
+    let out = h.fire_hook(&a, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::SessionMoved));
+
+    // Ratchet: second time is silent.
+    let out = h.fire_hook(&a, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::Silent);
+
+    // A re-activates (steals back).
+    h.activate(&a);
+
+    // B steals again.
+    h.activate(&b);
+
+    // A should get SessionMoved again — ratchet was reset by re-activation.
+    let out = h.fire_hook(&a, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::SessionMoved));
+}
+
+/// **Scenario**: The stop_hook_active safety valve prevents infinite
+/// block loops on the Stop hook.
+///
+/// **Flow**: Active session, no receiver, Stop fires → Block(StartReceiver).
+/// Claude Code re-invokes with stop_hook_active=true → Silent (safety valve).
+/// This prevents: block → re-invoke → block → re-invoke → ...
+#[test]
+fn stop_reentry_safety_valve() {
+    let h = TestHarness::new();
+    let s: SessionId = "session-1".into();
+    h.activate(&s);
+
+    // First Stop: blocks to start receiver.
+    let out = h.fire_hook(&s, HookType::Stop, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::block(GuidanceReason::StartReceiver));
+
+    // Re-invocation: safety valve releases.
+    let out = h.fire_hook(&s, HookType::Stop, false, true);
+    TestHarness::assert_decision(&out, &HookDecision::Silent);
+}
+
+/// **Scenario**: `attend listen` PostToolUse always gets the
+/// ListenerStarted advisory, regardless of session state.
+///
+/// **Flow**: The command already ran (PostToolUse). The advisory primes
+/// the agent to restart (not read output from) the listener when the
+/// task notification arrives.
+#[test]
+fn listen_post_tool_use_always_advisory() {
+    let h = TestHarness::new();
+    let s: SessionId = "session-1".into();
+    h.activate(&s);
+
+    let out = h.fire_hook(&s, HookType::PostToolUse, true, false);
+    TestHarness::assert_decision(
+        &out,
+        &HookDecision::approve(GuidanceReason::ListenerStarted),
+    );
+}
+
+/// **Scenario**: `attend listen` is blocked when a receiver is already
+/// running, to prevent duplicate listeners.
+///
+/// **Flow**: Session is active, receiver is alive. Agent tries to start
+/// another listener via `attend listen`. PreToolUse blocks with
+/// ListenerAlreadyActive.
+#[test]
+fn listen_blocked_when_receiver_alive() {
+    let h = TestHarness::new();
+    let s: SessionId = "session-1".into();
+    h.activate(&s);
+    let _receiver = h.fake_receiver();
+
+    let out = h.fire_hook(&s, HookType::PreToolUse, true, false);
+    TestHarness::assert_decision(
+        &out,
+        &HookDecision::block(GuidanceReason::ListenerAlreadyActive),
+    );
+}
+
+/// **Scenario**: `attend listen` on an active session with no receiver
+/// and no pending narration is allowed silently — this is the normal
+/// startup path.
+#[test]
+fn listen_allowed_when_no_receiver_no_pending() {
+    let h = TestHarness::new();
+    let s: SessionId = "session-1".into();
+    h.activate(&s);
+
+    let out = h.fire_hook(&s, HookType::PreToolUse, true, false);
+    TestHarness::assert_decision(&out, &HookDecision::Silent);
+}
+
+/// **Scenario**: Multiple narrations accumulate and are delivered together
+/// in a single `attend listen` round trip.
+///
+/// **Flow**: Two narrations arrive before the agent picks them up.
+/// The PreToolUse hook on `attend listen` delivers both, archives them,
+/// and subsequent hooks see no pending content.
+#[test]
+fn batched_narration_delivery() {
+    let h = TestHarness::new();
+    let s: SessionId = "session-1".into();
+    h.activate(&s);
+
+    // Two narrations arrive.
+    h.write_pending(&s, "first narration");
+    // Small delay so filenames differ (nanosecond timestamps).
+    std::thread::sleep(std::time::Duration::from_millis(1));
+    h.write_pending(&s, "second narration");
+
+    // attend listen delivers both.
+    let out = h.fire_hook(&s, HookType::PreToolUse, true, false);
+    TestHarness::assert_narration(&out, "first narration");
+    TestHarness::assert_narration(&out, "second narration");
+
+    // After delivery, no more pending.
+    let out = h.fire_hook(&s, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::StartReceiver));
+}
+
+/// **Scenario**: Narration for session A is not visible to session B,
+/// even if B is the active listener.
+///
+/// **Flow**: A activates, narration arrives for A. B steals. B's hooks
+/// don't see A's pending narration (pending is per-session). A's hooks
+/// report SessionMoved, not NarrationReady.
+#[test]
+fn pending_narration_is_per_session() {
+    let h = TestHarness::new();
+    let a: SessionId = "session-a".into();
+    let b: SessionId = "session-b".into();
+
+    h.activate(&a);
+    h.write_pending(&a, "narration for A");
+
+    // B steals.
+    h.activate(&b);
+
+    // B has no pending narration — gets StartReceiver (no receiver).
+    let out = h.fire_hook(&b, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::StartReceiver));
+
+    // A is displaced — gets SessionMoved, not NarrationReady.
+    let out = h.fire_hook(&a, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::SessionMoved));
+}

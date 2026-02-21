@@ -6,7 +6,7 @@ use crate::state::SessionId;
 ///
 /// Passed to `Agent::parse_hook_input` so it can construct the right
 /// `HookKind` from the agent's raw input format.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookType {
     SessionStart,
     UserPrompt,
