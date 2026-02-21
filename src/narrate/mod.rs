@@ -38,7 +38,7 @@ pub(crate) fn process_alive(pid: i32) -> bool {
 }
 
 /// Base directory for all narration state files.
-fn cache_dir() -> Utf8PathBuf {
+pub(crate) fn cache_dir() -> Utf8PathBuf {
     crate::state::cache_dir().expect("cannot determine cache directory")
 }
 
@@ -79,27 +79,6 @@ pub(crate) fn archive_dir(session_id: &SessionId) -> Utf8PathBuf {
 pub(crate) fn resolve_session(flag: Option<String>) -> Option<SessionId> {
     flag.map(SessionId::from)
         .or_else(crate::state::listening_session)
-}
-
-/// Run model benchmarks for all engines and model variants.
-pub(crate) fn bench() -> anyhow::Result<()> {
-    use transcribe::Engine;
-
-    let models_dir = cache_dir().join("models");
-    let samples = vec![0.0f32; 16000 * 5];
-
-    for engine in &[Engine::Whisper, Engine::Parakeet] {
-        for name in engine.model_names() {
-            let path = models_dir.join(name);
-            tracing::info!("Ensuring model: {name}");
-            engine.preload(&path)?; // ensure + load to verify download
-            tracing::info!("--- {name} ---");
-            let mut transcriber = engine.ensure_and_load(&path)?;
-            transcriber.bench(&samples);
-        }
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

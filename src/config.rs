@@ -60,20 +60,30 @@ impl Config {
         result
     }
 
-    /// Merge another config layer into this one.
-    ///
-    /// Arrays are concatenated. Scalar fields use "first wins" semantics:
-    /// the existing value is kept if already set, otherwise the new value is taken.
     /// Parse `archive_retention` to a [`Duration`], returning `None` for
-    /// `"forever"` (cleanup disabled). Defaults to 7 days when unset.
+    /// `"forever"` (cleanup disabled). Defaults to 7 days when unset or
+    /// when the value cannot be parsed (with a warning).
     pub fn retention_duration(&self) -> Option<std::time::Duration> {
         match self.archive_retention.as_deref() {
             Some("forever") => None,
-            Some(s) => humantime::parse_duration(s).ok(),
+            Some(s) => match humantime::parse_duration(s) {
+                Ok(d) => Some(d),
+                Err(e) => {
+                    tracing::warn!(
+                        value = s,
+                        "Invalid archive_retention, falling back to 7 days: {e}"
+                    );
+                    Some(std::time::Duration::from_secs(7 * 24 * 60 * 60))
+                }
+            },
             None => Some(std::time::Duration::from_secs(7 * 24 * 60 * 60)),
         }
     }
 
+    /// Merge another config layer into this one.
+    ///
+    /// Arrays are concatenated. Scalar fields use "first wins" semantics:
+    /// the existing value is kept if already set, otherwise the new value is taken.
     pub fn merge(&mut self, other: Config) {
         self.include_dirs.extend(other.include_dirs);
         if self.engine.is_none() {

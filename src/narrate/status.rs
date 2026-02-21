@@ -2,11 +2,18 @@
 
 use std::fs;
 
+use camino::Utf8PathBuf;
+
 use super::transcribe::Engine;
 use super::{pending_dir, process_alive, receive_lock_path, record_lock_path};
+use crate::config::Config;
 
 /// Show recording and system status.
 pub(crate) fn status() -> anyhow::Result<()> {
+    let cwd = Utf8PathBuf::try_from(std::env::current_dir().unwrap_or_default())
+        .unwrap_or_else(|_| Utf8PathBuf::from("."));
+    let config = Config::load(&cwd);
+
     // Recording state
     let lock_path = record_lock_path();
     let recording = if lock_path.exists() {
@@ -26,15 +33,21 @@ pub(crate) fn status() -> anyhow::Result<()> {
     };
     println!("Recording:  {recording}");
 
-    // Engine / model status
-    let engine = Engine::Parakeet;
-    let model_path = engine.default_model_path();
-    let model_status = if model_path.exists() {
+    // Engine / model status (from config, not hardcoded)
+    let engine = config.engine.unwrap_or(Engine::Parakeet);
+    let model_path = config
+        .model
+        .clone()
+        .unwrap_or_else(|| engine.default_model_path());
+    let model_status = if engine.is_model_cached(&model_path) {
         "downloaded"
     } else {
         "not downloaded"
     };
-    println!("Engine:     parakeet (model {model_status})");
+    println!(
+        "Engine:     {} (model {model_status})",
+        engine.display_name()
+    );
 
     // Session
     let session = crate::state::listening_session();
@@ -88,6 +101,37 @@ pub(crate) fn status() -> anyhow::Result<()> {
         println!("Pending:    {count} narration(s)");
     } else {
         println!("Pending:    -");
+    }
+
+    // Config validation
+    let mut warnings = Vec::new();
+    if let Some(ref s) = config.archive_retention
+        && s != "forever"
+        && humantime::parse_duration(s).is_err()
+    {
+        warnings.push(format!(
+            "archive_retention: invalid value {s:?} (using default 7d)"
+        ));
+    }
+    if let Some(ref model) = config.model
+        && !engine.is_model_cached(model)
+    {
+        warnings.push(format!("model: custom path does not exist: {model}"));
+    }
+    if !config.include_dirs.is_empty() {
+        for dir in &config.include_dirs {
+            if !dir.exists() {
+                warnings.push(format!("include_dirs: directory does not exist: {dir}"));
+            }
+        }
+    }
+
+    if !warnings.is_empty() {
+        println!();
+        println!("Config warnings:");
+        for w in &warnings {
+            println!("  - {w}");
+        }
     }
 
     Ok(())

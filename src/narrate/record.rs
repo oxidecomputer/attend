@@ -528,7 +528,15 @@ pub fn daemon() -> anyhow::Result<()> {
     let _lock = lockfile::Lockfile::create(record_lock_path())
         .map_err(|e| anyhow::anyhow!("record lock already held: {e:?}"))?;
 
-    // Best-effort PID write for stale lock detection (lock already held).
+    // Best-effort PID write for stale lock detection. This is not atomic
+    // with the lock creation above: if the process is SIGKILL'd between
+    // Lockfile::create and this write, the lock file will exist without a
+    // PID, making is_lock_stale() return false (permanently stuck lock).
+    // This is acceptable because:
+    // - SIGTERM is caught by our signal handler and triggers clean shutdown
+    //   (Lockfile::Drop removes the file).
+    // - Only SIGKILL can cause the stuck state, and that's unrecoverable
+    //   by design.
     let _ = fs::write(record_lock_path(), std::process::id().to_string());
 
     // Best-effort cleanup: sentinels may not exist.

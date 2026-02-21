@@ -47,10 +47,10 @@ fn bench_user_prompt(c: &mut Criterion) {
     })
     .to_string();
 
-    c.bench_function("hook run claude user-prompt", |b| {
+    c.bench_function("hook user-prompt --agent claude", |b| {
         b.iter(|| {
             let mut child = Command::new(&bin)
-                .args(["hook", "run", "claude", "user-prompt"])
+                .args(["hook", "user-prompt", "--agent", "claude"])
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -72,9 +72,10 @@ fn bench_user_prompt(c: &mut Criterion) {
 fn bench_default_human(c: &mut Criterion) {
     let bin = binary();
 
-    c.bench_function("default (human)", |b| {
+    c.bench_function("glance (human)", |b| {
         b.iter(|| {
             let output = Command::new(&bin)
+                .args(["glance"])
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -88,10 +89,10 @@ fn bench_default_human(c: &mut Criterion) {
 fn bench_default_json(c: &mut Criterion) {
     let bin = binary();
 
-    c.bench_function("default (json)", |b| {
+    c.bench_function("glance (json)", |b| {
         b.iter(|| {
             let output = Command::new(&bin)
-                .args(["-f", "json"])
+                .args(["glance", "--format", "json"])
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())

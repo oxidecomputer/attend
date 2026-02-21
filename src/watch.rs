@@ -30,6 +30,22 @@ pub enum WatchMode {
     View,
 }
 
+/// Configuration bundle for the watch loop.
+///
+/// Groups the immutable parameters that are threaded through every function in
+/// the watch pipeline: mode selection, directory, polling interval, output
+/// format, and view-extent knobs. Per-call mutable state (`prev`, `force`,
+/// `is_tty`) stays as separate parameters on the functions that need them.
+struct WatchConfig<'a> {
+    mode: WatchMode,
+    dir: Option<&'a Utf8Path>,
+    interval: Option<f64>,
+    format: &'a Format,
+    full: bool,
+    before: Option<usize>,
+    after: Option<usize>,
+}
+
 /// Entry point for the watch loop (used by Glance --watch, Look --watch, and Meditate).
 pub fn run(
     mode: WatchMode,
@@ -40,11 +56,21 @@ pub fn run(
     before: Option<usize>,
     after: Option<usize>,
 ) -> anyhow::Result<()> {
-    validate_options(mode, format, full, before, after)?;
+    let cfg = WatchConfig {
+        mode,
+        dir,
+        interval,
+        format,
+        full,
+        before,
+        after,
+    };
+
+    validate_options(&cfg)?;
 
     let is_tty = std::io::stdout().is_terminal();
 
-    if mode == WatchMode::Silent {
+    if cfg.mode == WatchMode::Silent {
         tracing::info!("watching");
     }
 
@@ -56,49 +82,32 @@ pub fn run(
     signal_hook::flag::register(signal_hook::consts::SIGWINCH, Arc::clone(&resized))?;
 
     // Alternate screen isolates watch output from scrollback.
-    let _screen = if is_tty && mode != WatchMode::Silent {
+    let _screen = if is_tty && cfg.mode != WatchMode::Silent {
         Some(AlternateScreen::enter())
     } else {
         None
     };
 
-    run_poll(
-        mode,
-        dir,
-        interval,
-        format,
-        full,
-        before,
-        after,
-        is_tty,
-        &interrupted,
-        &resized,
-    )
+    run_poll(&cfg, is_tty, &interrupted, &resized)
 }
 
-fn validate_options(
-    mode: WatchMode,
-    format: &Format,
-    full: bool,
-    before: Option<usize>,
-    after: Option<usize>,
-) -> anyhow::Result<()> {
-    if mode != WatchMode::View && (full || before.is_some() || after.is_some()) {
+fn validate_options(cfg: &WatchConfig) -> anyhow::Result<()> {
+    if cfg.mode != WatchMode::View && (cfg.full || cfg.before.is_some() || cfg.after.is_some()) {
         anyhow::bail!("--full, -B, and -A are only valid in view mode");
     }
-    if mode == WatchMode::Silent && !matches!(format, Format::Human) {
+    if cfg.mode == WatchMode::Silent && !matches!(cfg.format, Format::Human) {
         anyhow::bail!("--format is not valid in silent mode");
     }
     Ok(())
 }
 
-fn compute_extent(full: bool, before: Option<usize>, after: Option<usize>) -> crate::view::Extent {
-    if full {
+fn compute_extent(cfg: &WatchConfig) -> crate::view::Extent {
+    if cfg.full {
         crate::view::Extent::Full
-    } else if before.is_some() || after.is_some() {
+    } else if cfg.before.is_some() || cfg.after.is_some() {
         crate::view::Extent::Lines {
-            before: before.unwrap_or(0),
-            after: after.unwrap_or(0),
+            before: cfg.before.unwrap_or(0),
+            after: cfg.after.unwrap_or(0),
         }
     } else {
         crate::view::Extent::Exact
@@ -109,25 +118,16 @@ fn compute_extent(full: bool, before: Option<usize>, after: Option<usize>) -> cr
 // Poll loop
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::too_many_arguments)]
 fn run_poll(
-    mode: WatchMode,
-    dir: Option<&Utf8Path>,
-    interval: Option<f64>,
-    format: &Format,
-    full: bool,
-    before: Option<usize>,
-    after: Option<usize>,
+    cfg: &WatchConfig,
     is_tty: bool,
     interrupted: &AtomicBool,
     resized: &AtomicBool,
 ) -> anyhow::Result<()> {
-    let poll_dur = poll_interval(mode, interval);
+    let poll_dur = poll_interval(cfg.mode, cfg.interval);
     let mut prev: Option<EditorState> = None;
 
-    refresh(
-        mode, dir, format, full, before, after, &mut prev, is_tty, true,
-    );
+    refresh(cfg, &mut prev, is_tty, true);
 
     while !interrupted.load(Ordering::Relaxed) {
         sleep_interruptible(poll_dur, interrupted, resized);
@@ -135,9 +135,7 @@ fn run_poll(
             break;
         }
         let force = resized.swap(false, Ordering::Relaxed);
-        refresh(
-            mode, dir, format, full, before, after, &mut prev, is_tty, force,
-        );
+        refresh(cfg, &mut prev, is_tty, force);
     }
 
     Ok(())
@@ -162,22 +160,11 @@ fn sleep_interruptible(duration: Duration, interrupted: &AtomicBool, resized: &A
 // ---------------------------------------------------------------------------
 
 /// Returns `true` if the state changed (or was forced) and output was updated.
-#[allow(clippy::too_many_arguments)]
-fn refresh(
-    mode: WatchMode,
-    dir: Option<&Utf8Path>,
-    format: &Format,
-    full: bool,
-    before: Option<usize>,
-    after: Option<usize>,
-    prev: &mut Option<EditorState>,
-    is_tty: bool,
-    force: bool,
-) -> bool {
-    let state = match EditorState::current(dir, &[]) {
+fn refresh(cfg: &WatchConfig, prev: &mut Option<EditorState>, is_tty: bool, force: bool) -> bool {
+    let state = match EditorState::current(cfg.dir, &[]) {
         Ok(s) => s,
         Err(e) => {
-            if mode != WatchMode::Silent {
+            if cfg.mode != WatchMode::Silent {
                 tracing::warn!("{e}");
             }
             return false;
@@ -188,11 +175,11 @@ fn refresh(
         return false;
     }
 
-    match mode {
+    match cfg.mode {
         WatchMode::Silent => {}
         WatchMode::Compact => {
             if let Some(ref s) = state {
-                let output = match format {
+                let output = match cfg.format {
                     Format::Human => format!("{s}"),
                     Format::Json => {
                         let payload = crate::state::CompactPayload::from_state(s);
@@ -208,7 +195,7 @@ fn refresh(
                 if is_tty {
                     clear_screen();
                     print!("{}", fit_to_terminal(&output));
-                } else if matches!(format, Format::Json) {
+                } else if matches!(cfg.format, Format::Json) {
                     // JSON-lines: one compact object per change.
                     println!("{output}");
                 } else {
@@ -220,9 +207,9 @@ fn refresh(
         }
         WatchMode::View => {
             if let Some(ref s) = state {
-                let extent = compute_extent(full, before, after);
-                match format {
-                    Format::Human => match crate::view::render(&s.files, dir, extent) {
+                let extent = compute_extent(cfg);
+                match cfg.format {
+                    Format::Human => match crate::view::render(&s.files, cfg.dir, extent) {
                         Ok(output) => {
                             if is_tty {
                                 clear_screen();
@@ -233,7 +220,7 @@ fn refresh(
                         }
                         Err(e) => eprintln!("attend: {e}"),
                     },
-                    Format::Json => match crate::view::render_json(&s.files, dir, extent) {
+                    Format::Json => match crate::view::render_json(&s.files, cfg.dir, extent) {
                         Ok(payload) => {
                             let wrapped = crate::util::Timestamped::now(payload);
                             let output = if is_tty {

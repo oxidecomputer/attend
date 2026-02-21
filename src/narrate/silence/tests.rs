@@ -1,11 +1,7 @@
 use super::*;
 
 fn make_chunk(samples: Vec<f32>, instant: Instant) -> AudioChunk {
-    AudioChunk {
-        wall_clock: String::new(),
-        instant,
-        samples,
-    }
+    AudioChunk { instant, samples }
 }
 
 /// Generate a speech-like signal at 16 kHz: sum of harmonics (fundamental +

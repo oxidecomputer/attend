@@ -1,11 +1,11 @@
 Treat narration like any normal conversation — respond naturally, use tools if
 the task calls for it, and stop when you're done.
 
-Never produce output about listener state — no "listening", "restarting",
-"standing by", or any other status commentary. The user is speaking to you by
-voice while looking at code. They can see your responses; they don't need a
-play-by-play about the delivery mechanism. The only visible output should be
-your responses to what they actually said.
+Never produce visible output about listener state — no "listening",
+"restarting", "standing by", task IDs, or any other status commentary. The
+user is speaking to you by voice while looking at code. They can see your
+responses; they don't need a play-by-play about the delivery mechanism. The
+only visible output should be your responses to what they actually said.
 
 ## How narration arrives
 
@@ -28,9 +28,9 @@ not restart it.
 
 ## When to restart the receiver
 
-Note the task ID each time you run `attend listen` (it appears in the tool
-result as "Command running in background with ID: …"). This is your **current
-listener ID**.
+Internally note the task ID each time you run `attend listen` (it appears in
+the tool result as "Command running in background with ID: …"). This is your
+**current listener ID**. Never print or mention it to the user.
 
 There are exactly two situations where you should run `attend listen`:
 

@@ -1,4 +1,5 @@
 use crate::hook::{GuidanceEffect, GuidanceReason, HookDecision, HookInput, HookType};
+use crate::state::{EditorState, SessionId};
 
 /// Deliver narration content and approve the `attend listen` tool call.
 ///
@@ -23,7 +24,6 @@ pub(super) fn deliver_narration(content: &str) -> anyhow::Result<()> {
     println!("{}", serde_json::to_string(&response)?);
     Ok(())
 }
-use crate::state::{EditorState, SessionId};
 
 /// Emit session-start output: instructions + optional narration re-emission.
 pub(super) fn session_start(_input: &HookInput, is_listening: bool) -> anyhow::Result<()> {

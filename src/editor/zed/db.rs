@@ -57,22 +57,19 @@ pub(super) fn query_editors(conn: &rusqlite::Connection) -> anyhow::Result<Vec<R
             let path = match String::from_utf8(path_bytes) {
                 Ok(s) => std::path::PathBuf::from(s),
                 Err(e) => {
-                    tracing::warn!("Skipping non-UTF8 path from Zed DB: {e}");
-                    return Ok(RawEditor {
-                        path: std::path::PathBuf::new(),
-                        sel_start: None,
-                        sel_end: None,
-                    });
+                    tracing::warn!("Skipping non-UTF-8 path from Zed DB: {e}");
+                    return Ok(None);
                 }
             };
-            Ok(RawEditor {
+            Ok(Some(RawEditor {
                 path,
                 sel_start: row.get(1)?,
                 sel_end: row.get(2)?,
-            })
+            }))
         })
         .context("query failed")?
         .filter_map(|r| r.ok())
+        .flatten()
         .collect();
 
     Ok(editors)

@@ -285,7 +285,7 @@ fn strip_indent(s: &str) -> String {
 /// Stores raw (untrimmed, un-annotated) file content plus the selection
 /// positions that were active at capture time. Marker annotation (⟦⟧❘) is
 /// deferred to [`apply_markers`] at render time.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CapturedRegion {
     /// Display path of the file (relative or absolute).
     pub path: String,
@@ -381,7 +381,7 @@ pub fn apply_markers(content: &str, first_line: u32, selections: &[Selection]) -
 
     let sel_refs: Vec<&Selection> = shifted.iter().collect();
     let first_rel = Line::new(1).unwrap();
-    let last_rel = Line::new(lines.len()).unwrap_or(Line::new(1).unwrap());
+    let last_rel = Line::new(lines.len().max(1)).unwrap();
 
     let mut out = String::new();
     render_line_range(

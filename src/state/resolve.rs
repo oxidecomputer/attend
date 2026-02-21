@@ -104,7 +104,7 @@ impl Position {
 }
 
 /// A selection range (or cursor when start == end).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Selection {
     /// Start of the selection.
     pub start: Position,
@@ -287,10 +287,14 @@ impl Selection {
         seen.sort();
         seen.dedup();
 
-        // Collect all unique offsets, sorted, for a single forward scan
+        // Collect all unique offsets, sorted, for a single forward scan.
+        // Clamp negative values to 0: a corrupt or unexpected negative offset
+        // from the editor database would wrap to usize::MAX and produce a
+        // wrong-but-not-unsafe EOF position. Clamping makes the failure mode
+        // obvious (position 1:1) rather than subtle (position at EOF).
         let mut all_offsets: Vec<usize> = seen
             .iter()
-            .flat_map(|&(s, e)| [s as usize, e as usize])
+            .flat_map(|&(s, e)| [s.max(0) as usize, e.max(0) as usize])
             .collect();
         all_offsets.sort_unstable();
         all_offsets.dedup();

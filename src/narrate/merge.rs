@@ -58,6 +58,8 @@
 //!
 //! The actual markdown rendering lives in [`super::render`].
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::state::FileEntry;
@@ -182,18 +184,20 @@ fn union_snapshots(
     }
 
     let mut merged_files = Vec::new();
+    let mut seen_files = HashSet::new();
     let mut merged_regions = Vec::new();
+    let mut seen_regions = HashSet::new();
     let mut last_offset = 0.0_f64;
 
     for (offset, files, regions) in snapshots {
         last_offset = offset;
         for f in files {
-            if !merged_files.contains(&f) {
+            if seen_files.insert(f.clone()) {
                 merged_files.push(f);
             }
         }
         for r in regions {
-            if !merged_regions.contains(&r) {
+            if seen_regions.insert(r.clone()) {
                 merged_regions.push(r);
             }
         }

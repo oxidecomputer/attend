@@ -181,16 +181,21 @@ in its own format:
 | Variant                    | Meaning                                                  |
 |----------------------------|----------------------------------------------------------|
 | `Silent`                   | No output needed                                         |
-| `PendingNarration`         | Narration content ready to deliver (blocks)              |
 | `Guidance(reason, effect)` | Operational guidance with block or approve effect        |
+
+Narration content is delivered separately via `Agent::deliver_narration()`,
+not through `HookDecision`. The orchestrator calls `deliver_narration()` when
+pending narration is found during an `attend listen` PreToolUse hook.
 
 Guidance reasons:
 
-| Reason                | Meaning                                            |
-|-----------------------|----------------------------------------------------|
-| `SessionMoved`        | Narration is active in a different session         |
-| `StartReceiver`       | No receiver running: agent should start one        |
-| `ListenerAlreadyActive` | A listener is already running for this session   |
+| Reason                  | Meaning                                            |
+|-------------------------|----------------------------------------------------|
+| `SessionMoved`          | Narration is active in a different session         |
+| `StartReceiver`         | No receiver running: agent should start one        |
+| `NarrationReady`        | Pending narration: agent should run `attend listen`|
+| `ListenerAlreadyActive` | A listener is already running for this session     |
+| `ListenerStarted`       | A listener was just started in the background      |
 
 ### 1. Create the agent module — `src/agent/<name>/`
 

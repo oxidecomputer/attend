@@ -51,7 +51,7 @@ pub enum HookKind {
 ///
 /// Narration content is delivered separately via `Agent::deliver_narration`,
 /// not through this enum. This enum only carries guidance decisions.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum HookDecision {
     /// No output needed.
     Silent,
@@ -68,7 +68,7 @@ pub enum HookDecision {
 ///
 /// Each variant carries enough semantic information for agents to render
 /// appropriate output — agent-specific strings live in the agent impl.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GuidanceReason {
     /// Narration has moved to a different session.
     SessionMoved,
@@ -86,7 +86,7 @@ pub enum GuidanceReason {
 }
 
 /// Whether guidance blocks or approves the current action.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuidanceEffect {
     /// Block the current action.
     Block,

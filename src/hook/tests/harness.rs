@@ -74,15 +74,7 @@ impl Agent for MockAgent {
     }
 
     fn attend_result(&self, decision: &HookDecision, _hook_type: HookType) -> anyhow::Result<()> {
-        // Reconstruct the decision (HookDecision doesn't derive Clone).
-        let cloned = match decision {
-            HookDecision::Silent => HookDecision::Silent,
-            HookDecision::Guidance { reason, effect } => HookDecision::Guidance {
-                reason: reason.clone(),
-                effect: *effect,
-            },
-        };
-        *self.outcome.lock().unwrap() = Some(Outcome::Decision(cloned));
+        *self.outcome.lock().unwrap() = Some(Outcome::Decision(decision.clone()));
         Ok(())
     }
 

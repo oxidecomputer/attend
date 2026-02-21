@@ -13,6 +13,17 @@ pub(super) const MODEL_NAMES: &[&str] = &[
     "ggml-medium.en.bin",
 ];
 
+/// Known SHA-256 checksums for well-known Whisper models (from HuggingFace LFS).
+/// Models with custom paths or unknown filenames skip verification.
+fn expected_checksum(filename: &str) -> Option<&'static str> {
+    match filename {
+        "ggml-small.en.bin" => {
+            Some("c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d")
+        }
+        _ => None,
+    }
+}
+
 /// Target sample rate for transcription (16 kHz).
 const SAMPLE_RATE: u32 = 16_000;
 
@@ -214,6 +225,13 @@ fn download_model(model_path: &Utf8Path) -> anyhow::Result<()> {
     let tmp_path = model_path.with_extension("bin.tmp");
     let mut file = fs::File::create(&tmp_path)?;
     std::io::copy(&mut reader, &mut file)?;
+
+    if let Some(expected) = expected_checksum(filename) {
+        super::verify_sha256(tmp_path.as_std_path(), expected).inspect_err(|_| {
+            // Intentionally ignored: best-effort cleanup of corrupt download.
+            let _ = fs::remove_file(&tmp_path);
+        })?;
+    }
 
     fs::rename(&tmp_path, model_path)?;
     tracing::info!("Whisper model downloaded successfully.");

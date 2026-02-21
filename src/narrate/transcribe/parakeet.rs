@@ -36,6 +36,23 @@ const MODEL_FILES: &[&str] = &[
     "vocab.txt",
 ];
 
+/// Known SHA-256 checksums for well-known Parakeet model files (from HuggingFace LFS).
+/// Only LFS-tracked files have known checksums; small files (vocab.txt) skip verification.
+fn expected_checksum(filename: &str) -> Option<&'static str> {
+    match filename {
+        "encoder-model.onnx" => {
+            Some("98a74b21b4cc0017c1e7030319a4a96f4a9506e50f0708f3a516d02a77c96bb1")
+        }
+        "encoder-model.onnx.data" => {
+            Some("9a22d372c51455c34f13405da2520baefb7125bd16981397561423ed32d24f36")
+        }
+        "decoder_joint-model.onnx" => {
+            Some("e978ddf6688527182c10fde2eb4b83068421648985ef23f7a86be732be8706c1")
+        }
+        _ => None,
+    }
+}
+
 /// Parakeet TDT transcription backend.
 pub struct ParakeetTranscriber {
     model: parakeet_rs::ParakeetTDT,
@@ -137,6 +154,13 @@ fn download_model(dir: &Utf8Path) -> anyhow::Result<()> {
         let tmp_path = dest.with_extension("tmp");
         let mut file = fs::File::create(&tmp_path)?;
         std::io::copy(&mut reader, &mut file)?;
+
+        if let Some(expected) = expected_checksum(filename) {
+            super::verify_sha256(tmp_path.as_std_path(), expected).inspect_err(|_| {
+                // Intentionally ignored: best-effort cleanup of corrupt download.
+                let _ = fs::remove_file(&tmp_path);
+            })?;
+        }
 
         fs::rename(&tmp_path, &dest)?;
     }

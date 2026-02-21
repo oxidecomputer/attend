@@ -156,7 +156,7 @@ impl PartialEq for EditorState {
 }
 
 /// An open file with its cursor/selection positions.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FileEntry {
     /// Absolute file path.
     pub path: Utf8PathBuf,

@@ -110,7 +110,7 @@ fn query_editors_multiple_files() {
     assert_eq!(result[1].path.to_str().unwrap(), "/tmp/b.rs");
 }
 
-/// Non-UTF-8 byte paths result in an empty PathBuf.
+/// Non-UTF-8 byte paths are skipped entirely.
 #[test]
 fn query_editors_non_utf8_path() {
     let conn = create_test_db();
@@ -122,9 +122,7 @@ fn query_editors_non_utf8_path() {
     .unwrap();
 
     let result = query_editors(&conn).unwrap();
-    assert_eq!(result.len(), 1);
-    // Non-UTF8 path should result in an empty PathBuf.
-    assert_eq!(result[0].path, std::path::PathBuf::new());
+    assert!(result.is_empty(), "non-UTF-8 paths should be skipped");
 }
 
 /// parse_jsonc handles full-line and inline comments.

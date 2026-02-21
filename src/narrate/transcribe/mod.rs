@@ -6,6 +6,8 @@
 mod parakeet;
 mod whisper;
 
+use std::path::Path;
+
 use camino::{Utf8Path, Utf8PathBuf};
 
 /// A single transcribed word with its timing.
@@ -100,4 +102,34 @@ impl Engine {
     pub fn ensure_and_load(&self, path: &Utf8Path) -> anyhow::Result<Box<dyn Transcriber>> {
         self.preload(path)
     }
+}
+
+/// Verify a downloaded file against an expected SHA-256 hex digest.
+///
+/// Returns `Ok(())` if the digest matches, or an error describing the
+/// mismatch. Used by engine download functions to detect corrupt or
+/// tampered model files.
+pub(super) fn verify_sha256(path: &Path, expected_hex: &str) -> anyhow::Result<()> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| anyhow::anyhow!("cannot open {} for checksum: {e}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let actual = format!("{:x}", hasher.finalize());
+    if actual != expected_hex {
+        anyhow::bail!(
+            "checksum mismatch for {}: expected {expected_hex}, got {actual}",
+            path.display()
+        );
+    }
+    Ok(())
 }

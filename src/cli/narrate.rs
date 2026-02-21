@@ -30,6 +30,27 @@ pub enum NarrateCommand {
     Bench,
 }
 
+/// Run model benchmarks for all engines and model variants.
+fn bench() -> anyhow::Result<()> {
+    use crate::narrate::transcribe::Engine;
+
+    let models_dir = crate::narrate::cache_dir().join("models");
+    let samples = vec![0.0f32; 16000 * 5];
+
+    for engine in &[Engine::Whisper, Engine::Parakeet] {
+        for name in engine.model_names() {
+            let path = models_dir.join(name);
+            tracing::info!("Ensuring model: {name}");
+            engine.preload(&path)?;
+            tracing::info!("--- {name} ---");
+            let mut transcriber = engine.ensure_and_load(&path)?;
+            transcriber.bench(&samples);
+        }
+    }
+
+    Ok(())
+}
+
 impl NarrateCommand {
     /// Run a narrate subcommand.
     pub fn run(self) -> anyhow::Result<()> {
@@ -42,7 +63,7 @@ impl NarrateCommand {
             NarrateCommand::Status => crate::narrate::status(),
             NarrateCommand::Clean { older_than } => crate::narrate::clean(older_than),
             NarrateCommand::RecordDaemon => record::daemon(),
-            NarrateCommand::Bench => crate::narrate::bench(),
+            NarrateCommand::Bench => bench(),
         }
     }
 }

@@ -22,7 +22,8 @@ pub(super) fn session_moved_already_notified(session_id: &SessionId) -> bool {
 /// Record that this session has been notified of a session move.
 pub(super) fn mark_session_moved_notified(session_id: &SessionId) {
     if let Some(path) = moved_marker_path(session_id) {
-        let _ = fs::write(&path, ""); // Best-effort
+        // Intentionally ignored: marker is advisory, not critical.
+        let _ = fs::write(&path, "");
     }
 }
 
@@ -41,7 +42,8 @@ pub(super) fn clean_session_markers() {
         if let Some(name) = entry.file_name().to_str()
             && (name.starts_with("moved-") || name.starts_with("activated-"))
         {
-            let _ = fs::remove_file(entry.path()); // Best-effort
+            // Intentionally ignored: stale markers are harmless.
+            let _ = fs::remove_file(entry.path());
         }
     }
 }
@@ -66,6 +68,7 @@ pub(super) fn session_was_activated(session_id: &SessionId) -> bool {
 /// Record that this session has activated `/attend`.
 pub(super) fn mark_session_activated(session_id: &SessionId) {
     if let Some(path) = activated_marker_path(session_id) {
-        let _ = fs::write(&path, ""); // Best-effort
+        // Intentionally ignored: marker is advisory, not critical.
+        let _ = fs::write(&path, "");
     }
 }
