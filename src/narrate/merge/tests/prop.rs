@@ -110,10 +110,14 @@ proptest! {
         }
     }
 
-    /// compress_and_merge preserves all Words events (as a multiset).
+    /// compress_and_merge preserves all Words events in chronological order.
     #[test]
-    fn merge_preserves_words(events in arb_events()) {
-        let mut words_before: Vec<String> = events
+    fn merge_preserves_words_in_order(events in arb_events()) {
+        // Collect words in the order they'd appear after sorting by offset
+        // (the first thing compress_and_merge does).
+        let mut sorted = events.clone();
+        sorted.sort_by(|a, b| a.offset_secs().partial_cmp(&b.offset_secs()).unwrap_or(std::cmp::Ordering::Equal));
+        let words_before: Vec<String> = sorted
             .iter()
             .filter_map(|e| match e {
                 Event::Words { text, .. } => Some(text.clone()),
@@ -122,15 +126,13 @@ proptest! {
             .collect();
         let mut merged = events;
         compress_and_merge(&mut merged);
-        let mut words_after: Vec<String> = merged
+        let words_after: Vec<String> = merged
             .iter()
             .filter_map(|e| match e {
                 Event::Words { text, .. } => Some(text.clone()),
                 _ => None,
             })
             .collect();
-        words_before.sort();
-        words_after.sort();
         prop_assert_eq!(words_before, words_after);
     }
 
