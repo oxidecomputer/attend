@@ -1,20 +1,58 @@
 //! Chronological merge of transcription, editor snapshots, and file diffs.
 //!
-//! The merge pipeline sorts all captured events by wall-clock time, then
-//! makes a single pass over the event list, processing each non-speech run
-//! through three composable transformations:
+//! # Event stream format
 //!
-//! 1. **Cursor compression** ([`collapse_cursor_only`]): Within a run,
-//!    removes all cursor-only snapshots except the last one. Navigation
-//!    chatter is reduced while keeping the final cursor position.
+//! Three capture streams produce [`Event`]s during a narration session:
 //!
-//! 2. **Snapshot union** ([`union_snapshots`]): Folds all surviving snapshots
-//!    in a run into a single snapshot whose rendered file list is the union
-//!    of every file the user looked at.
+//! - **Words**: transcribed speech segments from the Whisper model, each
+//!   carrying the text and a wall-clock offset. These are the "speech
+//!   boundaries" that separate non-speech runs.
 //!
-//! 3. **Diff net-change** ([`net_change_diffs`]): Groups diffs by file path
-//!    and keeps only the first `old` and last `new` for each path, so the
-//!    rendered diff shows the net change across the entire run.
+//! - **EditorSnapshot**: captured whenever the user's cursor or selection
+//!   changes. Contains both the raw `FileEntry` list (for archiving) and
+//!   pre-rendered content with selection markers. A snapshot is "cursor-only"
+//!   when every selection is a zero-width cursor; it is a "selection snapshot"
+//!   when any selection spans a range (a highlight the user is pointing at).
+//!
+//! - **FileDiff**: captured when a watched file's content changes on disk.
+//!   Carries the full `old` and `new` content so the merge pipeline can
+//!   compute net changes across multiple edits.
+//!
+//! All events share an `offset_secs` field: seconds from recording start.
+//!
+//! # Merge pipeline
+//!
+//! [`compress_and_merge`] processes the raw event stream in three steps:
+//!
+//! 1. **Chronological sort** by `offset_secs`.
+//!
+//! 2. **Single-pass run processing**: the sorted list is split into
+//!    alternating `Words` events and non-speech "runs" (maximal sequences
+//!    of `EditorSnapshot` / `FileDiff` with no `Words` between them). Each
+//!    run is processed through three composable transformations:
+//!
+//!    - **Cursor compression** ([`collapse_cursor_only`]): removes all
+//!      cursor-only snapshots except the last in each run. Rapid navigation
+//!      (opening files, scrolling) generates many cursor events; only the
+//!      final position before the next utterance matters. Selection snapshots
+//!      (highlights) are never removed because they represent deliberate
+//!      pointing at code.
+//!
+//!    - **Snapshot union** ([`union_snapshots`]): folds the surviving
+//!      snapshots into a single snapshot whose rendered file list is the
+//!      deduplicated union of every file. This ensures every file the user
+//!      looked at between two utterances appears in one cohesive code block.
+//!
+//!    - **Diff net-change** ([`net_change_diffs`]): groups diffs by file
+//!      path and keeps only the first `old` and last `new`. If a file
+//!      changed A→B→C between two utterances, the rendered diff shows A→C
+//!      (the net change). If the file was changed and then reverted (A→B→A),
+//!      the net diff is empty and the event is dropped at render time.
+//!
+//! 3. **Trailing cursor drop**: if speech is present, a final cursor-only
+//!    snapshot is removed because the stop hook provides more up-to-date
+//!    editor context. Code-only narrations (no speech at all) keep
+//!    everything.
 //!
 //! The actual markdown rendering lives in [`super::render`].
 
