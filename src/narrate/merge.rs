@@ -1,8 +1,22 @@
 //! Chronological merge of transcription, editor snapshots, and file diffs.
 //!
-//! Sorts all captured events by wall-clock time, compresses cursor-only
-//! snapshot runs, and merges adjacent non-speech events. The actual
-//! markdown rendering lives in [`super::render`].
+//! The merge pipeline sorts all captured events by wall-clock time, then
+//! makes a single pass over the event list, processing each non-speech run
+//! through three composable transformations:
+//!
+//! 1. **Cursor compression** ([`collapse_cursor_only`]): Within a run,
+//!    removes all cursor-only snapshots except the last one. Navigation
+//!    chatter is reduced while keeping the final cursor position.
+//!
+//! 2. **Snapshot union** ([`union_snapshots`]): Folds all surviving snapshots
+//!    in a run into a single snapshot whose rendered file list is the union
+//!    of every file the user looked at.
+//!
+//! 3. **Diff net-change** ([`net_change_diffs`]): Groups diffs by file path
+//!    and keeps only the first `old` and last `new` for each path, so the
+//!    rendered diff shows the net change across the entire run.
+//!
+//! The actual markdown rendering lives in [`super::render`].
 
 use serde::{Deserialize, Serialize};
 
@@ -86,6 +100,8 @@ pub fn unified_diff(old: &str, new: &str) -> String {
     out
 }
 
+// ── Composable run transformations ──────────────────────────────────────────
+
 /// Whether an editor snapshot contains only cursor positions (no real
 /// selections).  Cursor-only snapshots from navigation are compressible;
 /// snapshots with highlights are always kept because the user may be
@@ -99,207 +115,221 @@ fn is_cursor_only(event: &Event) -> bool {
         .all(|f| f.selections.iter().all(|s| s.is_cursor_like()))
 }
 
-/// Collapse consecutive cursor-only `EditorSnapshot` runs that have no
-/// `Words` between them, keeping only the last snapshot in each run.
-/// Snapshots that contain real selections (highlights) are never removed.
-fn compress_snapshots(events: &mut Vec<Event>) {
-    let mut i = 0;
-    while i < events.len() {
-        if !is_cursor_only(&events[i]) {
-            i += 1;
-            continue;
-        }
-        // Find the end of this cursor-only snapshot run (consecutive
-        // snapshots / diffs with no Words in between).
-        let mut last_cursor_only = i;
-        let mut j = i + 1;
-        while j < events.len() && !matches!(events[j], Event::Words { .. }) {
-            if is_cursor_only(&events[j]) {
-                last_cursor_only = j;
-            }
-            j += 1;
-        }
-        // Remove all cursor-only snapshots in the run except the last one.
-        let mut k = i;
-        while k < j {
-            if is_cursor_only(&events[k]) && k != last_cursor_only {
-                events.remove(k);
-                if last_cursor_only > k {
-                    last_cursor_only -= 1;
-                }
-                j -= 1;
-            } else {
-                k += 1;
-            }
-        }
-        i = j;
-    }
-}
-
-/// Merge adjacent non-Words events that aren't separated by speech.
+/// Remove all cursor-only snapshots from a run except the last one.
 ///
-/// After cursor compression, a wordless run may still contain multiple
-/// selection snapshots and/or file diffs.  This pass:
-/// 1. Combines all `EditorSnapshot`s in a run into one whose `rendered`
-///    list is the union of all files (every highlight is kept).
-/// 2. Combines `FileDiff`s for the same path into one event carrying the
-///    first `old` and last `new`, so the rendered diff shows the net
-///    change across the whole run.
-fn merge_adjacent(events: &mut Vec<Event>) {
-    let mut i = 0;
-    while i < events.len() {
-        if matches!(events[i], Event::Words { .. }) {
-            i += 1;
-            continue;
-        }
-
-        // Determine the extent of this non-Words run.
-        let run_start = i;
-        let mut j = i + 1;
-        while j < events.len() && !matches!(events[j], Event::Words { .. }) {
-            j += 1;
-        }
-        let run_end = j; // exclusive
-
-        if run_end - run_start <= 1 {
-            i = run_end;
-            continue;
-        }
-
-        // --- merge EditorSnapshots (union of all files) ---
-        let snapshot_indices: Vec<usize> = (run_start..run_end)
-            .filter(|&k| matches!(events[k], Event::EditorSnapshot { .. }))
-            .collect();
-
-        if snapshot_indices.len() > 1 {
-            let mut merged_files = Vec::new();
-            let mut merged_rendered = Vec::new();
-            let mut last_offset = 0.0_f64;
-
-            for &idx in &snapshot_indices {
-                if let Event::EditorSnapshot {
-                    offset_secs,
-                    files,
-                    rendered,
-                } = &events[idx]
-                {
-                    last_offset = *offset_secs;
-                    for f in files {
-                        if !merged_files.contains(f) {
-                            merged_files.push(f.clone());
-                        }
-                    }
-                    for r in rendered {
-                        if !merged_rendered.iter().any(|prev: &RenderedFile| {
-                            prev.path == r.path
-                                && prev.first_line == r.first_line
-                                && prev.content == r.content
-                        }) {
-                            merged_rendered.push(r.clone());
-                        }
-                    }
-                }
-            }
-
-            let last_snap = *snapshot_indices.last().unwrap();
-            for &idx in &snapshot_indices {
-                if idx != last_snap {
-                    events[idx] = Event::EditorSnapshot {
-                        offset_secs: 0.0,
-                        files: Vec::new(),
-                        rendered: Vec::new(),
-                    };
-                }
-            }
-            events[last_snap] = Event::EditorSnapshot {
-                offset_secs: last_offset,
-                files: merged_files,
-                rendered: merged_rendered,
-            };
-        }
-
-        // --- merge FileDiffs (net diff per path) ---
-        let diff_indices: Vec<usize> = (run_start..run_end)
-            .filter(|&k| matches!(events[k], Event::FileDiff { .. }))
-            .collect();
-
-        if diff_indices.len() > 1 {
-            // path → (last offset, first old, last new, first index)
-            let mut by_path: Vec<(String, f64, String, String, usize)> = Vec::new();
-
-            for &idx in &diff_indices {
-                if let Event::FileDiff {
-                    offset_secs,
-                    path,
-                    old,
-                    new,
-                } = &events[idx]
-                {
-                    if let Some(entry) = by_path.iter_mut().find(|(p, ..)| p == path) {
-                        // Keep the first old, update to the latest new.
-                        entry.1 = *offset_secs;
-                        entry.3 = new.clone();
-                    } else {
-                        by_path.push((path.clone(), *offset_secs, old.clone(), new.clone(), idx));
-                    }
-                }
-            }
-
-            for &idx in &diff_indices {
-                events[idx] = Event::FileDiff {
-                    offset_secs: 0.0,
-                    path: String::new(),
-                    old: String::new(),
-                    new: String::new(),
-                };
-            }
-            for (path, offset_secs, old, new, first_idx) in by_path {
-                events[first_idx] = Event::FileDiff {
-                    offset_secs,
-                    path,
-                    old,
-                    new,
-                };
-            }
-        }
-
-        // Remove sentinels.
-        events.retain(|e| match e {
-            Event::EditorSnapshot { rendered, .. } => !rendered.is_empty(),
-            Event::FileDiff { path, .. } => !path.is_empty(),
-            _ => true,
-        });
-
-        i = run_start;
-        while i < events.len() && !matches!(events[i], Event::Words { .. }) {
-            i += 1;
-        }
-    }
+/// **Input**: a non-Words run (sorted by offset_secs, no `Words` events).
+/// **Output**: the same run with redundant cursor-only snapshots removed.
+///
+/// **Invariant**: selection (highlight) snapshots are never removed.
+/// **Invariant**: at most one cursor-only snapshot survives per run.
+fn collapse_cursor_only(run: &mut Vec<Event>) {
+    let Some(keep) = run.iter().rposition(is_cursor_only) else {
+        return;
+    };
+    let mut idx = 0;
+    run.retain(|e| {
+        let i = idx;
+        idx += 1;
+        !is_cursor_only(e) || i == keep
+    });
 }
 
-/// Sort events chronologically, compress cursor-only snapshot runs, and
-/// merge adjacent non-Words events.
+/// Fold all `EditorSnapshot`s into a single snapshot whose rendered file
+/// list is the deduplicated union of every file. Uses the last snapshot's
+/// offset as the merged offset (chronologically latest).
+///
+/// **Input**: snapshots extracted from a run, in chronological order.
+/// **Output**: a single `(offset, files, rendered)` tuple, or `None` if
+/// the input was empty.
+///
+/// **Invariant**: every unique `(path, first_line, content)` from the
+/// input appears in the output exactly once.
+fn union_snapshots(
+    snapshots: Vec<(f64, Vec<FileEntry>, Vec<RenderedFile>)>,
+) -> Option<(f64, Vec<FileEntry>, Vec<RenderedFile>)> {
+    if snapshots.is_empty() {
+        return None;
+    }
+
+    let mut merged_files = Vec::new();
+    let mut merged_rendered = Vec::new();
+    let mut last_offset = 0.0_f64;
+
+    for (offset, files, rendered) in snapshots {
+        last_offset = offset;
+        for f in files {
+            if !merged_files.contains(&f) {
+                merged_files.push(f);
+            }
+        }
+        for r in rendered {
+            if !merged_rendered.iter().any(|prev: &RenderedFile| {
+                prev.path == r.path && prev.first_line == r.first_line && prev.content == r.content
+            }) {
+                merged_rendered.push(r);
+            }
+        }
+    }
+
+    Some((last_offset, merged_files, merged_rendered))
+}
+
+/// Collapse same-path diffs into net-change events (first `old`, last `new`).
+/// Returns one diff per unique path, in first-seen order.
+///
+/// **Input**: diffs extracted from a run, in chronological order.
+/// **Output**: one `(offset, path, old, new)` per unique path. The offset
+/// is the latest for that path.
+///
+/// **Invariant**: for each path, `old` is from the earliest diff and `new`
+/// is from the latest diff in the input.
+fn net_change_diffs(
+    diffs: Vec<(f64, String, String, String)>,
+) -> Vec<(f64, String, String, String)> {
+    let mut by_path: Vec<(f64, String, String, String)> = Vec::new();
+
+    for (offset, path, old, new) in diffs {
+        if let Some(entry) = by_path.iter_mut().find(|(_, p, ..)| p == &path) {
+            entry.0 = offset; // latest offset
+            entry.3 = new; // latest new
+        } else {
+            by_path.push((offset, path, old, new));
+        }
+    }
+
+    by_path
+}
+
+// ── Run processing ──────────────────────────────────────────────────────────
+
+/// Process a single non-Words run through the three composable
+/// transformations: cursor compression, snapshot union, diff net-change.
+///
+/// **Input**: sorted non-Words events from a single run (between `Words`
+/// boundaries).
+/// **Output**: compressed events in chronological order.
+///
+/// **Invariants** (post-conditions):
+/// - At most one `EditorSnapshot` in the output.
+/// - At most one `FileDiff` per path in the output.
+/// - No cursor-only snapshots survive unless they are the sole cursor-only
+///   in the run (the last one).
+/// - Output is sorted by offset_secs.
+fn process_run(mut run: Vec<Event>) -> Vec<Event> {
+    if run.len() <= 1 {
+        return run;
+    }
+
+    // Phase 1: collapse cursor-only snapshots.
+    collapse_cursor_only(&mut run);
+
+    if run.len() <= 1 {
+        return run;
+    }
+
+    // Phase 2 & 3: partition, then union snapshots and net-change diffs.
+    let mut snapshots = Vec::new();
+    let mut diffs = Vec::new();
+
+    for event in run {
+        match event {
+            Event::EditorSnapshot {
+                offset_secs,
+                files,
+                rendered,
+            } => {
+                snapshots.push((offset_secs, files, rendered));
+            }
+            Event::FileDiff {
+                offset_secs,
+                path,
+                old,
+                new,
+            } => {
+                diffs.push((offset_secs, path, old, new));
+            }
+            Event::Words { .. } => unreachable!("run should not contain Words"),
+        }
+    }
+
+    let merged_snap = union_snapshots(snapshots);
+    let merged_diffs = net_change_diffs(diffs);
+
+    // Reassemble in chronological order.
+    let mut result = Vec::with_capacity(1 + merged_diffs.len());
+
+    if let Some((offset_secs, files, rendered)) = merged_snap
+        && !rendered.is_empty()
+    {
+        result.push(Event::EditorSnapshot {
+            offset_secs,
+            files,
+            rendered,
+        });
+    }
+
+    for (offset_secs, path, old, new) in merged_diffs {
+        result.push(Event::FileDiff {
+            offset_secs,
+            path,
+            old,
+            new,
+        });
+    }
+
+    result.sort_by(|a, b| {
+        a.offset_secs()
+            .partial_cmp(&b.offset_secs())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    result
+}
+
+// ── Public entry point ──────────────────────────────────────────────────────
+
+/// Sort events chronologically and process all non-speech runs in a single
+/// pass: compress cursor-only snapshots, union adjacent snapshots, and
+/// merge same-path diffs into net-change events.
 ///
 /// This is the first phase of `format_markdown` — it mutates `events` in
 /// place and is path-format-agnostic (works with both absolute and relative
 /// paths).
 pub fn compress_and_merge(events: &mut Vec<Event>) {
+    // Step 1: chronological sort.
     events.sort_by(|a, b| {
         a.offset_secs()
             .partial_cmp(&b.offset_secs())
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    compress_snapshots(events);
-    merge_adjacent(events);
+    // Step 2: single pass — split on Words boundaries, process each run.
+    let mut output = Vec::with_capacity(events.len());
+    let mut run = Vec::new();
 
-    // Drop a trailing cursor-only snapshot when speech is present — the
-    // stop hook already provides the latest editor context, which is more
-    // up-to-date. For code-only narrations (no speech), keep everything.
-    let has_words = events.iter().any(|e| matches!(e, Event::Words { .. }));
-    if has_words && events.last().is_some_and(is_cursor_only) {
-        events.pop();
+    for event in events.drain(..) {
+        if matches!(event, Event::Words { .. }) {
+            if !run.is_empty() {
+                output.extend(process_run(std::mem::take(&mut run)));
+            }
+            output.push(event);
+        } else {
+            run.push(event);
+        }
     }
+    if !run.is_empty() {
+        output.extend(process_run(run));
+    }
+
+    // Step 3: drop trailing cursor-only snapshot when speech is present.
+    // The stop hook already provides the latest editor context, which is
+    // more up-to-date. For code-only narrations (no speech), keep everything.
+    let has_words = output.iter().any(|e| matches!(e, Event::Words { .. }));
+    if has_words && output.last().is_some_and(is_cursor_only) {
+        output.pop();
+    }
+
+    *events = output;
 }
 
 #[cfg(test)]
