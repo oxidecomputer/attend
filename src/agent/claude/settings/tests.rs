@@ -80,7 +80,10 @@ fn install_idempotent() {
     let allow = settings["permissions"]["allow"].as_array().unwrap();
     let attend_entries: Vec<_> = allow
         .iter()
-        .filter(|v| v.as_str().is_some_and(|s| s.contains("attend")))
+        .filter(|v| {
+            v.as_str()
+                .is_some_and(|s| s.contains("attend look") || s.contains("attend listen"))
+        })
         .collect();
     assert_eq!(
         attend_entries.len(),
@@ -171,9 +174,9 @@ fn uninstall_leaves_other_hooks() {
     // Attend permissions should be removed
     let allow = settings["permissions"]["allow"].as_array().unwrap();
     assert!(
-        !allow
-            .iter()
-            .any(|v| v.as_str().is_some_and(|s| s.contains("attend"))),
+        !allow.iter().any(|v| v
+            .as_str()
+            .is_some_and(|s| s.contains("attend look") || s.contains("attend listen"))),
         "attend permissions should be removed"
     );
 }
@@ -266,6 +269,46 @@ fn settings_path_project() {
 fn settings_path_global() {
     let path = settings_path(None).unwrap();
     assert!(path.ends_with(".claude/settings.json"));
+}
+
+/// Install preserves unrelated permissions that contain "attend" as a substring.
+///
+/// Projects named "attend" (or whose path contains it) may have permissions
+/// with "attend" in the string. The install filter must not clobber them.
+#[test]
+fn install_preserves_unrelated_permissions_containing_attend() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings_dir = dir.path().join(".claude");
+    fs::create_dir_all(&settings_dir).unwrap();
+
+    let existing = serde_json::json!({
+        "permissions": {
+            "allow": [
+                "Bash(commit:*) /Users/oxide/src/attend",
+                "Skill(commit-commands:commit)"
+            ]
+        }
+    });
+    fs::write(
+        settings_dir.join("settings.local.json"),
+        serde_json::to_string_pretty(&existing).unwrap(),
+    )
+    .unwrap();
+
+    install::install("attend", Some(project_path(&dir))).unwrap();
+
+    let settings = read_settings(dir.path());
+    let allow = settings["permissions"]["allow"].as_array().unwrap();
+    let strings: Vec<&str> = allow.iter().filter_map(|v| v.as_str()).collect();
+
+    assert!(
+        strings.contains(&"Bash(commit:*) /Users/oxide/src/attend"),
+        "unrelated permission with 'attend' substring should survive"
+    );
+    assert!(
+        strings.contains(&"Skill(commit-commands:commit)"),
+        "unrelated permission should survive"
+    );
 }
 
 /// Install with malformed existing JSON returns an error.

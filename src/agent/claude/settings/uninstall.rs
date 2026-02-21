@@ -43,7 +43,11 @@ pub fn uninstall(project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
         && let Some(allow) = perms.get_mut("allow").and_then(|a| a.as_array_mut())
     {
         let before = allow.len();
-        allow.retain(|v| v.as_str().map(|s| !s.contains("attend")).unwrap_or(true));
+        allow.retain(|v| {
+            v.as_str()
+                .map(|s| !s.ends_with("attend look:*)") && !s.ends_with("attend listen:*)"))
+                .unwrap_or(true)
+        });
         if allow.len() < before {
             removed = true;
         }
