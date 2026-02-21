@@ -190,18 +190,38 @@ results. attend should:
    Grant it in System Settings > Privacy & Security > Accessibility."
 3. Gracefully degrade: ax_capture thread skips polling, no events emitted
 
-### A4. Per-app reliability notes
+### A4. Per-app reliability (empirically verified)
 
-| App | AXSelectedText | Notes |
-|-----|---------------|-------|
-| Safari | Works | |
-| Chrome | Works | May need `--force-renderer-accessibility` |
-| iTerm2 | Works | |
-| VS Code | Works | |
-| Slack | Partial | Electron; line-break bugs |
-| Firefox | Unreliable | Historically broken for web content (Bug 674612). Part B (browser extension) is the fix. |
+Tested via JXA/AppleScript probing of the macOS accessibility tree:
 
-The Firefox gap is the primary motivation for Part B.
+| App | AXSelectedText | AXValue | URL | Window title |
+|-----|---------------|---------|-----|-------------|
+| iTerm2 | **Works** | Full terminal buffer | N/A | Tab name |
+| Firefox | **Broken** | Not exposed | Not exposed | Page title (in window name) |
+| Safari | Works (per docs) | N/A | Via AppleScript | Page title |
+| Chrome | Works (per docs) | N/A | N/A | Page title (in window name) |
+| VS Code | Works (per docs) | N/A | N/A | File path (in window name) |
+| Slack | Partial | N/A | N/A | Channel name |
+
+**Firefox findings** (empirically confirmed 2026-02-20):
+- The AXWebArea element exists in the tree (role=AXWebArea, desc="page title")
+- `AXSelectedText` is not exposed as an attribute on any element
+- `AXSelectedTextMarkerRange` is null even when text is visually selected
+- `AXURL` is declared but errors when read (AppleEvent handler failed)
+- Firefox's own AppleScript dictionary is minimal: `document: null`, no tabs
+- The page title IS available, embedded in the window name:
+  `"Wikipedia, the free encyclopedia — Original profile"` (parseable by
+  stripping the ` — <profile>` suffix)
+
+**iTerm2 findings** (empirically confirmed 2026-02-20):
+- Focused element is `AXTextArea` with role description "shell"
+- `AXSelectedText` works: returns selected terminal text (empty when nothing selected)
+- `AXValue` returns the **entire visible terminal buffer** (hundreds of lines)
+- This means attend could optionally capture terminal context beyond just
+  selected text, though the full buffer is too large to emit routinely
+
+The Firefox gap is the primary motivation for Part B. There is no workaround
+via the Accessibility API.
 
 ---
 
