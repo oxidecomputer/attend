@@ -1,0 +1,19 @@
+---
+source: src/narrate/merge/tests/render.rs
+expression: md
+---
+
+```
+// src/config.rs:1
+pub struct Config {
+    pub name: String,
+}
+```
+
+```diff
+// src/config.rs
+ pub struct Config {
+     pub name: String,
++    pub port: u16,
+ }
+```

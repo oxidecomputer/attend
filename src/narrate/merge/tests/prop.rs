@@ -245,6 +245,129 @@ proptest! {
             );
         }
     }
+
+    /// compress_and_merge never increases the event count.
+    #[test]
+    fn merge_never_increases_count(events in arb_events()) {
+        let original_len = events.len();
+        let mut merged = events;
+        compress_and_merge(&mut merged);
+        prop_assert!(
+            merged.len() <= original_len,
+            "merge increased event count: {} -> {}",
+            original_len,
+            merged.len()
+        );
+    }
+
+    /// No empty sentinels survive: EditorSnapshot with empty rendered list
+    /// and FileDiff with empty path are both removed.
+    #[test]
+    fn merge_no_empty_sentinels(events in arb_events()) {
+        let mut merged = events;
+        compress_and_merge(&mut merged);
+        for (i, e) in merged.iter().enumerate() {
+            match e {
+                Event::EditorSnapshot { rendered, .. } => {
+                    prop_assert!(
+                        !rendered.is_empty(),
+                        "empty rendered list at index {i}"
+                    );
+                }
+                Event::FileDiff { path, .. } => {
+                    prop_assert!(
+                        !path.is_empty(),
+                        "empty diff path at index {i}"
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// After compress_and_merge, no two consecutive cursor-only snapshots
+    /// exist without an intervening Words event.
+    #[test]
+    fn merge_no_adjacent_cursor_only(events in arb_events()) {
+        let mut merged = events;
+        compress_and_merge(&mut merged);
+
+        let is_cursor_only = |e: &Event| -> bool {
+            let Event::EditorSnapshot { files, .. } = e else { return false };
+            files.iter().all(|f| f.selections.iter().all(|s| s.is_cursor_like()))
+        };
+
+        let mut prev_was_cursor_only = false;
+        for e in &merged {
+            if matches!(e, Event::Words { .. }) {
+                prev_was_cursor_only = false;
+                continue;
+            }
+            let cursor = is_cursor_only(e);
+            prop_assert!(
+                !(prev_was_cursor_only && cursor),
+                "two consecutive cursor-only snapshots found after merge"
+            );
+            if cursor {
+                prev_was_cursor_only = true;
+            }
+        }
+    }
+
+    /// Each diff path from input appears in output unless the net change
+    /// for that path in its wordless run is empty (old == new).
+    #[test]
+    fn merge_preserves_diff_paths(events in arb_events()) {
+        // Sort input the same way compress_and_merge does.
+        let mut sorted = events.clone();
+        sorted.sort_by(|a, b| a.offset_secs().partial_cmp(&b.offset_secs()).unwrap_or(std::cmp::Ordering::Equal));
+
+        // For each wordless run, compute expected surviving diff paths.
+        let mut expected_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut run_diffs: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
+
+        let flush_run = |run_diffs: &mut std::collections::HashMap<String, (String, String)>,
+                         expected: &mut std::collections::HashSet<String>| {
+            for (path, (old, new)) in run_diffs.drain() {
+                if old != new {
+                    expected.insert(path);
+                }
+            }
+        };
+
+        for e in &sorted {
+            match e {
+                Event::Words { .. } => {
+                    flush_run(&mut run_diffs, &mut expected_paths);
+                }
+                Event::FileDiff { path, old, new, .. } => {
+                    run_diffs.entry(path.clone())
+                        .and_modify(|entry| entry.1 = new.clone())
+                        .or_insert((old.clone(), new.clone()));
+                }
+                _ => {}
+            }
+        }
+        flush_run(&mut run_diffs, &mut expected_paths);
+
+        let mut merged = events;
+        compress_and_merge(&mut merged);
+        let output_paths: std::collections::HashSet<String> = merged
+            .iter()
+            .filter_map(|e| match e {
+                Event::FileDiff { path, .. } => Some(path.clone()),
+                _ => None,
+            })
+            .collect();
+
+        for path in &expected_paths {
+            prop_assert!(
+                output_paths.contains(path),
+                "expected diff path {:?} missing from output",
+                path
+            );
+        }
+    }
 }
 
 // ── unified_diff ────────────────────────────────────────────────────────────

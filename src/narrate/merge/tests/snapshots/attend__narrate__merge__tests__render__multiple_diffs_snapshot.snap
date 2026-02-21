@@ -1,0 +1,19 @@
+---
+source: src/narrate/merge/tests/render.rs
+expression: md
+---
+I renamed the field in both files
+
+```diff
+// src/api.rs
+-    timeout: u64,
++    timeout: Duration,
+```
+
+```diff
+// src/client.rs
+-    connect_timeout: u64,
++    connect_timeout: Duration,
+```
+
+to use Duration instead of raw u64

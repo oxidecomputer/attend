@@ -355,6 +355,59 @@ fn snip_applied_to_diff_block() {
     assert!(md.contains("+line 25\n"));
 }
 
+/// Code-only scenario: no words at all, multiple snapshots and diffs (snapshot test).
+#[test]
+fn code_only_scenario_snapshot() {
+    let mut events = vec![
+        Event::EditorSnapshot {
+            offset_secs: 0.0,
+            files: vec![],
+            rendered: vec![RenderedFile {
+                path: "src/config.rs".to_string(),
+                content: "pub struct Config {\n    pub name: String,\n}\n".to_string(),
+                first_line: 1,
+            }],
+        },
+        Event::FileDiff {
+            offset_secs: 1.0,
+            path: "src/config.rs".to_string(),
+            old: "pub struct Config {\n    pub name: String,\n}\n".to_string(),
+            new: "pub struct Config {\n    pub name: String,\n    pub port: u16,\n}\n".to_string(),
+        },
+    ];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    insta::assert_snapshot!(md);
+}
+
+/// Speech interleaved with multiple diffs to different files (snapshot test).
+#[test]
+fn multiple_diffs_snapshot() {
+    let mut events = vec![
+        Event::Words {
+            offset_secs: 0.0,
+            text: "I renamed the field in both files".to_string(),
+        },
+        Event::FileDiff {
+            offset_secs: 1.0,
+            path: "src/api.rs".to_string(),
+            old: "    timeout: u64,\n".to_string(),
+            new: "    timeout: Duration,\n".to_string(),
+        },
+        Event::FileDiff {
+            offset_secs: 1.5,
+            path: "src/client.rs".to_string(),
+            old: "    connect_timeout: u64,\n".to_string(),
+            new: "    connect_timeout: Duration,\n".to_string(),
+        },
+        Event::Words {
+            offset_secs: 2.0,
+            text: "to use Duration instead of raw u64".to_string(),
+        },
+    ];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    insta::assert_snapshot!(md);
+}
+
 /// A large snip threshold effectively disables snipping.
 #[test]
 fn snip_disabled_with_large_threshold() {
