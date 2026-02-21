@@ -104,11 +104,13 @@ impl DwellTracker {
 /// Spawn the editor polling thread.
 ///
 /// Returns the join handle. The thread pushes `EditorSnapshot` events into
-/// `events` until `stop` is set.
+/// `events` until `stop` is set. It also publishes the current set of open
+/// file paths into `open_paths` for the diff capture thread to read.
 pub(super) fn spawn(
     stop: Arc<AtomicBool>,
     cwd: Option<Utf8PathBuf>,
     events: Arc<Mutex<Vec<Event>>>,
+    open_paths: Arc<Mutex<Vec<Utf8PathBuf>>>,
     start: Instant,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
@@ -134,6 +136,9 @@ pub(super) fn spawn(
                 Ok(Some(s)) => s,
                 _ => continue,
             };
+
+            // Publish open file paths for the diff capture thread.
+            *open_paths.lock().unwrap() = state.files.iter().map(|f| f.path.clone()).collect();
 
             if let Some(files) = tracker.update(state.files, now) {
                 let offset_secs = start.elapsed().as_secs_f64();

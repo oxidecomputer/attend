@@ -228,7 +228,9 @@ impl EditorState {
         }
         let previous = Self::load_cached().unwrap_or_default();
         state.reorder_relative_to(&previous);
-        state.save_cache();
+        if state != previous {
+            state.save_cache();
+        }
         Ok(Some(state))
     }
 

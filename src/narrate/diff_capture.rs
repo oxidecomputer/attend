@@ -2,6 +2,10 @@
 //!
 //! Spawns a thread that watches open files for content changes (via mtime)
 //! and emits [`Event::FileDiff`] with the old and new content.
+//!
+//! The set of files to watch is provided by the editor capture thread via
+//! a shared `Arc<Mutex<Vec<Utf8PathBuf>>>`, avoiding a redundant editor
+//! query on every poll cycle.
 
 use std::collections::HashMap;
 use std::fs;
@@ -13,18 +17,19 @@ use std::time::{Duration, Instant};
 use camino::Utf8PathBuf;
 
 use super::merge::Event;
-use crate::state::EditorState;
 
 /// How often to poll for file content changes (secs).
 const FILE_DIFF_POLL_SECS: u64 = 1;
 
 /// Spawn the file diff tracking thread.
 ///
+/// Reads the current set of open files from `open_paths` (published by
+/// the editor capture thread) instead of querying the editor directly.
 /// Returns the join handle. The thread pushes `FileDiff` events into
 /// `events` until `stop` is set.
 pub(super) fn spawn(
     stop: Arc<AtomicBool>,
-    cwd: Option<Utf8PathBuf>,
+    open_paths: Arc<Mutex<Vec<Utf8PathBuf>>>,
     events: Arc<Mutex<Vec<Event>>>,
     start: Instant,
 ) -> thread::JoinHandle<()> {
@@ -32,16 +37,17 @@ pub(super) fn spawn(
         let mut file_contents: HashMap<Utf8PathBuf, String> = HashMap::new();
         let mut file_mtimes: HashMap<Utf8PathBuf, std::time::SystemTime> = HashMap::new();
 
-        // Snapshot initial state of recently active files
-        if let Ok(Some(state)) = EditorState::current(cwd.as_deref(), &[]) {
-            for file in &state.files {
-                if let Ok(content) = fs::read_to_string(&file.path) {
-                    if let Ok(meta) = fs::metadata(&file.path)
+        // Snapshot initial state of whatever files are already open.
+        {
+            let paths = open_paths.lock().unwrap();
+            for path in paths.iter() {
+                if let Ok(content) = fs::read_to_string(path) {
+                    if let Ok(meta) = fs::metadata(path)
                         && let Ok(mtime) = meta.modified()
                     {
-                        file_mtimes.insert(file.path.clone(), mtime);
+                        file_mtimes.insert(path.clone(), mtime);
                     }
-                    file_contents.insert(file.path.clone(), content);
+                    file_contents.insert(path.clone(), content);
                 }
             }
         }
@@ -49,14 +55,11 @@ pub(super) fn spawn(
         while !stop.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_secs(FILE_DIFF_POLL_SECS));
 
-            // Check current editor files for changes
-            let state = match EditorState::current(cwd.as_deref(), &[]) {
-                Ok(Some(s)) => s,
-                _ => continue,
-            };
+            // Read the current file list from the editor capture thread.
+            let paths = open_paths.lock().unwrap().clone();
 
-            for file in &state.files {
-                let Ok(meta) = fs::metadata(&file.path) else {
+            for path in &paths {
+                let Ok(meta) = fs::metadata(path) else {
                     continue;
                 };
                 let Ok(mtime) = meta.modified() else {
@@ -64,7 +67,7 @@ pub(super) fn spawn(
                 };
 
                 let changed = file_mtimes
-                    .get(&file.path)
+                    .get(path)
                     .map(|prev| *prev != mtime)
                     .unwrap_or(true);
 
@@ -72,18 +75,18 @@ pub(super) fn spawn(
                     continue;
                 }
 
-                file_mtimes.insert(file.path.clone(), mtime);
+                file_mtimes.insert(path.clone(), mtime);
 
-                let Ok(new_content) = fs::read_to_string(&file.path) else {
+                let Ok(new_content) = fs::read_to_string(path) else {
                     continue;
                 };
 
-                if let Some(old_content) = file_contents.get(&file.path)
+                if let Some(old_content) = file_contents.get(path)
                     && *old_content != new_content
                 {
                     let offset_secs = start.elapsed().as_secs_f64();
                     // Keep absolute path — filtering deferred to receive.
-                    let display_path = file.path.as_str().to_string();
+                    let display_path = path.as_str().to_string();
                     events.lock().unwrap().push(Event::FileDiff {
                         offset_secs,
                         path: display_path,
@@ -92,7 +95,7 @@ pub(super) fn spawn(
                     });
                 }
 
-                file_contents.insert(file.path.clone(), new_content);
+                file_contents.insert(path.clone(), new_content);
             }
         }
     })

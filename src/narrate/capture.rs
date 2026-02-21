@@ -1,8 +1,10 @@
 //! Background capture of editor state snapshots and file diffs.
 //!
-//! Coordinates two independent capture threads:
-//! - [`editor_capture`]: polls editor selections, emits `EditorSnapshot`
-//! - [`diff_capture`]: watches file content changes, emits `FileDiff`
+//! Coordinates two capture threads with a shared file list:
+//! - [`editor_capture`]: polls editor selections, emits `EditorSnapshot`,
+//!   and publishes the current set of open file paths.
+//! - [`diff_capture`]: reads the shared file list (instead of querying the
+//!   editor independently) and watches for content changes via mtime.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -48,6 +50,11 @@ impl CaptureHandle {
 
 /// Start background threads for editor polling and file diff tracking.
 ///
+/// The editor capture thread publishes open file paths into `open_paths`,
+/// which the diff capture thread reads instead of querying the editor
+/// independently. This eliminates a redundant database query + offset
+/// resolution per diff poll cycle.
+///
 /// Pass `None` for `cwd` to keep paths absolute (filtering deferred to receive).
 pub(crate) fn start(cwd: Option<Utf8PathBuf>) -> anyhow::Result<CaptureHandle> {
     let stop_flag = Arc::new(AtomicBool::new(false));
@@ -56,15 +63,23 @@ pub(crate) fn start(cwd: Option<Utf8PathBuf>) -> anyhow::Result<CaptureHandle> {
     let editor_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
     let diff_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
 
+    // Shared file path list: written by editor_capture, read by diff_capture.
+    let open_paths: Arc<Mutex<Vec<Utf8PathBuf>>> = Arc::new(Mutex::new(Vec::new()));
+
     let editor_thread = super::editor_capture::spawn(
         Arc::clone(&stop_flag),
-        cwd.clone(),
+        cwd,
         Arc::clone(&editor_events),
+        Arc::clone(&open_paths),
         start,
     );
 
-    let diff_thread =
-        super::diff_capture::spawn(Arc::clone(&stop_flag), cwd, Arc::clone(&diff_events), start);
+    let diff_thread = super::diff_capture::spawn(
+        Arc::clone(&stop_flag),
+        Arc::clone(&open_paths),
+        Arc::clone(&diff_events),
+        start,
+    );
 
     Ok(CaptureHandle {
         stop_flag,
