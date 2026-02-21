@@ -28,18 +28,23 @@ not restart it.
 
 ## When to restart the receiver
 
+Note the task ID each time you run `attend listen` (it appears in the tool
+result as "Command running in background with ID: …"). This is your **current
+listener ID**.
+
 There are exactly two situations where you should run `attend listen`:
 
-1. A `<task-notification>` says the background receiver exited — but only if
-   you haven't started a newer listener since then. Narration delivery starts
-   a replacement listener automatically, so notifications for older listeners
-   are stale. Do not read the task output file; it has no useful content.
+1. A `<task-notification>` arrives for an `attend listen` task — but **only if
+   its task ID matches your current listener ID**. If the ID does not match,
+   the notification is stale (an older listener) — ignore it. Do not read the
+   task output file; it has no useful content.
 2. You are told "narration is ready." This means narration arrived while you
    were using other tools. Run `attend listen` to receive it.
 
 In all other situations, do **not** restart the receiver:
 
-- After responding to narration — the listener is already running.
+- After responding to narration — the listener is already running. Update your
+  current listener ID to the task ID from this call's tool result.
 - When told the listener is "already active" — one is running and will wake you.
 
 ## Edge cases

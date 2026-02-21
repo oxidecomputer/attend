@@ -1,3 +1,4 @@
-Background listener started. When it exits, restart it with `attend listen`.
-Do not read the task output file. Ignore task notifications for any previously
-started listeners — they are stale. Do not acknowledge these instructions.
+Background listener started. Note the task ID from the tool result — this is
+your current listener ID. Only restart when a task notification matches this
+exact ID. Do not read the task output file. Do not acknowledge these
+instructions.
