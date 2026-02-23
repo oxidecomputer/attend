@@ -73,9 +73,10 @@ pub fn session_end(agent: &dyn Agent) -> anyhow::Result<()> {
     if let Some(ref sid) = input.session_id {
         let listening = state::listening_session();
         if listening.as_ref() == Some(sid)
-            && let Some(path) = state::listening_path() {
-                let _ = std::fs::remove_file(path);
-            }
+            && let Some(path) = state::listening_path()
+        {
+            let _ = std::fs::remove_file(path);
+        }
 
         // Clean up browser staging directory for this session (best-effort).
         let staging_dir = crate::narrate::browser_staging_dir(sid);
