@@ -194,38 +194,41 @@ This design means a future Linux backend only needs to:
 No changes to the polling thread, dwell tracker, event types, merge pipeline,
 renderer, or config.
 
-### A2. macOS backend (`ext_capture/macos.rs`)
+### A2. macOS backend (`ext_capture/macos.rs`) — IMPLEMENTED
 
-Uses the [`accessibility`](https://crates.io/crates/accessibility) crate
-(v0.2.0, by eiz) to call the macOS AX API directly from Rust. This replaces
-the originally-planned Swift helper binary, eliminating `swiftc` as a build
-dependency, fork+exec overhead per poll, and JSON IPC.
+Uses a two-layer approach: `NSWorkspace` for app identification,
+`accessibility`/`accessibility-sys` crates for AX text queries.
 
-The crate wraps `AXUIElement` with convenience methods (`title()`, `pid()`,
-`role()`, `children()`) and a generic `AXAttribute::new()` for attributes
-without dedicated accessors. Our key queries:
+**macOS Sequoia workaround**: the system-wide AX element's
+`AXFocusedApplication` and `AXFocusedUIElement` attributes return
+`kAXErrorCannotComplete` (-25204) on macOS 15 (Sequoia), even when
+`AXIsProcessTrusted()` returns true. Simple string attributes (AXRole,
+AXTitle) work, and PID-based `AXUIElement::application(pid)` works, but
+the system-wide → focused element path is broken for unsigned binaries.
 
-1. `AXUIElement::system_wide()` → focused application via
-   `AXAttribute::new("AXFocusedApplication")`
-2. Application element → app name via `title()`
-3. Application element → focused window via
-   `AXAttribute::new("AXFocusedWindow")` → window title via `title()`
-4. System-wide → focused element via `AXAttribute::new("AXFocusedUIElement")`
-   → selected text via `AXAttribute::new("AXSelectedText")`
+The implemented query chain:
 
-If `title()` on the application element proves unreliable for some apps,
-fall back to `pid()` + `NSRunningApplication` via the `cocoa`/`objc` crates
-already in the transitive dependency tree.
+1. `NSWorkspace.shared.frontmostApplication` → app name + PID (via `objc`
+   crate message sends, no AX permission needed)
+2. `AXUIElement::application(pid)` → app AX element
+3. App element → `AXFocusedWindow` → `AXTitle` for window title
+4. App element → `AXFocusedUIElement` → `AXSelectedText` for selection
 
-`is_available()` calls `AXIsProcessTrusted()` from `accessibility-sys`.
+`is_available()` probes AX by getting the frontmost app via NSWorkspace and
+querying its `AXTitle`. If AX permissions are not granted, this fails and
+the capture thread is not spawned.
 
-**Latency budget**: <1ms per query (in-process function call vs 15-40ms for
-fork+exec). At 200ms polling interval, negligible overhead.
+**Empirically verified** (2026-02-23): iTerm2 selected text captured
+successfully during live narration. Safari, Finder Quick Look, and Firefox
+did not produce selections (see per-app reliability below).
 
-**macOS-only dependency**:
+**macOS-only dependencies**:
 ```toml
 [target.'cfg(target_os = "macos")'.dependencies]
 accessibility = "0.2"
+accessibility-sys = "0.2"
+core-foundation = "0.10"
+objc = "0.2"
 ```
 
 ### A3. External capture thread (`ext_capture.rs`)
@@ -252,7 +255,7 @@ The polling/dwell/dedup logic lives in `ext_capture.rs`, OS-agnostic:
 - New `ext_events: Arc<Mutex<Vec<Event>>>` in CaptureHandle
 - `drain()` and `collect()` return all three event streams
 
-### A4. Permissions UX
+### A4. Permissions UX — IMPLEMENTED
 
 The Accessibility permission is granted to the *terminal emulator* (iTerm2),
 not to attend itself, because macOS TCC traces the "responsible process" up
@@ -260,17 +263,19 @@ the process tree. Most developers using accessibility-aware tools have already
 granted this.
 
 Permission checking is part of the `ExternalSource` trait (`is_available()`).
-The macOS backend implements this via `AXIsProcessTrusted()`. The ext_capture
-thread checks `is_available()` once at startup:
-- If false, prints a one-time message to stderr:
-  "External text capture requires Accessibility permission for your terminal.
-  Grant it in System Settings > Privacy & Security > Accessibility."
-- Gracefully degrades: thread returns, no events emitted
-- Future platforms implement their own permission checks in `is_available()`
+The macOS backend probes by getting the frontmost app via NSWorkspace and
+querying its AXTitle (avoids `AXIsProcessTrusted()` which returns true even
+when queries fail on Sequoia). The ext_capture thread checks `is_available()`
+once at startup:
+- If false, prints a one-time message to stderr and returns (graceful
+  degradation, no events emitted)
+- Note: the daemon runs with stderr suppressed, so this message is not
+  visible to the user. Future improvement: write to a status file.
 
-### A4. Per-app reliability (empirically verified)
+### A4. Per-app reliability
 
-Tested via JXA/AppleScript probing of the macOS accessibility tree:
+Tested via JXA/AppleScript probing (2026-02-20), and live end-to-end
+testing with the recording daemon (2026-02-23):
 
 | App | AXSelectedText | AXValue | URL | Window title |
 |-----|---------------|---------|-----|-------------|
@@ -530,20 +535,27 @@ platforms may have their own permission models handled via `is_available()`.
 
 ## Task breakdown
 
-### Phase 12a: External selection capture (Part A)
+### Phase 12a: External selection capture (Part A) — DONE (f2d33a0)
 
-| # | Task | Depends on |
-|---|------|-----------|
-| A1 | `ExternalSource` trait, `ExternalSnapshot`, `platform_source()` dispatch | — |
-| A2 | macOS backend (`ext_capture/macos.rs`): AX queries via `accessibility` crate | A1 |
-| A3 | New `Event::ExternalSelection` variant + serde | — |
-| A4 | Polling thread, `DwellTracker`, dedup logic in `ext_capture.rs` | A1, A3 |
-| A5 | Wire ext_capture into `CaptureHandle` (third thread) | A4 |
-| A6 | `render.rs`: render ExternalSelection as blockquote | A3 |
-| A7 | `merge.rs`: compress consecutive same-app selections | A3 |
-| A8 | `receive.rs`: pass ExternalSelection through filter unchanged | A3 |
-| A9 | Config: `ext_ignore_apps` | A4 |
-| A10 | Tests: DwellTracker unit tests, merge/compress prop tests, render tests | A7 |
+| # | Task | Status |
+|---|------|--------|
+| A1 | `ExternalSource` trait, `ExternalSnapshot`, `platform_source()` dispatch | Done |
+| A2 | macOS backend: NSWorkspace + AX via `accessibility`/`objc` crates | Done |
+| A3 | New `Event::ExternalSelection` variant + serde | Done |
+| A4 | Polling thread, `ExtDwellTracker`, dedup logic in `ext_capture.rs` | Done |
+| A5 | Wire ext_capture into `CaptureHandle` (third thread) | Done |
+| A6 | `render.rs`: render ExternalSelection as blockquote | Done |
+| A7 | `merge.rs`: compress consecutive same-app selections | Done |
+| A8 | `receive.rs`: pass ExternalSelection through filter unchanged | Done |
+| A9 | Config: `ext_ignore_apps` with default `["Zed"]` | Done |
+| A10 | Tests: 14 new tests (DwellTracker, merge, prop, render, receive) | Done |
+
+**Implementation notes:**
+- macOS Sequoia breaks system-wide AX element queries for unsigned binaries;
+  worked around via NSWorkspace + PID-based AXUIElement
+- Live-tested: iTerm2 selection capture works end-to-end
+- Safari, Finder Quick Look, Firefox did not produce selections in live testing
+  (Safari may work with further investigation; Firefox requires Phase 12b)
 
 ### Phase 12b: Firefox native messaging (Part B)
 
