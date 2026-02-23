@@ -259,35 +259,92 @@ fn net_change_diffs(
     by_path
 }
 
-/// Collapse consecutive `ExternalSelection` events with the same app and text.
+/// Collapse duplicate external and browser selection events within a run.
 ///
-/// **Input**: external selection events from a run, in chronological order.
-/// **Output**: deduplicated events, keeping only the last per (app, text) pair.
+/// **Input**: external/browser selection events from a run, in chronological order.
+/// **Output**: deduplicated events, keeping only the last per discriminant key.
 ///
-/// **Invariant**: within each run, at most one `ExternalSelection` survives
-/// per unique combination of app name and selected text.
+/// **Invariants**:
+/// - At most one `ExternalSelection` per unique (app, text) pair.
+/// - At most one `BrowserSelection` per unique (url, text) pair.
+/// - When a `BrowserSelection` and `ExternalSelection` have matching text
+///   (trimmed) within 500ms, the `ExternalSelection` is dropped (the browser
+///   extension provides richer context: URL, is_code).
 fn collapse_ext_selections(selections: Vec<Event>) -> Vec<Event> {
     let mut result: Vec<Event> = Vec::new();
 
     for event in selections {
-        let Event::ExternalSelection {
-            ref app, ref text, ..
-        } = event
-        else {
-            result.push(event);
-            continue;
-        };
-        // Replace a previous entry with the same app + text.
-        if let Some(existing) = result.iter_mut().find(|e| {
-            matches!(e, Event::ExternalSelection { app: a, text: t, .. } if a == app && t == text)
-        }) {
-            *existing = event;
-        } else {
-            result.push(event);
+        match &event {
+            Event::ExternalSelection { app, text, .. } => {
+                // Replace a previous entry with the same app + text.
+                if let Some(existing) = result.iter_mut().find(|e| {
+                    matches!(e, Event::ExternalSelection { app: a, text: t, .. } if a == app && t == text)
+                }) {
+                    *existing = event;
+                } else {
+                    result.push(event);
+                }
+            }
+            Event::BrowserSelection { url, text, .. } => {
+                // Replace a previous entry with the same url + text.
+                if let Some(existing) = result.iter_mut().find(|e| {
+                    matches!(e, Event::BrowserSelection { url: u, text: t, .. } if u == url && t == text)
+                }) {
+                    *existing = event;
+                } else {
+                    result.push(event);
+                }
+            }
+            _ => {
+                result.push(event);
+            }
         }
     }
 
+    // Cross-type dedup: when BrowserSelection and ExternalSelection have the
+    // same text within 500ms, drop the ExternalSelection (browser is richer).
+    dedup_browser_vs_external(&mut result);
+
     result
+}
+
+/// Drop `ExternalSelection` events that are superseded by a nearby
+/// `BrowserSelection` with matching text (trimmed).
+///
+/// "Nearby" means within 500ms (0.5 seconds). The browser extension provides
+/// richer context (URL, is_code) than the accessibility API, so the browser
+/// event wins.
+fn dedup_browser_vs_external(events: &mut Vec<Event>) {
+    const DEDUP_WINDOW_SECS: f64 = 0.5;
+
+    // Collect browser selection timestamps and texts for matching.
+    let browser_entries: Vec<(f64, String)> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::BrowserSelection {
+                offset_secs, text, ..
+            } => Some((*offset_secs, text.trim().to_string())),
+            _ => None,
+        })
+        .collect();
+
+    if browser_entries.is_empty() {
+        return;
+    }
+
+    events.retain(|e| {
+        let Event::ExternalSelection {
+            offset_secs, text, ..
+        } = e
+        else {
+            return true;
+        };
+        let trimmed = text.trim();
+        // Drop if any BrowserSelection has matching text within the window.
+        !browser_entries.iter().any(|(bs_offset, bs_text)| {
+            bs_text == trimmed && (offset_secs - bs_offset).abs() <= DEDUP_WINDOW_SECS
+        })
+    });
 }
 
 // ── Run processing ──────────────────────────────────────────────────────────
