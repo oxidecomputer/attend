@@ -598,3 +598,168 @@ fn ext_selection_empty_window_title() {
         "should use app name only: {md:?}"
     );
 }
+
+// ── BrowserSelection compression ──────────────────────────────────────────
+
+/// Helper: browser selection event.
+fn browser_sel(t: f64, url: &str, text: &str, is_code: bool) -> Event {
+    Event::BrowserSelection {
+        offset_secs: t,
+        url: url.to_string(),
+        title: "Page Title".to_string(),
+        text: text.to_string(),
+        is_code,
+    }
+}
+
+/// Consecutive browser selections with the same url and text are deduplicated.
+#[test]
+fn browser_selection_dedup_same_url_text() {
+    let mut events = vec![
+        browser_sel(1.0, "https://docs.rs/tokio", "spawn", false),
+        browser_sel(2.0, "https://docs.rs/tokio", "spawn", false),
+        browser_sel(3.0, "https://docs.rs/tokio", "spawn", false),
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 1, "duplicates compressed to one");
+    assert_eq!(events[0].offset_secs(), 3.0, "kept the latest");
+}
+
+/// Browser selections with different text survive compression.
+#[test]
+fn browser_selection_different_text_kept() {
+    let mut events = vec![
+        browser_sel(1.0, "https://docs.rs/tokio", "spawn", false),
+        browser_sel(2.0, "https://docs.rs/tokio", "join", false),
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 2, "different text means different selections");
+}
+
+/// Browser selections with different urls survive compression.
+#[test]
+fn browser_selection_different_urls_kept() {
+    let mut events = vec![
+        browser_sel(1.0, "https://docs.rs/tokio", "spawn", false),
+        browser_sel(2.0, "https://docs.rs/hyper", "spawn", false),
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 2, "different urls survive");
+}
+
+/// Browser selections interleaved with words are not merged across boundaries.
+#[test]
+fn browser_selection_across_word_boundary() {
+    let mut events = vec![
+        browser_sel(1.0, "https://docs.rs/tokio", "spawn", false),
+        Event::Words {
+            offset_secs: 2.0,
+            text: "look at this".to_string(),
+        },
+        browser_sel(3.0, "https://docs.rs/tokio", "spawn", false),
+    ];
+    compress_and_merge(&mut events);
+    let count = events
+        .iter()
+        .filter(|e| matches!(e, Event::BrowserSelection { .. }))
+        .count();
+    assert_eq!(count, 2, "word boundary prevents merge");
+}
+
+/// BrowserSelection renders code as fenced code block.
+#[test]
+fn browser_selection_renders_code() {
+    let mut events = vec![browser_sel(
+        1.0,
+        "https://docs.rs/tokio",
+        "pub fn spawn(&mut self)",
+        true,
+    )];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    assert!(
+        md.contains("> [Page Title](https://docs.rs/tokio)"),
+        "link: {md:?}"
+    );
+    assert!(
+        md.contains("```\npub fn spawn(&mut self)\n```"),
+        "code block: {md:?}"
+    );
+}
+
+/// BrowserSelection renders prose as blockquote.
+#[test]
+fn browser_selection_renders_prose() {
+    let mut events = vec![browser_sel(
+        1.0,
+        "https://docs.rs/tokio",
+        "Spawns the command as a child process.",
+        false,
+    )];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    assert!(
+        md.contains("> [Page Title](https://docs.rs/tokio)"),
+        "link: {md:?}"
+    );
+    assert!(
+        md.contains("> \"Spawns the command as a child process.\""),
+        "prose: {md:?}"
+    );
+}
+
+/// BrowserSelection with empty title uses bare URL.
+#[test]
+fn browser_selection_empty_title() {
+    let mut events = vec![Event::BrowserSelection {
+        offset_secs: 1.0,
+        url: "https://example.com".to_string(),
+        title: String::new(),
+        text: "hello".to_string(),
+        is_code: false,
+    }];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    assert!(
+        md.contains("> <https://example.com>"),
+        "bare URL when no title: {md:?}"
+    );
+}
+
+// ── Cross-type dedup: BrowserSelection vs ExternalSelection ───────────────
+
+/// When BrowserSelection and ExternalSelection have matching text within
+/// 500ms, the ExternalSelection is dropped (browser provides richer context).
+#[test]
+fn browser_beats_external_same_text() {
+    let mut events = vec![
+        ext_sel(1.0, "Firefox", "selected text"),
+        browser_sel(1.2, "https://example.com", "selected text", false),
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 1, "external selection should be dropped");
+    assert!(
+        matches!(events[0], Event::BrowserSelection { .. }),
+        "browser selection should win"
+    );
+}
+
+/// When BrowserSelection and ExternalSelection have different text, both survive.
+#[test]
+fn browser_and_external_different_text_both_kept() {
+    let mut events = vec![
+        ext_sel(1.0, "Firefox", "different text"),
+        browser_sel(1.2, "https://example.com", "other text", false),
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 2, "different text means both survive");
+}
+
+/// When BrowserSelection and ExternalSelection have matching text but are
+/// more than 500ms apart, both survive.
+#[test]
+fn browser_and_external_far_apart_both_kept() {
+    let mut events = vec![
+        ext_sel(1.0, "Firefox", "selected text"),
+        browser_sel(2.0, "https://example.com", "selected text", false),
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 2, "too far apart, both survive");
+}

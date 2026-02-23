@@ -149,6 +149,21 @@ fn filter_events_keeps_ext_selection() {
     assert_eq!(events.len(), 1, "external selection should pass through");
 }
 
+/// Browser selections pass through the filter unconditionally (no file paths to check).
+#[test]
+fn filter_events_keeps_browser_selection() {
+    let cwd = Utf8Path::new("/project");
+    let mut events = vec![Event::BrowserSelection {
+        offset_secs: 0.0,
+        url: "https://example.com".to_string(),
+        title: "Example Page".to_string(),
+        text: "some text".to_string(),
+        is_code: false,
+    }];
+    filter_events(&mut events, cwd, &[]);
+    assert_eq!(events.len(), 1, "browser selection should pass through");
+}
+
 /// Paths are made relative to cwd after filtering.
 #[test]
 fn relativize_events_strips_prefix() {

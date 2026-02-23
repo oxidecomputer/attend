@@ -97,6 +97,27 @@ fn arb_ext_selection() -> impl Strategy<Value = Event> {
         })
 }
 
+fn arb_browser_selection() -> impl Strategy<Value = Event> {
+    (
+        0.0..100.0f64,
+        prop_oneof![
+            "https://docs.rs/tokio",
+            "https://example.com",
+            "https://github.com/foo"
+        ],
+        "[a-z ]{1,30}",
+        "[a-z ]{1,30}",
+        proptest::bool::ANY,
+    )
+        .prop_map(|(t, url, title, text, is_code)| Event::BrowserSelection {
+            offset_secs: t,
+            url,
+            title,
+            text,
+            is_code,
+        })
+}
+
 fn arb_event() -> impl Strategy<Value = Event> {
     prop_oneof![
         3 => arb_words(),
@@ -104,6 +125,7 @@ fn arb_event() -> impl Strategy<Value = Event> {
         2 => arb_selection_snapshot(),
         1 => arb_diff(),
         1 => arb_ext_selection(),
+        1 => arb_browser_selection(),
     ]
 }
 
@@ -373,6 +395,40 @@ proptest! {
         let mut merged = events;
         compress_and_merge(&mut merged);
         let actual_count = merged.iter().filter(|e| matches!(e, Event::ExternalSelection { .. })).count();
+        prop_assert_eq!(actual_count, expected_count);
+    }
+
+    /// BrowserSelection events are deduplicated per (url, text) within a run.
+    /// The count after merge equals the number of unique (url, text) pairs
+    /// per wordless run (minus any that were cross-type deduped with
+    /// ExternalSelection, which is extremely rare with random text).
+    #[test]
+    fn merge_preserves_browser_selection_text(events in arb_events()) {
+        let mut sorted = events.clone();
+        sorted.sort_by(|a, b| a.offset_secs().partial_cmp(&b.offset_secs()).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut expected_count = 0usize;
+        let mut run_pairs: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+
+        let flush = |pairs: &mut std::collections::HashSet<(String, String)>, count: &mut usize| {
+            *count += pairs.len();
+            pairs.clear();
+        };
+
+        for e in &sorted {
+            match e {
+                Event::Words { .. } => flush(&mut run_pairs, &mut expected_count),
+                Event::BrowserSelection { url, text, .. } => {
+                    run_pairs.insert((url.clone(), text.clone()));
+                }
+                _ => {}
+            }
+        }
+        flush(&mut run_pairs, &mut expected_count);
+
+        let mut merged = events;
+        compress_and_merge(&mut merged);
+        let actual_count = merged.iter().filter(|e| matches!(e, Event::BrowserSelection { .. })).count();
         prop_assert_eq!(actual_count, expected_count);
     }
 
