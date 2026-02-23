@@ -156,11 +156,12 @@ pub(crate) fn collect_browser_staging(
         // Skip events that predate the current recording period. These are
         // stale selections from before the user started narrating.
         if let Some(ft) = file_time
-            && ft < period_start_utc {
-                // Still remove stale files (best-effort cleanup).
-                let _ = std::fs::remove_file(path);
-                continue;
-            }
+            && ft < period_start_utc
+        {
+            // Still remove stale files (best-effort cleanup).
+            let _ = std::fs::remove_file(path);
+            continue;
+        }
 
         let offset_secs = file_time
             .map(|ft| {
