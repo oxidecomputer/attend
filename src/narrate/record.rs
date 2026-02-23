@@ -620,7 +620,9 @@ pub fn daemon() -> anyhow::Result<()> {
         None
     };
 
-    let now = Instant::now();
+    // Use the same time epoch as the capture threads so word offsets
+    // and editor/ext selection offsets are aligned for interleaving.
+    let now = editor_events.start;
     let mut state = DaemonState {
         transcriber,
         audio_capture: Some(capture),

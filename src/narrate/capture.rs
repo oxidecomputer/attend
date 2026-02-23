@@ -20,6 +20,10 @@ use super::merge::Event;
 /// Handle for the background editor/diff/ext polling threads.
 pub(crate) struct CaptureHandle {
     stop_flag: Arc<AtomicBool>,
+    /// The `Instant` used as time epoch by all capture threads.
+    /// The recording daemon must use this same instant as `period_start`
+    /// so that word offsets and capture event offsets are aligned.
+    pub start: Instant,
     editor_events: Arc<Mutex<Vec<Event>>>,
     diff_events: Arc<Mutex<Vec<Event>>>,
     ext_events: Arc<Mutex<Vec<Event>>>,
@@ -107,6 +111,7 @@ pub(crate) fn start(
 
     Ok(CaptureHandle {
         stop_flag,
+        start,
         editor_events,
         diff_events,
         ext_events,
