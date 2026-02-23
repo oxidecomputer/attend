@@ -114,16 +114,22 @@ pub(super) fn install(
 fn install_browser_wrapper(bin_cmd: &str) -> anyhow::Result<String> {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use std::path::Path;
+    use std::path::PathBuf;
 
-    let bin_path = Path::new(bin_cmd);
+    // Native messaging manifests require absolute paths. Resolve if needed.
+    let abs_bin: PathBuf = if std::path::Path::new(bin_cmd).is_absolute() {
+        bin_cmd.into()
+    } else {
+        which::which(bin_cmd).map_err(|e| anyhow::anyhow!("cannot find {bin_cmd} on PATH: {e}"))?
+    };
+
     let wrapper_name = "attend-browser-bridge";
-    let wrapper_path = bin_path
+    let wrapper_path = abs_bin
         .parent()
         .map(|p| p.join(wrapper_name))
         .unwrap_or_else(|| wrapper_name.into());
 
-    let script = format!("#!/bin/sh\nexec {bin_cmd} browser-bridge\n");
+    let script = format!("#!/bin/sh\nexec {} browser-bridge\n", abs_bin.display());
     fs::write(&wrapper_path, &script)?;
     fs::set_permissions(&wrapper_path, fs::Permissions::from_mode(0o755))?;
 
