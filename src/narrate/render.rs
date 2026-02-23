@@ -178,11 +178,12 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                     out.push('\n');
                 }
                 out.push('\n');
-                let snipped = snip(&diff, snip_cfg, None);
                 out.push_str("```diff\n");
                 out.push_str(&format!("// {path}\n"));
-                out.push_str(&snipped);
-                if !snipped.ends_with('\n') {
+                // Diffs are not snipped: they represent transient on-disk state
+                // that cannot be reconstructed after the fact.
+                out.push_str(&diff);
+                if !diff.ends_with('\n') {
                     out.push('\n');
                 }
                 out.push_str("```\n");
@@ -202,13 +203,14 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                 }
                 out.push('\n');
                 // Render as a blockquote with source annotation.
-                let snipped = snip(text, snip_cfg, None);
+                // External selections are not snipped: they represent ephemeral
+                // state (accessibility API) that cannot be reconstructed.
                 let source = if window_title.is_empty() {
                     app.to_string()
                 } else {
                     format!("{app}: {window_title}")
                 };
-                out.push_str(&format!("> [{source}] \"{}\"\n", snipped.trim()));
+                out.push_str(&format!("> [{source}] \"{}\"\n", text.trim()));
             }
         }
     }

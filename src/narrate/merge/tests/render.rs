@@ -343,9 +343,9 @@ fn snip_applied_to_code_block() {
     assert!(md.contains("line 25\n"));
 }
 
-/// Diff blocks exceeding the snip threshold are collapsed with an omission marker.
+/// Diffs are never snipped (transient on-disk state cannot be reconstructed).
 #[test]
-fn snip_applied_to_diff_block() {
+fn diff_block_not_snipped() {
     let new_content: String = (1..=25).map(|i| format!("line {i}\n")).collect();
     let mut events = vec![Event::FileDiff {
         offset_secs: 0.0,
@@ -354,13 +354,11 @@ fn snip_applied_to_diff_block() {
         new: new_content,
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
-    // Diffs don't have a first_line, so they show count-only format.
-    // unified_diff produces 25 +lines (no @@ header); snip keeps head=3, tail=2.
-    assert!(md.contains("// ... (20 lines omitted)"));
-    assert!(md.contains("+line 1\n"));
-    assert!(md.contains("+line 3\n"));
-    assert!(!md.contains("+line 4\n"));
-    assert!(md.contains("+line 25\n"));
+    // All 25 lines should be present, no omission marker.
+    assert!(!md.contains("omitted"));
+    for i in 1..=25 {
+        assert!(md.contains(&format!("+line {i}\n")));
+    }
 }
 
 /// Code-only scenario: no words at all, multiple snapshots and diffs (snapshot test).
