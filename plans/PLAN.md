@@ -29,6 +29,7 @@ be performed as specified, please do it.
 | 10 | [merge.rs Deep Refactor](./phase-10-merge-refactor.md) | Done | Phase 9 |
 | 11 | [Persistent Daemon](./phase-11-persistent-daemon.md) | Not started | Phases 6, 8 |
 | 12a | [External Context Sources (Part A)](./phase-12-context-sources.md) | Done | Phase 10 |
+| 12b | [Firefox Native Messaging (Part B)](./phase-12-context-sources.md) | Done | Phase 12a |
 
 ## Item Progress
 
@@ -127,6 +128,18 @@ be performed as specified, please do it.
 - [x] A8 `receive.rs`: pass ExternalSelection through filter unchanged
 - [x] A9 Config: `ext_ignore_apps` with default `["Zed"]`
 - [x] A10 Tests: DwellTracker unit tests, merge/compress/prop tests, render tests, receive filter test
+
+### Phase 12b: Firefox Native Messaging (Part B)
+- [x] B0 Fix snip policy: stop snipping non-reconstructable events (diffs, external selections)
+- [x] B1 New `Event::BrowserSelection` variant + serde
+- [x] B2 Firefox extension: content.js + background.js + manifest.json
+- [x] B3 `attend browser-bridge` subcommand (native messaging host)
+- [x] B4 `Browser` trait + Firefox implementation
+- [x] B5 CLI `--browser` wiring (install/uninstall)
+- [x] B6 `render.rs`: render BrowserSelection (code vs prose)
+- [x] B7 `merge.rs`: BrowserSelection dedup + cross-type dedup with ExternalSelection
+- [x] B8 Tests: 12 new tests (compress, prop, render, receive)
+- [x] B9 Documentation updates
 
 ### Phase 11: Persistent Daemon
 - [ ] 11.1 Benchmark model load time

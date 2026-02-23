@@ -557,21 +557,33 @@ platforms may have their own permission models handled via `is_available()`.
 - Safari, Finder Quick Look, Firefox did not produce selections in live testing
   (Safari may work with further investigation; Firefox requires Phase 12b)
 
-### Phase 12b: Firefox native messaging (Part B)
+### Phase 12b: Firefox native messaging (Part B) — DONE
 
-| # | Task | Depends on |
-|---|------|-----------|
-| B1 | New `Event::BrowserSelection` variant + serde | — |
-| B2 | Write `content.js` + `background.js` + `manifest.json` | — |
-| B3 | `attend browser-bridge` subcommand (native messaging protocol) | B1 |
-| B4 | Write BrowserSelection events to session pending dir | B3 |
-| B5 | `attend install --browser firefox` (native host manifest) | B3 |
-| B6 | `render.rs`: render BrowserSelection (code vs prose) | B1 |
-| B7 | `merge.rs`: dedup ExternalSelection vs BrowserSelection | B1, A3 |
-| B8 | `receive.rs`: pass BrowserSelection through filter unchanged | B1 |
-| B9 | `attend uninstall --browser firefox` | B5 |
-| B10 | Tests: native messaging protocol round-trip | B3 |
-| B11 | AMO submission for extension signing | B2 |
+| # | Task | Status |
+|---|------|--------|
+| B0 | Fix snip policy: stop snipping non-reconstructable events | Done |
+| B1 | New `Event::BrowserSelection` variant + serde | Done |
+| B2 | Write `content.js` + `background.js` + `manifest.json` | Done |
+| B3 | `attend browser-bridge` subcommand (native messaging protocol) | Done |
+| B4 | `Browser` trait + Firefox implementation | Done |
+| B5 | `attend install --browser firefox` (native host manifest) | Done |
+| B6 | `render.rs`: render BrowserSelection (code vs prose) | Done |
+| B7 | `merge.rs`: dedup ExternalSelection vs BrowserSelection | Done |
+| B8 | `receive.rs`: pass BrowserSelection through filter unchanged | Done |
+| B9 | `attend uninstall --browser firefox` | Done |
+| B10 | Tests: 12 new tests (compress, prop, render, receive, bridge) | Done |
+| B11 | AMO submission for extension signing | Documented (manual step) |
+
+**Implementation notes:**
+- Uses `native_messaging` crate for protocol framing and manifest management
+- A shell wrapper script (`attend-browser-bridge`) is installed next to the
+  attend binary because Firefox launches native messaging hosts directly with
+  no subcommand arguments
+- Non-reconstructable events (FileDiff, ExternalSelection, BrowserSelection)
+  are no longer snipped by the render pipeline
+- Cross-type dedup: when BrowserSelection and ExternalSelection have matching
+  text within 500ms, the ExternalSelection is dropped (browser provides richer
+  context: URL, is_code flag)
 
 ### Dependencies between 12a and 12b
 

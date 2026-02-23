@@ -26,15 +26,16 @@ slow down and consider more deeply.
 
 I invite you to see if you feel the same way.
 
-## Supported editors, agents, and platforms
+## Supported editors, agents, browsers, and platforms
 
 - Editors: [Zed](https://zed.dev)
 - Agents: [Claude Code](https://claude.com/product/claude-code)
+- Browsers: [Firefox](https://www.mozilla.org/firefox/) (via native messaging extension)
 - Platforms: anything Unix-esque should work; Windows is not supported currently
 
-The architecture supports adding new editors and agents independently of one
-another. See [EXTENDING.md](EXTENDING.md) for how to implement new editor or
-agent integrations. Contributions welcome!
+The architecture supports adding new editors, agents, and browsers independently
+of one another. See [EXTENDING.md](EXTENDING.md) for how to implement new editor
+or agent integrations. Contributions welcome!
 
 ## Platform requirements
 
@@ -55,6 +56,23 @@ attend install --agent claude --editor zed
 
 The final step installs the all-important hooks that provide editor context to
 Claude Code, plus keybindings to toggle voice narration from within Zed.
+
+### Browser integration (optional)
+
+To capture text selections from Firefox and deliver them as narration context:
+
+```bash
+attend install --browser firefox
+```
+
+This installs a native messaging host manifest. You also need to load the
+browser extension: open `about:debugging#/runtime/this-firefox` in Firefox,
+click "Load Temporary Add-on", and select `extension/manifest.json` from the
+attend source tree.
+
+When narration is active, text you select in Firefox will be captured with the
+page URL and title, and delivered to your agent alongside speech and editor
+context.
 
 ### Editor hotkeys
 
