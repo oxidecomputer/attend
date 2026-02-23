@@ -87,22 +87,53 @@ pub(crate) fn browser_staging_dir(session_id: &SessionId) -> Utf8PathBuf {
         .join(session_id.as_str())
 }
 
-/// Collect and remove all staged browser selection events for a session.
+/// Collected browser staging events, with file paths for deferred cleanup.
+#[derive(Default)]
+pub(crate) struct BrowserStaging {
+    pub events: Vec<merge::Event>,
+    files: Vec<std::path::PathBuf>,
+}
+
+/// Deferred cleanup handle: holds file paths for removal after write.
+pub(crate) struct BrowserCleanup {
+    files: Vec<std::path::PathBuf>,
+}
+
+impl BrowserCleanup {
+    /// Remove the staging files (call after narration is safely on disk).
+    pub fn cleanup(self) {
+        for path in &self.files {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+impl BrowserStaging {
+    /// Split into events (for merging) and a cleanup handle (for deferred removal).
+    pub fn take(self) -> (Vec<merge::Event>, BrowserCleanup) {
+        (self.events, BrowserCleanup { files: self.files })
+    }
+}
+
+/// Collect staged browser selection events for a session.
 ///
 /// File timestamps (from the filename) are converted to `offset_secs`
 /// relative to `period_start_utc` plus `time_base_secs`, so browser
 /// events interleave correctly with speech and editor events.
 ///
-/// Returns the events sorted by filename (timestamp). Files are removed
-/// after reading (best-effort).
+/// Files are **not** removed until [`BrowserStaging::cleanup`] is called,
+/// so a crash between collection and narration write does not lose events.
 pub(crate) fn collect_browser_staging(
     session_id: &SessionId,
     period_start_utc: chrono::DateTime<chrono::Utc>,
     time_base_secs: f64,
-) -> Vec<merge::Event> {
+) -> BrowserStaging {
     let dir = browser_staging_dir(session_id);
     let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
+        return BrowserStaging {
+            events: Vec::new(),
+            files: Vec::new(),
+        };
     };
 
     let mut files: Vec<std::path::PathBuf> = entries
@@ -116,16 +147,24 @@ pub(crate) fn collect_browser_staging(
     for path in &files {
         // Parse wall-clock timestamp from filename (e.g., "2026-02-23T22-42-28Z.json").
         // The format is "%Y-%m-%dT%H-%M-%SZ" (colons replaced with dashes).
-        let offset_secs = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .and_then(|s| {
-                chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H-%M-%SZ")
-                    .ok()
-                    .map(|naive| naive.and_utc())
-            })
-            .map(|file_time| {
-                let delta = file_time
+        let file_time = path.file_stem().and_then(|s| s.to_str()).and_then(|s| {
+            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H-%M-%SZ")
+                .ok()
+                .map(|naive| naive.and_utc())
+        });
+
+        // Skip events that predate the current recording period. These are
+        // stale selections from before the user started narrating.
+        if let Some(ft) = file_time
+            && ft < period_start_utc {
+                // Still remove stale files (best-effort cleanup).
+                let _ = std::fs::remove_file(path);
+                continue;
+            }
+
+        let offset_secs = file_time
+            .map(|ft| {
+                let delta = ft
                     .signed_duration_since(period_start_utc)
                     .num_milliseconds() as f64
                     / 1000.0;
@@ -147,11 +186,9 @@ pub(crate) fn collect_browser_staging(
                 events.push(event);
             }
         }
-        // Remove after reading (best-effort).
-        let _ = std::fs::remove_file(path);
     }
 
-    events
+    BrowserStaging { events, files }
 }
 
 /// Resolve the session ID from flag, listening file, or None.

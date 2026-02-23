@@ -292,7 +292,9 @@ impl DaemonState {
     ///
     /// File timestamps are converted to offset_secs relative to the current
     /// recording period so browser events interleave with speech and editor events.
-    fn collect_browser_staging(&self) -> Vec<Event> {
+    /// Returns a [`BrowserStaging`] whose files are cleaned up only after the
+    /// narration is written to disk (crash-safe).
+    fn collect_browser_staging(&self) -> super::BrowserStaging {
         self.session_id
             .as_ref()
             .map(|sid| {
@@ -308,7 +310,7 @@ impl DaemonState {
         editor_snapshots: Vec<Event>,
         file_diffs: Vec<Event>,
         ext_selections: Vec<Event>,
-        browser_selections: Vec<Event>,
+        browser_staging: super::BrowserStaging,
     ) -> anyhow::Result<()> {
         let remaining_chunks = std::mem::take(&mut self.buffered_chunks);
         let mut all_words = std::mem::take(&mut self.pre_transcribed);
@@ -355,7 +357,7 @@ impl DaemonState {
             && editor_snapshots.is_empty()
             && file_diffs.is_empty()
             && ext_selections.is_empty()
-            && browser_selections.is_empty()
+            && browser_staging.events.is_empty()
         {
             tracing::debug!("No content captured, discarding.");
             return Ok(());
@@ -373,7 +375,8 @@ impl DaemonState {
         events.extend(editor_snapshots);
         events.extend(file_diffs);
         events.extend(ext_selections);
-        events.extend(browser_selections);
+        let (browser_events, browser_cleanup) = browser_staging.take();
+        events.extend(browser_events);
 
         // Sort and compress/merge events, then serialize as JSON.
         merge::compress_and_merge(&mut events);
@@ -397,6 +400,9 @@ impl DaemonState {
             crate::util::atomic_write_str(&path, &json)?;
             tracing::info!(path = %path, "Narration written");
         }
+
+        // Only remove browser staging files after narration is safely on disk.
+        browser_cleanup.cleanup();
 
         Ok(())
     }
