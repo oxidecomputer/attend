@@ -56,6 +56,8 @@ pub(super) fn parse(hook_type: HookType) -> HookInput {
                 .and_then(|_| raw.tool_input.and_then(|ti| ti.command));
             HookKind::ToolUse { bash_command }
         }
+        // SessionEnd only needs the common fields (session_id, cwd).
+        HookType::SessionEnd => HookKind::SessionStart,
     };
     HookInput {
         session_id: raw.session_id.map(SessionId::from),

@@ -107,6 +107,31 @@ pub fn install(bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()
         vec.push(hook);
     }
 
+    // SessionEnd: clean up session state (listening file, browser staging).
+    {
+        let cmd = format!("{bin_cmd} hook session-end --agent claude");
+        let hook = serde_json::json!({
+            HOOK_MARKER_KEY: HOOK_MARKER_VALUE,
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": cmd,
+                    "timeout": 5
+                }
+            ]
+        });
+
+        let arr = hooks_obj
+            .entry(HOOK_KEY_SESSION_END)
+            .or_insert_with(|| serde_json::json!([]));
+        let vec = arr.as_array_mut().context("SessionEnd is not an array")?;
+
+        let before = vec.len();
+        vec.retain(|entry| !is_our_hook(entry));
+        existing = existing || before > vec.len();
+        vec.push(hook);
+    }
+
     // Pre-authorize `attend look` so Claude doesn't prompt for every look call.
     {
         let permissions = obj

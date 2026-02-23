@@ -43,6 +43,11 @@ pub enum HookEvent {
         #[arg(long, short, value_parser = agent_value_parser())]
         agent: String,
     },
+    /// Clean up session state (listening file, browser staging).
+    SessionEnd {
+        #[arg(long, short, value_parser = agent_value_parser())]
+        agent: String,
+    },
 }
 
 impl HookEvent {
@@ -68,6 +73,10 @@ impl HookEvent {
             HookEvent::PostToolUse { agent } => {
                 let agent = resolve_agent(&agent)?;
                 crate::hook::check_narration(agent, crate::hook::HookType::PostToolUse)
+            }
+            HookEvent::SessionEnd { agent } => {
+                let agent = resolve_agent(&agent)?;
+                crate::hook::session_end(agent)
             }
         }
     }

@@ -13,6 +13,7 @@ pub enum HookType {
     Stop,
     PreToolUse,
     PostToolUse,
+    SessionEnd,
 }
 
 /// Parsed input from an agent hook invocation.

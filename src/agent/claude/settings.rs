@@ -10,6 +10,7 @@ const HOOK_KEY_USER_PROMPT_SUBMIT: &str = "UserPromptSubmit";
 const HOOK_KEY_STOP: &str = "Stop";
 const HOOK_KEY_PRE_TOOL_USE: &str = "PreToolUse";
 const HOOK_KEY_POST_TOOL_USE: &str = "PostToolUse";
+const HOOK_KEY_SESSION_END: &str = "SessionEnd";
 
 /// Marker key added to every hook entry we install.
 ///

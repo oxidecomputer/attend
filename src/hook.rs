@@ -62,6 +62,29 @@ pub fn session_start(agent: &dyn Agent) -> anyhow::Result<()> {
     agent.session_start(&input, is_listening)
 }
 
+/// Handle the `SessionEnd` hook: clean up session state.
+///
+/// Removes the listening file (if this session owns it) and cleans up
+/// any leftover browser staging files. Produces no output.
+pub fn session_end(agent: &dyn Agent) -> anyhow::Result<()> {
+    let input = agent.parse_hook_input(HookType::SessionEnd);
+
+    // Only clean up if this session owns the listening file.
+    if let Some(ref sid) = input.session_id {
+        let listening = state::listening_session();
+        if listening.as_ref() == Some(sid)
+            && let Some(path) = state::listening_path() {
+                let _ = std::fs::remove_file(path);
+            }
+
+        // Clean up browser staging directory for this session (best-effort).
+        let staging_dir = crate::narrate::browser_staging_dir(sid);
+        let _ = std::fs::remove_dir_all(staging_dir);
+    }
+
+    Ok(())
+}
+
 /// Handle the `UserPromptSubmit` hook: emit editor context if changed.
 ///
 /// When the prompt is `/attend`, activates narration mode instead of
