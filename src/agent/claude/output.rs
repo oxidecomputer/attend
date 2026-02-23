@@ -77,8 +77,7 @@ pub(super) fn attend_result(decision: &HookDecision, hook_type: HookType) -> any
         HookDecision::Silent => {}
         HookDecision::Guidance { reason, effect } => {
             let message = guidance_message(reason);
-            let wrapped = format!("<system-instruction>\n{message}\n</system-instruction>");
-            let response = render_decision(hook_type, effect, &wrapped);
+            let response = render_decision(hook_type, effect, message);
             println!("{}", serde_json::to_string(&response)?);
         }
     }
@@ -89,8 +88,13 @@ pub(super) fn attend_result(decision: &HookDecision, hook_type: HookType) -> any
 fn render_decision(
     hook_type: HookType,
     effect: &GuidanceEffect,
-    content: &str,
+    message: &str,
 ) -> serde_json::Value {
+    // Wrap in <system-instruction> tags for fields that pass through as
+    // context to Claude (additionalContext, permissionDecisionReason).
+    // Stop hook's `reason` is already surfaced directly, so no wrapping.
+    let wrapped = format!("<system-instruction>\n{message}\n</system-instruction>");
+
     match hook_type {
         // PreToolUse: hookSpecificOutput with permissionDecision.
         // additionalContext reaches Claude; permissionDecisionReason
@@ -104,7 +108,7 @@ fn render_decision(
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": decision,
-                    "additionalContext": content
+                    "additionalContext": wrapped
                 }
             })
         }
@@ -112,25 +116,25 @@ fn render_decision(
         HookType::PostToolUse => match effect {
             GuidanceEffect::Block => serde_json::json!({
                 "decision": "block",
-                "reason": content
+                "reason": wrapped
             }),
             GuidanceEffect::Approve => serde_json::json!({
                 "hookSpecificOutput": {
                     "hookEventName": "PostToolUse",
-                    "additionalContext": content
+                    "additionalContext": wrapped
                 }
             }),
         },
-        // Stop: top-level decision/reason. reason reaches Claude on block.
-        // No additionalContext available — approve is silent.
+        // Stop: top-level decision/reason. The `reason` field is shown
+        // directly to both Claude and the user — no XML wrapping.
         HookType::Stop => match effect {
             GuidanceEffect::Block => serde_json::json!({
                 "decision": "block",
-                "reason": content
+                "reason": message
             }),
             GuidanceEffect::Approve => serde_json::json!({}),
         },
-        // SessionStart and UserPrompt don't use attend_result.
+        // SessionStart, UserPrompt, SessionEnd don't use attend_result.
         _ => serde_json::json!({}),
     }
 }
