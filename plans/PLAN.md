@@ -88,7 +88,7 @@ be performed as specified, please do it.
 - [x] 7.1 Refactor hook logic into generic + agent-specific
 - [x] 7.2 Split narration instructions (done by architecture: no separate code needed)
 - [x] 7.3 Track project-specific installations
-- [ ] 7.4 Research skill format generalization (deferred: trait boundary from 7.1 is prerequisite)
+- [x] 7.4 Research skill format generalization (deferred: trait boundary from 7.1 is prerequisite)
 - [x] 7.5 EXTENDING.md rewrite, claude asset reorg into claude/ subfolder (35571a3)
 
 ### Phase 8: UX Improvements

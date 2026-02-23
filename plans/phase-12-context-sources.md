@@ -94,15 +94,20 @@ fenced code blocks with language detection from the page context.
               +--------------+--------------+
               |              |              |
      speech capture   editor capture   [NEW] external capture
-     (audio thread)   (editor_capture)  (ax_capture thread)
+     (audio thread)   (editor_capture)  (ext_capture thread)
                                            |
-                                    Swift helper binary
-                                    (attend-ax-helper)
+                                    ExternalSource trait
                                            |
                               +------------+------------+
-                              |                         |
-                     AXSelectedText              frontmost app +
-                     from focused element        window title
+                              |            |            |
+                           macOS        (Linux)      (future)
+                        accessibility   AT-SPI      platforms
+                           crate        (future)
+                              |
+                 +------------+------------+
+                 |                         |
+        AXSelectedText              frontmost app +
+        from focused element        window title
 
     [SEPARATE PROCESS — runs independently of recording]
 
@@ -115,80 +120,153 @@ fenced code blocks with language detection from the page context.
     writes BrowserSelection events to pending dir
 ```
 
-The Accessibility capture runs inside the recording daemon (like editor_capture).
+The external capture thread is OS-agnostic: it polls an `ExternalSource` trait
+for the current selection state. Platform backends implement that trait. Only
+the macOS backend is implemented now; Linux (AT-SPI/D-Bus) and others can be
+added later without touching the polling/dwell/dedup logic.
+
 The browser bridge runs as a separate process (launched by Firefox on demand).
 
 ---
 
-## Part A: macOS Accessibility via Swift helper
+## Part A: External selection capture (platform-abstracted)
 
-### A1. Swift helper binary (`attend-ax-helper`)
+### A1. `ExternalSource` trait and module layout
 
-A minimal Swift CLI (~60 lines) that:
-1. Calls `AXUIElementCreateSystemWide()`
-2. Queries `kAXFocusedUIElementAttribute` on the system-wide element
-3. Queries `kAXSelectedTextAttribute` on the focused element
-4. Queries `kAXFocusedWindow` + `kAXTitleAttribute` for window title
-5. Gets `NSWorkspace.shared.frontmostApplication` for app name
-6. Prints JSON to stdout:
-   ```json
-   {"app": "Firefox", "window_title": "tokio::process - Rust", "selected_text": "pub fn spawn(...)"}
-   ```
-   Prints `{"app": "...", "window_title": "...", "selected_text": null}` when
-   nothing is selected.
+The capture logic is split into a platform-agnostic polling/dwell/dedup
+layer and platform-specific query backends:
 
-Build: `swiftc -O attend-ax-helper.swift -o attend-ax-helper`. No runtime
-dependencies. Output is a single static binary.
+```
+src/narrate/
+  ext_capture.rs          — ExternalSource trait, ExternalSnapshot,
+                            DwellTracker, spawn() polling thread
+  ext_capture/
+    macos.rs              — macOS backend (accessibility crate)
+```
 
-**Build integration options** (decide during implementation):
-- **build.rs**: Compile with `swiftc` if available, skip if not (graceful
-  degradation on Linux or CI without Swift toolchain)
-- **Makefile/justfile target**: Explicit `just build-ax-helper`
-- **Pre-built**: Check in the compiled binary (simplest, but platform-specific)
+**`ExternalSource` trait** (in `ext_capture.rs`):
 
-Recommended: build.rs with graceful skip. The feature is macOS-only anyway.
+```rust
+/// A snapshot of the currently selected text in the focused application.
+pub struct ExternalSnapshot {
+    /// Application name (e.g. "Safari", "iTerm2").
+    pub app: String,
+    /// Window title (e.g. page title, terminal tab name).
+    pub window_title: String,
+    /// The selected text, if any.
+    pub selected_text: Option<String>,
+}
 
-**Latency budget**: 15-40ms per invocation (fork+exec+AX query). At 200ms
-polling interval, this consumes ~10-20% of the budget. Acceptable.
+/// Platform-specific backend for querying external application state.
+pub trait ExternalSource: Send {
+    /// Check whether the platform's accessibility permission is granted.
+    /// Returns `false` if queries will fail due to missing permissions.
+    fn is_available(&self) -> bool;
 
-### A2. Accessibility capture thread (`ax_capture.rs`)
+    /// Query the current state of the focused application.
+    /// Returns `None` if the query fails or no application is focused.
+    fn query(&self) -> Option<ExternalSnapshot>;
+}
+```
 
-New module `src/narrate/ax_capture.rs`, structured like `editor_capture.rs`:
+**Platform dispatch** (in `ext_capture.rs`):
 
-- Spawns a thread that polls every 200ms
-- Shells out to `attend-ax-helper` and parses the JSON response
+```rust
+/// Construct the platform-appropriate ExternalSource, or None if the
+/// current platform has no backend.
+pub fn platform_source() -> Option<Box<dyn ExternalSource>> {
+    #[cfg(target_os = "macos")]
+    { Some(Box::new(macos::MacOsSource::new())) }
+
+    #[cfg(not(target_os = "macos"))]
+    { None }
+}
+```
+
+When `platform_source()` returns `None`, the capture thread is not spawned.
+No feature flags needed — cfg selects at compile time.
+
+This design means a future Linux backend only needs to:
+1. Add `src/narrate/ext_capture/linux.rs` implementing `ExternalSource`
+2. Add a `#[cfg(target_os = "linux")]` arm to `platform_source()`
+3. Add the platform-specific dependency gated on `cfg(target_os = "linux")`
+
+No changes to the polling thread, dwell tracker, event types, merge pipeline,
+renderer, or config.
+
+### A2. macOS backend (`ext_capture/macos.rs`)
+
+Uses the [`accessibility`](https://crates.io/crates/accessibility) crate
+(v0.2.0, by eiz) to call the macOS AX API directly from Rust. This replaces
+the originally-planned Swift helper binary, eliminating `swiftc` as a build
+dependency, fork+exec overhead per poll, and JSON IPC.
+
+The crate wraps `AXUIElement` with convenience methods (`title()`, `pid()`,
+`role()`, `children()`) and a generic `AXAttribute::new()` for attributes
+without dedicated accessors. Our key queries:
+
+1. `AXUIElement::system_wide()` → focused application via
+   `AXAttribute::new("AXFocusedApplication")`
+2. Application element → app name via `title()`
+3. Application element → focused window via
+   `AXAttribute::new("AXFocusedWindow")` → window title via `title()`
+4. System-wide → focused element via `AXAttribute::new("AXFocusedUIElement")`
+   → selected text via `AXAttribute::new("AXSelectedText")`
+
+If `title()` on the application element proves unreliable for some apps,
+fall back to `pid()` + `NSRunningApplication` via the `cocoa`/`objc` crates
+already in the transitive dependency tree.
+
+`is_available()` calls `AXIsProcessTrusted()` from `accessibility-sys`.
+
+**Latency budget**: <1ms per query (in-process function call vs 15-40ms for
+fork+exec). At 200ms polling interval, negligible overhead.
+
+**macOS-only dependency**:
+```toml
+[target.'cfg(target_os = "macos")'.dependencies]
+accessibility = "0.2"
+```
+
+### A3. External capture thread (`ext_capture.rs`)
+
+The polling/dwell/dedup logic lives in `ext_capture.rs`, OS-agnostic:
+
+- Calls `platform_source()` at startup; if `None`, returns immediately
+- Checks `source.is_available()`; if false, prints a one-time permission
+  warning and returns (graceful degradation)
+- Spawns a thread that polls `source.query()` every 200ms
 - Emits `Event::ExternalSelection` when selected text changes
 - Dwell logic: only emit after selection stabilizes for ~300ms (same concept as
   cursor dwell in editor_capture)
 - Dedup: suppress if selected text is identical to the previous emission
 
 **Filtering**:
-- Skip emissions when the frontmost app is the editor (Zed) — that's already
-  covered by EditorSnapshot
-- Skip emissions when the frontmost app is the terminal running Claude Code —
-  the agent sees its own output already
-- Config: `ax_capture_ignore_apps = ["Zed", "Code"]` in config.toml (optional,
-  sensible defaults)
+- Skip when frontmost app matches `ax_ignore_apps` (case-insensitive)
+- Default: `["Zed"]` — Zed uses GPUI, so AX can't read from its panes anyway,
+  and regular Zed files are already covered by EditorSnapshot
+- Config: `ext_ignore_apps = ["Zed"]` in config.toml (optional, sensible default)
 
 **Integration into CaptureHandle**:
 - Add a third thread alongside `editor_thread` and `diff_thread`
-- New `ax_events: Arc<Mutex<Vec<Event>>>` in CaptureHandle
+- New `ext_events: Arc<Mutex<Vec<Event>>>` in CaptureHandle
 - `drain()` and `collect()` return all three event streams
 
-### A3. Permissions UX
+### A4. Permissions UX
 
 The Accessibility permission is granted to the *terminal emulator* (iTerm2),
 not to attend itself, because macOS TCC traces the "responsible process" up
 the process tree. Most developers using accessibility-aware tools have already
 granted this.
 
-If the permission is missing, the Swift helper will return an error or empty
-results. attend should:
-1. Detect the "not trusted" state (AXIsProcessTrusted() returns false)
-2. On first recording start, print a one-time message:
-   "External text capture requires Accessibility permission for your terminal.
-   Grant it in System Settings > Privacy & Security > Accessibility."
-3. Gracefully degrade: ax_capture thread skips polling, no events emitted
+Permission checking is part of the `ExternalSource` trait (`is_available()`).
+The macOS backend implements this via `AXIsProcessTrusted()`. The ext_capture
+thread checks `is_available()` once at startup:
+- If false, prints a one-time message to stderr:
+  "External text capture requires Accessibility permission for your terminal.
+  Grant it in System Settings > Privacy & Security > Accessibility."
+- Gracefully degrades: thread returns, no events emitted
+- Future platforms implement their own permission checks in `is_available()`
 
 ### A4. Per-app reliability (empirically verified)
 
@@ -198,10 +276,18 @@ Tested via JXA/AppleScript probing of the macOS accessibility tree:
 |-----|---------------|---------|-----|-------------|
 | iTerm2 | **Works** | Full terminal buffer | N/A | Tab name |
 | Firefox | **Broken** | Not exposed | Not exposed | Page title (in window name) |
-| Safari | Works (per docs) | N/A | Via AppleScript | Page title |
+| Safari | **Works** | N/A | Via AppleScript | Page title |
 | Chrome | Works (per docs) | N/A | N/A | Page title (in window name) |
 | VS Code | Works (per docs) | N/A | N/A | File path (in window name) |
+| Zed | **Broken** | Not exposed | N/A | Workspace name |
 | Slack | Partial | N/A | N/A | Channel name |
+
+**Zed findings** (confirmed during attend development):
+- Zed uses GPUI (custom GPU rendering), not standard AppKit `NSTextView`
+- GPUI does not expose `AXSelectedText` to the macOS accessibility tree
+- The AX API cannot read content from Zed's editor panes
+- Window title is accessible (workspace name), but not useful for content
+- See `plans/phase-12-zed-diff.md` for the Zed diff view gap analysis
 
 **Firefox findings** (empirically confirmed 2026-02-20):
 - The AXWebArea element exists in the tree (role=AXWebArea, desc="page title")
@@ -220,8 +306,8 @@ Tested via JXA/AppleScript probing of the macOS accessibility tree:
 - This means attend could optionally capture terminal context beyond just
   selected text, though the full buffer is too large to emit routinely
 
-The Firefox gap is the primary motivation for Part B. There is no workaround
-via the Accessibility API.
+**Safari** is the recommended testbed for AX development (confirmed working).
+The Firefox gap is the primary motivation for Part B.
 
 ---
 
@@ -433,31 +519,31 @@ the same way it's applied to EditorSnapshot content.
 1. Remove the native messaging host manifest
 2. Print reminder to remove the browser extension from Firefox
 
-### No install step for Accessibility
+### No install step for external capture
 
-The Swift helper is compiled alongside attend (or shipped as a companion
-binary). No user-facing install step. The permission prompt is handled by
-macOS automatically on first use.
+The platform backend compiles as part of `cargo build` (cfg-gated deps). No
+separate binary, no user-facing install step. On macOS, the Accessibility
+permission prompt is triggered on first use by the terminal emulator. Future
+platforms may have their own permission models handled via `is_available()`.
 
 ---
 
 ## Task breakdown
 
-### Phase 12a: Accessibility capture (Part A)
+### Phase 12a: External selection capture (Part A)
 
 | # | Task | Depends on |
 |---|------|-----------|
-| A1 | Write `attend-ax-helper.swift`, test manually | — |
-| A2 | build.rs integration: compile Swift helper if `swiftc` available | A1 |
+| A1 | `ExternalSource` trait, `ExternalSnapshot`, `platform_source()` dispatch | — |
+| A2 | macOS backend (`ext_capture/macos.rs`): AX queries via `accessibility` crate | A1 |
 | A3 | New `Event::ExternalSelection` variant + serde | — |
-| A4 | `ax_capture.rs`: polling thread, dwell, dedup | A1, A3 |
-| A5 | Wire ax_capture into `CaptureHandle` (third thread) | A4 |
+| A4 | Polling thread, `DwellTracker`, dedup logic in `ext_capture.rs` | A1, A3 |
+| A5 | Wire ext_capture into `CaptureHandle` (third thread) | A4 |
 | A6 | `render.rs`: render ExternalSelection as blockquote | A3 |
 | A7 | `merge.rs`: compress consecutive same-app selections | A3 |
 | A8 | `receive.rs`: pass ExternalSelection through filter unchanged | A3 |
-| A9 | Graceful degradation when AX permission is missing | A4 |
-| A10 | Config: `ax_capture_ignore_apps` | A4 |
-| A11 | Tests: prop tests for merge/compress with mixed event types | A7 |
+| A9 | Config: `ext_ignore_apps` | A4 |
+| A10 | Tests: DwellTracker unit tests, merge/compress prop tests, render tests | A7 |
 
 ### Phase 12b: Firefox native messaging (Part B)
 
