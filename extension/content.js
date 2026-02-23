@@ -1,18 +1,23 @@
 // Attend Browser Bridge: content script
 //
-// Observes text selections on the page and sends the selected HTML to
+// Captures text selections on the page and sends the selected HTML to
 // the background script for relay to the attend native messaging host.
 // The Rust bridge converts HTML to markdown using htmd.
+//
+// Uses mouseup (for drag selections) and keyup (for keyboard selections
+// with Shift+arrows) to avoid the continuous firing of selectionchange.
 
-let debounceTimer = null;
-const DEBOUNCE_MS = 300;
+let lastSentHtml = "";
 
-document.addEventListener("selectionchange", () => {
-  clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(onSelectionStable, DEBOUNCE_MS);
+document.addEventListener("mouseup", onSelectionComplete);
+document.addEventListener("keyup", (e) => {
+  // Only check on key events that could modify a selection (Shift+arrows, etc.)
+  if (e.shiftKey || e.key === "Escape") {
+    onSelectionComplete();
+  }
 });
 
-function onSelectionStable() {
+function onSelectionComplete() {
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed) return;
 
@@ -25,6 +30,10 @@ function onSelectionStable() {
   const wrapper = document.createElement("div");
   wrapper.appendChild(fragment);
   const html = wrapper.innerHTML;
+
+  // Deduplicate: don't resend the exact same selection.
+  if (html === lastSentHtml) return;
+  lastSentHtml = html;
 
   browser.runtime.sendMessage({
     type: "selection",

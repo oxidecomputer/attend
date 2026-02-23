@@ -14,7 +14,7 @@ use std::io;
 use serde::Deserialize;
 
 use crate::narrate::merge::Event;
-use crate::narrate::{cache_dir, pending_dir};
+use crate::narrate::{browser_staging_dir, cache_dir};
 use crate::state;
 use crate::util;
 
@@ -63,11 +63,11 @@ pub(super) fn run() -> anyhow::Result<()> {
         return Ok(());
     };
 
-    // Write the event to the pending directory.
+    // Stage the event for collection by the recording daemon.
+    // Browser selections are not delivered directly to the agent; they
+    // accumulate in a staging directory and are included when the user
+    // manually concludes narration (stop/flush).
     let events = vec![Event::BrowserSelection {
-        // Browser bridge events don't participate in the recording timeline,
-        // so offset_secs is set to 0. The receive pipeline sorts by file
-        // timestamp, not by offset_secs, for cross-process events.
         offset_secs: 0.0,
         url: msg.url,
         title: msg.title,
@@ -76,15 +76,13 @@ pub(super) fn run() -> anyhow::Result<()> {
 
     let json = serde_json::to_string(&events)?;
     let ts = util::utc_now().replace(':', "-");
-    let dir = pending_dir(&session_id);
+    let dir = browser_staging_dir(&session_id);
     fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{ts}.json"));
     util::atomic_write_str(&path, &json)?;
 
     native_messaging::host::send_json(&mut stdout, &serde_json::json!({"status": "ok"}))?;
 
-    // Touch the cache dir to signal the listener that new events are available.
-    // (The listener polls the pending dir, so this is a no-op hint.)
     let _ = fs::File::open(cache_dir());
 
     Ok(())

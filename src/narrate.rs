@@ -76,6 +76,48 @@ pub(crate) fn archive_dir(session_id: &SessionId) -> Utf8PathBuf {
     cache_dir().join("archive").join(session_id.as_str())
 }
 
+/// Directory where the browser bridge stages selection events.
+///
+/// Events in this directory are not delivered directly to the agent.
+/// Instead, the recording daemon collects them during flush/stop and
+/// includes them in the narration output.
+pub(crate) fn browser_staging_dir(session_id: &SessionId) -> Utf8PathBuf {
+    cache_dir()
+        .join("browser-staging")
+        .join(session_id.as_str())
+}
+
+/// Collect and remove all staged browser selection events for a session.
+///
+/// Returns the events sorted by filename (timestamp). Files are removed
+/// after reading (best-effort).
+pub(crate) fn collect_browser_staging(session_id: &SessionId) -> Vec<merge::Event> {
+    let dir = browser_staging_dir(session_id);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+
+    let mut files: Vec<std::path::PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
+        .collect();
+    files.sort();
+
+    let mut events = Vec::new();
+    for path in &files {
+        if let Ok(content) = std::fs::read_to_string(path)
+            && let Ok(file_events) = serde_json::from_str::<Vec<merge::Event>>(&content)
+        {
+            events.extend(file_events);
+        }
+        // Remove after reading (best-effort).
+        let _ = std::fs::remove_file(path);
+    }
+
+    events
+}
+
 /// Resolve the session ID from flag, listening file, or None.
 pub(crate) fn resolve_session(flag: Option<String>) -> Option<SessionId> {
     flag.map(SessionId::from)

@@ -188,7 +188,13 @@ impl DaemonState {
             .take()
             .expect("editor capture already stopped");
         let (editor_snapshots, file_diffs, ext_selections) = editor.collect();
-        self.transcribe_and_write(editor_snapshots, file_diffs, ext_selections)?;
+        let browser_selections = self.collect_browser_staging();
+        self.transcribe_and_write(
+            editor_snapshots,
+            file_diffs,
+            ext_selections,
+            browser_selections,
+        )?;
         Ok(true)
     }
 
@@ -216,7 +222,13 @@ impl DaemonState {
             .as_ref()
             .expect("editor capture already stopped");
         let (editor_snapshots, file_diffs, ext_selections) = editor.drain();
-        self.transcribe_and_write(editor_snapshots, file_diffs, ext_selections)?;
+        let browser_selections = self.collect_browser_staging();
+        self.transcribe_and_write(
+            editor_snapshots,
+            file_diffs,
+            ext_selections,
+            browser_selections,
+        )?;
 
         self.time_base_secs += elapsed;
         self.last_drain = Instant::now();
@@ -273,6 +285,14 @@ impl DaemonState {
         Ok(())
     }
 
+    /// Collect staged browser selection events for this session.
+    fn collect_browser_staging(&self) -> Vec<Event> {
+        self.session_id
+            .as_ref()
+            .map(super::collect_browser_staging)
+            .unwrap_or_default()
+    }
+
     /// Transcribe remaining audio, combine with pre-transcribed words, merge
     /// with editor events, and write the pending narration file.
     fn transcribe_and_write(
@@ -280,6 +300,7 @@ impl DaemonState {
         editor_snapshots: Vec<Event>,
         file_diffs: Vec<Event>,
         ext_selections: Vec<Event>,
+        browser_selections: Vec<Event>,
     ) -> anyhow::Result<()> {
         let remaining_chunks = std::mem::take(&mut self.buffered_chunks);
         let mut all_words = std::mem::take(&mut self.pre_transcribed);
@@ -326,6 +347,7 @@ impl DaemonState {
             && editor_snapshots.is_empty()
             && file_diffs.is_empty()
             && ext_selections.is_empty()
+            && browser_selections.is_empty()
         {
             tracing::debug!("No content captured, discarding.");
             return Ok(());
@@ -343,6 +365,7 @@ impl DaemonState {
         events.extend(editor_snapshots);
         events.extend(file_diffs);
         events.extend(ext_selections);
+        events.extend(browser_selections);
 
         // Sort and compress/merge events, then serialize as JSON.
         merge::compress_and_merge(&mut events);
