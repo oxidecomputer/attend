@@ -53,9 +53,18 @@ pub(super) fn run() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Only stage events while narration is actively recording.
+    // The record lock exists only while the recording daemon is running.
+    if !crate::narrate::record_lock_path().exists() {
+        native_messaging::host::send_json(
+            &mut stdout,
+            &serde_json::json!({"status": "not_recording"}),
+        )?;
+        return Ok(());
+    }
+
     // Find the active session.
     let Some(session_id) = state::listening_session() else {
-        // No active session: acknowledge and exit silently.
         native_messaging::host::send_json(
             &mut stdout,
             &serde_json::json!({"status": "no_session"}),
