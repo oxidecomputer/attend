@@ -89,9 +89,17 @@ pub(crate) fn browser_staging_dir(session_id: &SessionId) -> Utf8PathBuf {
 
 /// Collect and remove all staged browser selection events for a session.
 ///
+/// File timestamps (from the filename) are converted to `offset_secs`
+/// relative to `period_start_utc` plus `time_base_secs`, so browser
+/// events interleave correctly with speech and editor events.
+///
 /// Returns the events sorted by filename (timestamp). Files are removed
 /// after reading (best-effort).
-pub(crate) fn collect_browser_staging(session_id: &SessionId) -> Vec<merge::Event> {
+pub(crate) fn collect_browser_staging(
+    session_id: &SessionId,
+    period_start_utc: chrono::DateTime<chrono::Utc>,
+    time_base_secs: f64,
+) -> Vec<merge::Event> {
     let dir = browser_staging_dir(session_id);
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return Vec::new();
@@ -106,10 +114,38 @@ pub(crate) fn collect_browser_staging(session_id: &SessionId) -> Vec<merge::Even
 
     let mut events = Vec::new();
     for path in &files {
+        // Parse wall-clock timestamp from filename (e.g., "2026-02-23T22-42-28Z.json").
+        // The format is "%Y-%m-%dT%H-%M-%SZ" (colons replaced with dashes).
+        let offset_secs = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| {
+                chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H-%M-%SZ")
+                    .ok()
+                    .map(|naive| naive.and_utc())
+            })
+            .map(|file_time| {
+                let delta = file_time
+                    .signed_duration_since(period_start_utc)
+                    .num_milliseconds() as f64
+                    / 1000.0;
+                (delta + time_base_secs).max(0.0)
+            })
+            .unwrap_or(0.0);
+
         if let Ok(content) = std::fs::read_to_string(path)
             && let Ok(file_events) = serde_json::from_str::<Vec<merge::Event>>(&content)
         {
-            events.extend(file_events);
+            for mut event in file_events {
+                // Assign computed offset so the event sorts correctly.
+                if let merge::Event::BrowserSelection {
+                    offset_secs: os, ..
+                } = &mut event
+                {
+                    *os = offset_secs
+                }
+                events.push(event);
+            }
         }
         // Remove after reading (best-effort).
         let _ = std::fs::remove_file(path);

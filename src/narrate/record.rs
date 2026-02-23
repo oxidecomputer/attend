@@ -116,6 +116,8 @@ struct DaemonState {
     pre_transcribed: Vec<Word>,
     /// When the current period started (for computing word offsets).
     period_start: Instant,
+    /// Wall-clock time when the current period started (for browser event offsets).
+    period_start_utc: chrono::DateTime<chrono::Utc>,
     /// Accumulated time base across flushes (seconds).
     time_base_secs: f64,
     /// When the last drain/flush occurred.
@@ -233,6 +235,7 @@ impl DaemonState {
         self.time_base_secs += elapsed;
         self.last_drain = Instant::now();
         self.period_start = Instant::now();
+        self.period_start_utc = chrono::Utc::now();
 
         if let Some(ref mut detector) = self.silence_detector {
             detector.reset();
@@ -286,10 +289,15 @@ impl DaemonState {
     }
 
     /// Collect staged browser selection events for this session.
+    ///
+    /// File timestamps are converted to offset_secs relative to the current
+    /// recording period so browser events interleave with speech and editor events.
     fn collect_browser_staging(&self) -> Vec<Event> {
         self.session_id
             .as_ref()
-            .map(super::collect_browser_staging)
+            .map(|sid| {
+                super::collect_browser_staging(sid, self.period_start_utc, self.time_base_secs)
+            })
             .unwrap_or_default()
     }
 
@@ -616,6 +624,7 @@ pub fn daemon() -> anyhow::Result<()> {
         buffered_chunks: Vec::new(),
         pre_transcribed: Vec::new(),
         period_start: now,
+        period_start_utc: chrono::Utc::now(),
         time_base_secs: 0.0,
         last_drain: now,
         sample_rate,
