@@ -100,7 +100,7 @@ pub enum Command {
         #[arg(long, short = 'i')]
         interval: Option<f64>,
     },
-    /// Set up agent hooks and editor keybindings.
+    /// Set up agent hooks, editor keybindings, and browser integrations.
     #[command(display_order = 6)]
     Install {
         /// Agent to install hooks for (repeatable).
@@ -111,6 +111,10 @@ pub enum Command {
         #[arg(long, short, value_parser = hook::editor_value_parser())]
         editor: Vec<String>,
 
+        /// Browser to install native messaging for (repeatable).
+        #[arg(long, short, value_parser = hook::browser_value_parser())]
+        browser: Vec<String>,
+
         /// Install to a project-local settings file instead of global.
         #[arg(long, short)]
         project: Option<Utf8PathBuf>,
@@ -120,7 +124,7 @@ pub enum Command {
         dev: bool,
     },
 
-    /// Remove agent hooks and editor keybindings.
+    /// Remove agent hooks, editor keybindings, and browser integrations.
     #[command(display_order = 7)]
     Uninstall {
         /// Agent to uninstall hooks for (repeatable).
@@ -130,6 +134,10 @@ pub enum Command {
         /// Editor to uninstall narration keybindings for (repeatable).
         #[arg(long, value_parser = hook::editor_value_parser())]
         editor: Vec<String>,
+
+        /// Browser to uninstall native messaging for (repeatable).
+        #[arg(long, short, value_parser = hook::browser_value_parser())]
+        browser: Vec<String>,
 
         /// Remove from a project-local settings file instead of global.
         #[arg(long, short)]
@@ -216,14 +224,16 @@ impl Command {
             Command::Install {
                 agent,
                 editor,
+                browser,
                 project,
                 dev,
-            } => install::install(agent, editor, project, dev),
+            } => install::install(agent, editor, browser, project, dev),
             Command::Uninstall {
                 agent,
                 editor,
+                browser,
                 project,
-            } => install::uninstall(agent, editor, project),
+            } => install::uninstall(agent, editor, browser, project),
         }
     }
 }

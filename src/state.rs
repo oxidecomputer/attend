@@ -101,6 +101,8 @@ pub(crate) struct InstallMeta {
     pub version: String,
     pub agents: Vec<String>,
     pub editors: Vec<String>,
+    #[serde(default)]
+    pub browsers: Vec<String>,
     pub dev: bool,
     /// Project directories where hooks have been installed via `--project`.
     #[serde(default)]

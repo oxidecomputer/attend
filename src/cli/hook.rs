@@ -10,6 +10,11 @@ pub(super) fn editor_value_parser() -> clap::builder::PossibleValuesParser {
     clap::builder::PossibleValuesParser::new(crate::editor::EDITORS.iter().map(|e| e.name()))
 }
 
+/// Value parser that validates browser names against registered backends.
+pub(super) fn browser_value_parser() -> clap::builder::PossibleValuesParser {
+    clap::builder::PossibleValuesParser::new(crate::browser::BROWSERS.iter().map(|b| b.name()))
+}
+
 /// Hook event subcommands with a mandatory --agent flag.
 #[derive(Subcommand)]
 pub enum HookEvent {

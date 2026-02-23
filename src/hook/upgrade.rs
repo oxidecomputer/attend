@@ -42,6 +42,7 @@ pub(super) fn auto_upgrade_hooks() {
         version: running.to_string(),
         agents: meta.agents,
         editors: meta.editors,
+        browsers: meta.browsers,
         dev: meta.dev,
         project_paths: meta.project_paths,
     });

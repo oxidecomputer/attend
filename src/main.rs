@@ -8,6 +8,7 @@ compile_error!("attend requires a Unix platform (macOS or Linux)");
 extern crate objc;
 
 mod agent;
+mod browser;
 mod cli;
 mod config;
 mod editor;
