@@ -107,6 +107,20 @@ pub enum Event {
         /// The selected text.
         text: String,
     },
+    /// Text selected in a browser, with rich page context.
+    /// Delivered via a browser extension's native messaging bridge.
+    BrowserSelection {
+        /// Seconds from recording start (or wall-clock offset for bridge events).
+        offset_secs: f64,
+        /// Page URL.
+        url: String,
+        /// Page title.
+        title: String,
+        /// The selected text.
+        text: String,
+        /// Whether the selection is inside a `<code>`/`<pre>` block.
+        is_code: bool,
+    },
 }
 
 impl Event {
@@ -116,7 +130,8 @@ impl Event {
             Event::Words { offset_secs, .. }
             | Event::EditorSnapshot { offset_secs, .. }
             | Event::FileDiff { offset_secs, .. }
-            | Event::ExternalSelection { offset_secs, .. } => *offset_secs,
+            | Event::ExternalSelection { offset_secs, .. }
+            | Event::BrowserSelection { offset_secs, .. } => *offset_secs,
         }
     }
 }
@@ -324,7 +339,7 @@ fn process_run(mut run: Vec<Event>) -> Vec<Event> {
             } => {
                 diffs.push((offset_secs, path, old, new));
             }
-            Event::ExternalSelection { .. } => {
+            Event::ExternalSelection { .. } | Event::BrowserSelection { .. } => {
                 ext_selections.push(event);
             }
             Event::Words { .. } => unreachable!("run should not contain Words"),

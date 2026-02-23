@@ -212,6 +212,43 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                 };
                 out.push_str(&format!("> [{source}] \"{}\"\n", text.trim()));
             }
+            Event::BrowserSelection {
+                url,
+                title,
+                text,
+                is_code,
+                ..
+            } => {
+                if in_prose {
+                    out.push('\n');
+                    in_prose = false;
+                }
+                if !out.is_empty() && !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push('\n');
+                // Browser selections are not snipped: they represent ephemeral
+                // page content that cannot be reconstructed after navigation.
+                let link = if title.is_empty() {
+                    format!("> <{url}>")
+                } else {
+                    format!("> [{title}]({url})")
+                };
+                if *is_code {
+                    out.push_str(&link);
+                    out.push('\n');
+                    out.push_str("```\n");
+                    out.push_str(text);
+                    if !text.ends_with('\n') {
+                        out.push('\n');
+                    }
+                    out.push_str("```\n");
+                } else {
+                    out.push_str(&link);
+                    out.push('\n');
+                    out.push_str(&format!("> \"{}\"\n", text.trim()));
+                }
+            }
         }
     }
 

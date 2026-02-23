@@ -94,8 +94,8 @@ fn filter_events(events: &mut Vec<Event>, cwd: &Utf8Path, include_dirs: &[Utf8Pa
             !regions.is_empty()
         }
         Event::FileDiff { path, .. } => path_included(path, cwd, include_dirs),
-        // External selections are not path-based: pass through unconditionally.
-        Event::ExternalSelection { .. } => true,
+        // External/browser selections are not path-based: pass through unconditionally.
+        Event::ExternalSelection { .. } | Event::BrowserSelection { .. } => true,
     });
 }
 
@@ -120,8 +120,10 @@ fn relativize_events(events: &mut [Event], cwd: &Utf8Path) {
             Event::FileDiff { path, .. } => {
                 *path = relativize_str(path, cwd);
             }
-            // External selections have no file paths to relativize.
-            Event::Words { .. } | Event::ExternalSelection { .. } => {}
+            // External/browser selections have no file paths to relativize.
+            Event::Words { .. }
+            | Event::ExternalSelection { .. }
+            | Event::BrowserSelection { .. } => {}
         }
     }
 }
