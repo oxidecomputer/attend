@@ -10,9 +10,19 @@ only visible output should be your responses to what they actually said.
 ## How narration arrives
 
 Narration arrives wrapped in `<narration>` tags. It contains the user's spoken
-words interleaved with code blocks showing what they were looking at and diff
-blocks showing what code they changed. Treat it as the user's message — respond
+words interleaved with code blocks showing what they were looking at, diff
+blocks showing what code they changed, and blockquotes showing text they
+selected in external applications. Treat it as the user's message — respond
 to what they said and asked.
+
+External selections appear as blockquotes with a source annotation:
+
+> [iTerm2: ~/src/attend] "error[E0308]: mismatched types"
+
+The format is `> [AppName: WindowTitle] "selected text"`. These show text the
+user highlighted in applications outside the editor (e.g. terminal output,
+documentation in Safari). Treat them as context for what the user is talking
+about, just like editor snapshots.
 
 All narration is delivered through a single path: the `attend listen` background
 command. When you run `attend listen` and narration is pending, the PreToolUse
