@@ -602,13 +602,12 @@ fn ext_selection_empty_window_title() {
 // ── BrowserSelection compression ──────────────────────────────────────────
 
 /// Helper: browser selection event.
-fn browser_sel(t: f64, url: &str, text: &str, is_code: bool) -> Event {
+fn browser_sel(t: f64, url: &str, text: &str) -> Event {
     Event::BrowserSelection {
         offset_secs: t,
         url: url.to_string(),
         title: "Page Title".to_string(),
         text: text.to_string(),
-        is_code,
     }
 }
 
@@ -616,9 +615,9 @@ fn browser_sel(t: f64, url: &str, text: &str, is_code: bool) -> Event {
 #[test]
 fn browser_selection_dedup_same_url_text() {
     let mut events = vec![
-        browser_sel(1.0, "https://docs.rs/tokio", "spawn", false),
-        browser_sel(2.0, "https://docs.rs/tokio", "spawn", false),
-        browser_sel(3.0, "https://docs.rs/tokio", "spawn", false),
+        browser_sel(1.0, "https://docs.rs/tokio", "spawn"),
+        browser_sel(2.0, "https://docs.rs/tokio", "spawn"),
+        browser_sel(3.0, "https://docs.rs/tokio", "spawn"),
     ];
     compress_and_merge(&mut events);
     assert_eq!(events.len(), 1, "duplicates compressed to one");
@@ -629,8 +628,8 @@ fn browser_selection_dedup_same_url_text() {
 #[test]
 fn browser_selection_different_text_kept() {
     let mut events = vec![
-        browser_sel(1.0, "https://docs.rs/tokio", "spawn", false),
-        browser_sel(2.0, "https://docs.rs/tokio", "join", false),
+        browser_sel(1.0, "https://docs.rs/tokio", "spawn"),
+        browser_sel(2.0, "https://docs.rs/tokio", "join"),
     ];
     compress_and_merge(&mut events);
     assert_eq!(events.len(), 2, "different text means different selections");
@@ -640,8 +639,8 @@ fn browser_selection_different_text_kept() {
 #[test]
 fn browser_selection_different_urls_kept() {
     let mut events = vec![
-        browser_sel(1.0, "https://docs.rs/tokio", "spawn", false),
-        browser_sel(2.0, "https://docs.rs/hyper", "spawn", false),
+        browser_sel(1.0, "https://docs.rs/tokio", "spawn"),
+        browser_sel(2.0, "https://docs.rs/hyper", "spawn"),
     ];
     compress_and_merge(&mut events);
     assert_eq!(events.len(), 2, "different urls survive");
@@ -651,12 +650,12 @@ fn browser_selection_different_urls_kept() {
 #[test]
 fn browser_selection_across_word_boundary() {
     let mut events = vec![
-        browser_sel(1.0, "https://docs.rs/tokio", "spawn", false),
+        browser_sel(1.0, "https://docs.rs/tokio", "spawn"),
         Event::Words {
             offset_secs: 2.0,
             text: "look at this".to_string(),
         },
-        browser_sel(3.0, "https://docs.rs/tokio", "spawn", false),
+        browser_sel(3.0, "https://docs.rs/tokio", "spawn"),
     ];
     compress_and_merge(&mut events);
     let count = events
@@ -666,43 +665,22 @@ fn browser_selection_across_word_boundary() {
     assert_eq!(count, 2, "word boundary prevents merge");
 }
 
-/// BrowserSelection renders code as fenced code block.
+/// BrowserSelection renders with link header and markdown content.
 #[test]
-fn browser_selection_renders_code() {
+fn browser_selection_renders_markdown() {
     let mut events = vec![browser_sel(
         1.0,
         "https://docs.rs/tokio",
-        "pub fn spawn(&mut self)",
-        true,
+        "**bold** and [a link](https://example.com)",
     )];
     let md = format_markdown(&mut events, SnipConfig::default());
     assert!(
         md.contains("> [Page Title](https://docs.rs/tokio)"),
-        "link: {md:?}"
+        "link header: {md:?}"
     );
     assert!(
-        md.contains("```\npub fn spawn(&mut self)\n```"),
-        "code block: {md:?}"
-    );
-}
-
-/// BrowserSelection renders prose as blockquote.
-#[test]
-fn browser_selection_renders_prose() {
-    let mut events = vec![browser_sel(
-        1.0,
-        "https://docs.rs/tokio",
-        "Spawns the command as a child process.",
-        false,
-    )];
-    let md = format_markdown(&mut events, SnipConfig::default());
-    assert!(
-        md.contains("> [Page Title](https://docs.rs/tokio)"),
-        "link: {md:?}"
-    );
-    assert!(
-        md.contains("> \"Spawns the command as a child process.\""),
-        "prose: {md:?}"
+        md.contains("**bold** and [a link](https://example.com)"),
+        "markdown content: {md:?}"
     );
 }
 
@@ -714,7 +692,6 @@ fn browser_selection_empty_title() {
         url: "https://example.com".to_string(),
         title: String::new(),
         text: "hello".to_string(),
-        is_code: false,
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
     assert!(
@@ -731,7 +708,7 @@ fn browser_selection_empty_title() {
 fn browser_beats_external_same_text() {
     let mut events = vec![
         ext_sel(1.0, "Firefox", "selected text"),
-        browser_sel(1.2, "https://example.com", "selected text", false),
+        browser_sel(1.2, "https://example.com", "selected text"),
     ];
     compress_and_merge(&mut events);
     assert_eq!(events.len(), 1, "external selection should be dropped");
@@ -746,7 +723,7 @@ fn browser_beats_external_same_text() {
 fn browser_and_external_different_text_both_kept() {
     let mut events = vec![
         ext_sel(1.0, "Firefox", "different text"),
-        browser_sel(1.2, "https://example.com", "other text", false),
+        browser_sel(1.2, "https://example.com", "other text"),
     ];
     compress_and_merge(&mut events);
     assert_eq!(events.len(), 2, "different text means both survive");
@@ -758,7 +735,7 @@ fn browser_and_external_different_text_both_kept() {
 fn browser_and_external_far_apart_both_kept() {
     let mut events = vec![
         ext_sel(1.0, "Firefox", "selected text"),
-        browser_sel(2.0, "https://example.com", "selected text", false),
+        browser_sel(2.0, "https://example.com", "selected text"),
     ];
     compress_and_merge(&mut events);
     assert_eq!(events.len(), 2, "too far apart, both survive");

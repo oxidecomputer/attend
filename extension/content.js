@@ -1,7 +1,8 @@
 // Attend Browser Bridge: content script
 //
-// Observes text selections on the page and sends them to the background
-// script for relay to the attend native messaging host.
+// Observes text selections on the page and sends the selected HTML to
+// the background script for relay to the attend native messaging host.
+// The Rust bridge converts HTML to markdown using htmd.
 
 let debounceTimer = null;
 const DEBOUNCE_MS = 300;
@@ -13,29 +14,22 @@ document.addEventListener("selectionchange", () => {
 
 function onSelectionStable() {
   const sel = window.getSelection();
-  const text = sel ? sel.toString().trim() : "";
+  if (!sel || sel.isCollapsed) return;
 
+  const text = sel.toString().trim();
   if (!text) return;
 
-  // Detect whether the selection is inside a code block.
-  let isCode = false;
-  if (sel.rangeCount > 0) {
-    const range = sel.getRangeAt(0);
-    const ancestor = range.commonAncestorContainer;
-    const el =
-      ancestor.nodeType === Node.ELEMENT_NODE
-        ? ancestor
-        : ancestor.parentElement;
-    if (el && el.closest("code, pre, .highlight, .code")) {
-      isCode = true;
-    }
-  }
+  // Serialize the selection as an HTML fragment.
+  const range = sel.getRangeAt(0);
+  const fragment = range.cloneContents();
+  const wrapper = document.createElement("div");
+  wrapper.appendChild(fragment);
+  const html = wrapper.innerHTML;
 
   browser.runtime.sendMessage({
     type: "selection",
-    text: text,
+    html: html,
     url: location.href,
     title: document.title,
-    is_code: isCode,
   });
 }

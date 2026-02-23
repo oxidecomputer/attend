@@ -158,7 +158,6 @@ fn filter_events_keeps_browser_selection() {
         url: "https://example.com".to_string(),
         title: "Example Page".to_string(),
         text: "some text".to_string(),
-        is_code: false,
     }];
     filter_events(&mut events, cwd, &[]);
     assert_eq!(events.len(), 1, "browser selection should pass through");

@@ -107,14 +107,12 @@ fn arb_browser_selection() -> impl Strategy<Value = Event> {
         ],
         "[a-z ]{1,30}",
         "[a-z ]{1,30}",
-        proptest::bool::ANY,
     )
-        .prop_map(|(t, url, title, text, is_code)| Event::BrowserSelection {
+        .prop_map(|(t, url, title, text)| Event::BrowserSelection {
             offset_secs: t,
             url,
             title,
             text,
-            is_code,
         })
 }
 

@@ -8,10 +8,9 @@ browser.runtime.onMessage.addListener((msg) => {
 
   browser.runtime
     .sendNativeMessage("attend", {
-      text: msg.text,
+      html: msg.html,
       url: msg.url,
       title: msg.title,
-      is_code: msg.is_code,
     })
     .catch((err) => {
       // Native host not installed or not running: silently ignore.

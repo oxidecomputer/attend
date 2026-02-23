@@ -116,10 +116,8 @@ pub enum Event {
         url: String,
         /// Page title.
         title: String,
-        /// The selected text.
+        /// The selected content, converted from HTML to markdown by the bridge.
         text: String,
-        /// Whether the selection is inside a `<code>`/`<pre>` block.
-        is_code: bool,
     },
 }
 
@@ -269,7 +267,7 @@ fn net_change_diffs(
 /// - At most one `BrowserSelection` per unique (url, text) pair.
 /// - When a `BrowserSelection` and `ExternalSelection` have matching text
 ///   (trimmed) within 500ms, the `ExternalSelection` is dropped (the browser
-///   extension provides richer context: URL, is_code).
+///   extension provides richer context: URL, HTML→markdown conversion).
 fn collapse_ext_selections(selections: Vec<Event>) -> Vec<Event> {
     let mut result: Vec<Event> = Vec::new();
 
@@ -312,7 +310,7 @@ fn collapse_ext_selections(selections: Vec<Event>) -> Vec<Event> {
 /// `BrowserSelection` with matching text (trimmed).
 ///
 /// "Nearby" means within 500ms (0.5 seconds). The browser extension provides
-/// richer context (URL, is_code) than the accessibility API, so the browser
+/// richer context (URL, HTML→markdown) than the accessibility API, so the browser
 /// event wins.
 fn dedup_browser_vs_external(events: &mut Vec<Event>) {
     const DEDUP_WINDOW_SECS: f64 = 0.5;

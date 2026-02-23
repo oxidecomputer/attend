@@ -21,15 +21,17 @@ use crate::util;
 /// The JSON message sent by the browser extension.
 #[derive(Debug, Deserialize)]
 struct BridgeMessage {
-    /// The selected text.
-    text: String,
+    /// The selected content as an HTML fragment.
+    html: String,
     /// Page URL.
     url: String,
     /// Page title.
     title: String,
-    /// Whether the selection is inside a `<code>`/`<pre>` block.
-    #[serde(default)]
-    is_code: bool,
+}
+
+/// Convert an HTML fragment to markdown using htmd.
+fn html_to_markdown(html: &str) -> String {
+    htmd::convert(html).unwrap_or_else(|_| html.to_string())
 }
 
 /// Run the browser bridge: read one native messaging message, write a
@@ -42,8 +44,11 @@ pub(super) fn run() -> anyhow::Result<()> {
     let msg: BridgeMessage =
         native_messaging::host::recv_json(&mut stdin, native_messaging::host::MAX_FROM_BROWSER)?;
 
+    // Convert HTML to markdown.
+    let text = html_to_markdown(&msg.html);
+
     // Skip empty selections.
-    if msg.text.trim().is_empty() {
+    if text.trim().is_empty() {
         native_messaging::host::send_json(&mut stdout, &serde_json::json!({"status": "skipped"}))?;
         return Ok(());
     }
@@ -66,8 +71,7 @@ pub(super) fn run() -> anyhow::Result<()> {
         offset_secs: 0.0,
         url: msg.url,
         title: msg.title,
-        text: msg.text,
-        is_code: msg.is_code,
+        text,
     }];
 
     let json = serde_json::to_string(&events)?;
@@ -94,24 +98,40 @@ mod tests {
     #[test]
     fn deserialize_bridge_message() {
         let json = r#"{
-            "text": "pub fn spawn(&mut self)",
+            "html": "<code>pub fn spawn(&amp;mut self)</code>",
             "url": "https://docs.rs/tokio/latest/tokio/process/",
-            "title": "tokio::process - Rust",
-            "is_code": true
+            "title": "tokio::process - Rust"
         }"#;
         let msg: BridgeMessage = serde_json::from_str(json).unwrap();
-        assert_eq!(msg.text, "pub fn spawn(&mut self)");
+        assert_eq!(msg.html, "<code>pub fn spawn(&amp;mut self)</code>");
         assert_eq!(msg.url, "https://docs.rs/tokio/latest/tokio/process/");
         assert_eq!(msg.title, "tokio::process - Rust");
-        assert!(msg.is_code);
     }
 
-    /// is_code defaults to false when not present.
+    /// HTML is converted to markdown by the bridge.
     #[test]
-    fn deserialize_bridge_message_no_is_code() {
-        let json = r#"{"text": "hello", "url": "https://example.com", "title": "Example"}"#;
-        let msg: BridgeMessage = serde_json::from_str(json).unwrap();
-        assert!(!msg.is_code);
+    fn html_to_markdown_basic() {
+        assert_eq!(html_to_markdown("<strong>bold</strong>"), "**bold**");
+        assert_eq!(
+            html_to_markdown(r#"<a href="https://example.com">link</a>"#),
+            "[link](https://example.com)"
+        );
+        assert_eq!(html_to_markdown("<code>foo()</code>"), "`foo()`");
+    }
+
+    /// Code blocks with language hints are converted to fenced blocks.
+    #[test]
+    fn html_to_markdown_code_block() {
+        let html = r#"<pre><code class="language-rust">fn main() {}</code></pre>"#;
+        let md = html_to_markdown(html);
+        assert!(md.contains("```rust"), "should have language hint: {md:?}");
+        assert!(md.contains("fn main() {}"), "should have code: {md:?}");
+    }
+
+    /// Plain text without HTML passes through.
+    #[test]
+    fn html_to_markdown_plain_text() {
+        assert_eq!(html_to_markdown("just plain text"), "just plain text");
     }
 
     /// Native messaging round-trip: encode a message, decode it back.

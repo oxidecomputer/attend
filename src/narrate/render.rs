@@ -213,11 +213,7 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                 out.push_str(&format!("> [{source}] \"{}\"\n", text.trim()));
             }
             Event::BrowserSelection {
-                url,
-                title,
-                text,
-                is_code,
-                ..
+                url, title, text, ..
             } => {
                 if in_prose {
                     out.push('\n');
@@ -229,24 +225,17 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                 out.push('\n');
                 // Browser selections are not snipped: they represent ephemeral
                 // page content that cannot be reconstructed after navigation.
-                let link = if title.is_empty() {
-                    format!("> <{url}>")
+                // The text field contains markdown converted from HTML by the
+                // browser bridge (via htmd).
+                if title.is_empty() {
+                    out.push_str(&format!("> <{url}>\n"));
                 } else {
-                    format!("> [{title}]({url})")
-                };
-                if *is_code {
-                    out.push_str(&link);
+                    out.push_str(&format!("> [{title}]({url})\n"));
+                }
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    out.push_str(trimmed);
                     out.push('\n');
-                    out.push_str("```\n");
-                    out.push_str(text);
-                    if !text.ends_with('\n') {
-                        out.push('\n');
-                    }
-                    out.push_str("```\n");
-                } else {
-                    out.push_str(&link);
-                    out.push('\n');
-                    out.push_str(&format!("> \"{}\"\n", text.trim()));
                 }
             }
         }
