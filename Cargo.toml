@@ -45,6 +45,7 @@ similar = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ureq = "3"
+native_messaging = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 accessibility = "0.2"

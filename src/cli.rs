@@ -1,3 +1,4 @@
+mod browser_bridge;
 mod glance;
 mod hook;
 mod install;
@@ -154,6 +155,9 @@ pub enum Command {
     /// Respond to agent lifecycle events (used by installed hooks).
     #[command(display_order = 10, subcommand)]
     Hook(HookEvent),
+    /// Native messaging host for browser extensions (internal).
+    #[command(display_order = 11, hide = true)]
+    BrowserBridge,
 }
 
 impl Cli {
@@ -208,6 +212,7 @@ impl Command {
             }
             Command::Narrate(cmd) => cmd.run(),
             Command::Hook(event) => event.run(),
+            Command::BrowserBridge => browser_bridge::run(),
             Command::Install {
                 agent,
                 editor,
