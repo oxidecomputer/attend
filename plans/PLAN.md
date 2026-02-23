@@ -28,6 +28,7 @@ be performed as specified, please do it.
 | 9 | [Test Hardening](./phase-09-test-hardening.md) | Done | Phase 3 |
 | 10 | [merge.rs Deep Refactor](./phase-10-merge-refactor.md) | Done | Phase 9 |
 | 11 | [Persistent Daemon](./phase-11-persistent-daemon.md) | Not started | Phases 6, 8 |
+| 12a | [External Context Sources (Part A)](./phase-12-context-sources.md) | Done | Phase 10 |
 
 ## Item Progress
 
@@ -114,6 +115,18 @@ be performed as specified, please do it.
 - [x] 10.1 Comprehensive test suite for merge.rs (364c25d)
 - [x] 10.2 Single streaming pass rewrite (f7e8eed)
 - [x] 10.3 Documentation (f150ba5)
+
+### Phase 12a: External Context Sources (Part A)
+- [x] A1 `ExternalSource` trait, `ExternalSnapshot`, `platform_source()` dispatch
+- [x] A2 macOS backend (`ext_capture/macos.rs`): AX queries via `accessibility` crate
+- [x] A3 New `Event::ExternalSelection` variant + serde
+- [x] A4 Polling thread, `ExtDwellTracker`, dedup logic in `ext_capture.rs`
+- [x] A5 Wire ext_capture into `CaptureHandle` (third thread)
+- [x] A6 `render.rs`: render ExternalSelection as blockquote
+- [x] A7 `merge.rs`: compress consecutive same-app selections
+- [x] A8 `receive.rs`: pass ExternalSelection through filter unchanged
+- [x] A9 Config: `ext_ignore_apps` with default `["Zed"]`
+- [x] A10 Tests: DwellTracker unit tests, merge/compress/prop tests, render tests, receive filter test
 
 ### Phase 11: Persistent Daemon
 - [ ] 11.1 Benchmark model load time

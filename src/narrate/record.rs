@@ -187,8 +187,8 @@ impl DaemonState {
             .editor_capture
             .take()
             .expect("editor capture already stopped");
-        let (editor_snapshots, file_diffs) = editor.collect();
-        self.transcribe_and_write(editor_snapshots, file_diffs)?;
+        let (editor_snapshots, file_diffs, ext_selections) = editor.collect();
+        self.transcribe_and_write(editor_snapshots, file_diffs, ext_selections)?;
         Ok(true)
     }
 
@@ -215,8 +215,8 @@ impl DaemonState {
             .editor_capture
             .as_ref()
             .expect("editor capture already stopped");
-        let (editor_snapshots, file_diffs) = editor.drain();
-        self.transcribe_and_write(editor_snapshots, file_diffs)?;
+        let (editor_snapshots, file_diffs, ext_selections) = editor.drain();
+        self.transcribe_and_write(editor_snapshots, file_diffs, ext_selections)?;
 
         self.time_base_secs += elapsed;
         self.last_drain = Instant::now();
@@ -279,6 +279,7 @@ impl DaemonState {
         &mut self,
         editor_snapshots: Vec<Event>,
         file_diffs: Vec<Event>,
+        ext_selections: Vec<Event>,
     ) -> anyhow::Result<()> {
         let remaining_chunks = std::mem::take(&mut self.buffered_chunks);
         let mut all_words = std::mem::take(&mut self.pre_transcribed);
@@ -321,7 +322,11 @@ impl DaemonState {
             }
         }
 
-        if all_words.is_empty() && editor_snapshots.is_empty() && file_diffs.is_empty() {
+        if all_words.is_empty()
+            && editor_snapshots.is_empty()
+            && file_diffs.is_empty()
+            && ext_selections.is_empty()
+        {
             tracing::debug!("No content captured, discarding.");
             return Ok(());
         }
@@ -337,6 +342,7 @@ impl DaemonState {
 
         events.extend(editor_snapshots);
         events.extend(file_diffs);
+        events.extend(ext_selections);
 
         // Sort and compress/merge events, then serialize as JSON.
         merge::compress_and_merge(&mut events);
@@ -548,9 +554,10 @@ pub fn daemon() -> anyhow::Result<()> {
     let capture = audio::start_capture()?;
     let sample_rate = capture.sample_rate();
 
-    // Start editor polling and file diff tracking on background threads.
-    // Pass None for cwd so paths stay absolute — filtering is deferred to receive.
-    let editor_events = capture::start(None)?;
+    // Start editor polling, file diff tracking, and external selection capture
+    // on background threads. Pass None for cwd so paths stay absolute — filtering
+    // is deferred to receive.
+    let editor_events = capture::start(None, config.ext_ignore_apps.clone())?;
 
     // Spawn model preload on a background thread. The first call to
     // transcriber.get() blocks until the model is ready. This lets audio

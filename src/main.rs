@@ -3,6 +3,10 @@
 #[cfg(not(unix))]
 compile_error!("attend requires a Unix platform (macOS or Linux)");
 
+#[cfg(target_os = "macos")]
+#[macro_use]
+extern crate objc;
+
 mod agent;
 mod cli;
 mod config;

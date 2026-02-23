@@ -82,12 +82,28 @@ fn arb_diff() -> impl Strategy<Value = Event> {
         })
 }
 
+fn arb_ext_selection() -> impl Strategy<Value = Event> {
+    (
+        0.0..100.0f64,
+        prop_oneof!["iTerm2", "Safari", "Firefox"],
+        "[a-z ]{1,30}",
+        "[a-z ]{1,30}",
+    )
+        .prop_map(|(t, app, title, text)| Event::ExternalSelection {
+            offset_secs: t,
+            app,
+            window_title: title,
+            text,
+        })
+}
+
 fn arb_event() -> impl Strategy<Value = Event> {
     prop_oneof![
         3 => arb_words(),
         2 => arb_cursor_snapshot(),
         2 => arb_selection_snapshot(),
         1 => arb_diff(),
+        1 => arb_ext_selection(),
     ]
 }
 
@@ -284,6 +300,12 @@ proptest! {
                         "empty diff path at index {i}"
                     );
                 }
+                Event::ExternalSelection { text, .. } => {
+                    prop_assert!(
+                        !text.is_empty(),
+                        "empty external selection text at index {i}"
+                    );
+                }
                 _ => {}
             }
         }
@@ -316,6 +338,42 @@ proptest! {
                 prev_was_cursor_only = true;
             }
         }
+    }
+
+    /// ExternalSelection events are never dropped by compress_and_merge
+    /// (they have no compression logic that could eliminate them entirely,
+    /// only dedup within a run).
+    #[test]
+    fn merge_preserves_ext_selection_text(events in arb_events()) {
+        // Collect unique (app, text) pairs across all wordless runs.
+        // Within a run, dedup keeps only one per (app, text), so count
+        // unique pairs per run.
+        let mut sorted = events.clone();
+        sorted.sort_by(|a, b| a.offset_secs().partial_cmp(&b.offset_secs()).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut expected_count = 0usize;
+        let mut run_pairs: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+
+        let flush = |pairs: &mut std::collections::HashSet<(String, String)>, count: &mut usize| {
+            *count += pairs.len();
+            pairs.clear();
+        };
+
+        for e in &sorted {
+            match e {
+                Event::Words { .. } => flush(&mut run_pairs, &mut expected_count),
+                Event::ExternalSelection { app, text, .. } => {
+                    run_pairs.insert((app.clone(), text.clone()));
+                }
+                _ => {}
+            }
+        }
+        flush(&mut run_pairs, &mut expected_count);
+
+        let mut merged = events;
+        compress_and_merge(&mut merged);
+        let actual_count = merged.iter().filter(|e| matches!(e, Event::ExternalSelection { .. })).count();
+        prop_assert_eq!(actual_count, expected_count);
     }
 
     /// Each diff path from input appears in output unless the net change

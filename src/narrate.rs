@@ -10,6 +10,7 @@ mod capture;
 mod clean;
 mod diff_capture;
 mod editor_capture;
+mod ext_capture;
 pub(crate) mod merge;
 pub(crate) mod receive;
 pub(crate) mod record;

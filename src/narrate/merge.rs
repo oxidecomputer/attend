@@ -96,6 +96,17 @@ pub enum Event {
         /// File content after the change.
         new: String,
     },
+    /// Text selected in an external application (via platform accessibility API).
+    ExternalSelection {
+        /// Seconds from recording start.
+        offset_secs: f64,
+        /// Application name (e.g. "Firefox", "iTerm2", "Safari").
+        app: String,
+        /// Window title (e.g. page title, terminal tab name).
+        window_title: String,
+        /// The selected text.
+        text: String,
+    },
 }
 
 impl Event {
@@ -104,7 +115,8 @@ impl Event {
         match self {
             Event::Words { offset_secs, .. }
             | Event::EditorSnapshot { offset_secs, .. }
-            | Event::FileDiff { offset_secs, .. } => *offset_secs,
+            | Event::FileDiff { offset_secs, .. }
+            | Event::ExternalSelection { offset_secs, .. } => *offset_secs,
         }
     }
 }
@@ -232,6 +244,37 @@ fn net_change_diffs(
     by_path
 }
 
+/// Collapse consecutive `ExternalSelection` events with the same app and text.
+///
+/// **Input**: external selection events from a run, in chronological order.
+/// **Output**: deduplicated events, keeping only the last per (app, text) pair.
+///
+/// **Invariant**: within each run, at most one `ExternalSelection` survives
+/// per unique combination of app name and selected text.
+fn collapse_ext_selections(selections: Vec<Event>) -> Vec<Event> {
+    let mut result: Vec<Event> = Vec::new();
+
+    for event in selections {
+        let Event::ExternalSelection {
+            ref app, ref text, ..
+        } = event
+        else {
+            result.push(event);
+            continue;
+        };
+        // Replace a previous entry with the same app + text.
+        if let Some(existing) = result.iter_mut().find(|e| {
+            matches!(e, Event::ExternalSelection { app: a, text: t, .. } if a == app && t == text)
+        }) {
+            *existing = event;
+        } else {
+            result.push(event);
+        }
+    }
+
+    result
+}
+
 // ── Run processing ──────────────────────────────────────────────────────────
 
 /// Process a single non-Words run through the three composable
@@ -262,6 +305,7 @@ fn process_run(mut run: Vec<Event>) -> Vec<Event> {
     // Phase 2 & 3: partition, then union snapshots and net-change diffs.
     let mut snapshots = Vec::new();
     let mut diffs = Vec::new();
+    let mut ext_selections = Vec::new();
 
     for event in run {
         match event {
@@ -280,15 +324,19 @@ fn process_run(mut run: Vec<Event>) -> Vec<Event> {
             } => {
                 diffs.push((offset_secs, path, old, new));
             }
+            Event::ExternalSelection { .. } => {
+                ext_selections.push(event);
+            }
             Event::Words { .. } => unreachable!("run should not contain Words"),
         }
     }
 
     let merged_snap = union_snapshots(snapshots);
     let merged_diffs = net_change_diffs(diffs);
+    let merged_ext = collapse_ext_selections(ext_selections);
 
     // Reassemble in chronological order.
-    let mut result = Vec::with_capacity(1 + merged_diffs.len());
+    let mut result = Vec::with_capacity(1 + merged_diffs.len() + merged_ext.len());
 
     if let Some((offset_secs, files, regions)) = merged_snap
         && !regions.is_empty()
@@ -308,6 +356,8 @@ fn process_run(mut run: Vec<Event>) -> Vec<Event> {
             new,
         });
     }
+
+    result.extend(merged_ext);
 
     result.sort_by(|a, b| {
         a.offset_secs()

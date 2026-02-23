@@ -187,6 +187,29 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                 }
                 out.push_str("```\n");
             }
+            Event::ExternalSelection {
+                app,
+                window_title,
+                text,
+                ..
+            } => {
+                if in_prose {
+                    out.push('\n');
+                    in_prose = false;
+                }
+                if !out.is_empty() && !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push('\n');
+                // Render as a blockquote with source annotation.
+                let snipped = snip(text, snip_cfg, None);
+                let source = if window_title.is_empty() {
+                    app.to_string()
+                } else {
+                    format!("{app}: {window_title}")
+                };
+                out.push_str(&format!("> [{source}] \"{}\"\n", snipped.trim()));
+            }
         }
     }
 

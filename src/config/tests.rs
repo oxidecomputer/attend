@@ -117,6 +117,7 @@ fn merge_semantics() {
         model: None,
         silence_duration: None,
         archive_retention: None,
+        ext_ignore_apps: vec!["Zed".into()],
     };
     let other = Config {
         include_dirs: vec![Utf8PathBuf::from("/b")],
@@ -124,6 +125,7 @@ fn merge_semantics() {
         model: Some(Utf8PathBuf::from("/model")),
         silence_duration: Some(3.0),
         archive_retention: Some("30d".to_string()),
+        ext_ignore_apps: vec!["Slack".into()],
     };
     base.merge(other);
     assert_eq!(
@@ -136,6 +138,8 @@ fn merge_semantics() {
     assert_eq!(base.model, Some(Utf8PathBuf::from("/model")));
     assert_eq!(base.silence_duration, Some(3.0));
     assert_eq!(base.archive_retention, Some("30d".to_string()));
+    // Arrays are concatenated
+    assert_eq!(base.ext_ignore_apps, vec!["Zed", "Slack"]);
 }
 
 /// retention_duration parses human-friendly strings and defaults to 7 days.

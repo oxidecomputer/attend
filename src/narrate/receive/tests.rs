@@ -135,6 +135,20 @@ fn filter_events_drops_outside_diff() {
     assert!(events.is_empty());
 }
 
+/// External selections pass through the filter unconditionally (no file paths to check).
+#[test]
+fn filter_events_keeps_ext_selection() {
+    let cwd = Utf8Path::new("/project");
+    let mut events = vec![Event::ExternalSelection {
+        offset_secs: 0.0,
+        app: "iTerm2".to_string(),
+        window_title: "~/other-project".to_string(),
+        text: "error message".to_string(),
+    }];
+    filter_events(&mut events, cwd, &[]);
+    assert_eq!(events.len(), 1, "external selection should pass through");
+}
+
 /// Paths are made relative to cwd after filtering.
 #[test]
 fn relativize_events_strips_prefix() {

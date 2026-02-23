@@ -485,3 +485,116 @@ fn out_of_order_sorted_before_merge() {
         "output must be sorted"
     );
 }
+
+// ── ExternalSelection compression ─────────────────────────────────────────
+
+/// Helper: external selection event.
+fn ext_sel(t: f64, app: &str, text: &str) -> Event {
+    Event::ExternalSelection {
+        offset_secs: t,
+        app: app.to_string(),
+        window_title: "window".to_string(),
+        text: text.to_string(),
+    }
+}
+
+/// Consecutive external selections with the same app and text are deduplicated.
+#[test]
+fn ext_selection_dedup_same_app_text() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "error[E0308]"),
+        ext_sel(2.0, "iTerm2", "error[E0308]"),
+        ext_sel(3.0, "iTerm2", "error[E0308]"),
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 1, "duplicates compressed to one");
+    assert_eq!(events[0].offset_secs(), 3.0, "kept the latest");
+}
+
+/// External selections with different text survive compression.
+#[test]
+fn ext_selection_different_text_kept() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "first error"),
+        ext_sel(2.0, "iTerm2", "second error"),
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 2, "different text means different selections");
+}
+
+/// External selections with different apps survive compression.
+#[test]
+fn ext_selection_different_apps_kept() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "same text"),
+        ext_sel(2.0, "Safari", "same text"),
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 2, "different apps survive");
+}
+
+/// External selections interleaved with words are not merged across boundaries.
+#[test]
+fn ext_selection_across_word_boundary() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "error"),
+        Event::Words {
+            offset_secs: 2.0,
+            text: "look at this".to_string(),
+        },
+        ext_sel(3.0, "iTerm2", "error"),
+    ];
+    compress_and_merge(&mut events);
+    let ext_count = events
+        .iter()
+        .filter(|e| matches!(e, Event::ExternalSelection { .. }))
+        .count();
+    assert_eq!(ext_count, 2, "word boundary prevents merge");
+}
+
+/// External selections mix with editor snapshots in the same run.
+#[test]
+fn ext_selection_mixed_with_snapshots() {
+    let mut events = vec![
+        cursor_snap(1.0, "a.rs"),
+        ext_sel(2.0, "iTerm2", "error"),
+        cursor_snap(3.0, "b.rs"),
+    ];
+    compress_and_merge(&mut events);
+    // cursor a.rs should be compressed away, b.rs and ext_sel kept.
+    let has_ext = events
+        .iter()
+        .any(|e| matches!(e, Event::ExternalSelection { .. }));
+    assert!(has_ext, "external selection survives");
+}
+
+/// ExternalSelection renders as a blockquote.
+#[test]
+fn ext_selection_renders_blockquote() {
+    let mut events = vec![ext_sel(1.0, "iTerm2", "error[E0308]: mismatched types")];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    assert!(
+        md.contains("> [iTerm2: window]"),
+        "should have source annotation"
+    );
+    assert!(
+        md.contains("error[E0308]: mismatched types"),
+        "should contain the text"
+    );
+}
+
+/// ExternalSelection with empty window title omits the colon-separator.
+#[test]
+fn ext_selection_empty_window_title() {
+    let mut events = vec![Event::ExternalSelection {
+        offset_secs: 1.0,
+        app: "Safari".to_string(),
+        window_title: String::new(),
+        text: "some text".to_string(),
+    }];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    assert!(
+        md.contains("> [Safari]"),
+        "should use app name only: {md:?}"
+    );
+}
