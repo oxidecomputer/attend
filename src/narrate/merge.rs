@@ -260,25 +260,46 @@ fn net_change_diffs(
 /// Collapse duplicate external and browser selection events within a run.
 ///
 /// **Input**: external/browser selection events from a run, in chronological order.
-/// **Output**: deduplicated events, keeping only the last per discriminant key.
+/// **Output**: deduplicated events with progressive selections forward-merged.
 ///
-/// **Invariants**:
-/// - At most one `ExternalSelection` per unique (app, text) pair.
-/// - At most one `BrowserSelection` per unique (url, text) pair.
-/// - When a `BrowserSelection` and `ExternalSelection` have matching text
-///   (trimmed) within 500ms, the `ExternalSelection` is dropped (the browser
-///   extension provides richer context: URL, HTML→markdown conversion).
+/// **Forward-merge rule** (ExternalSelection, same app + window_title):
+/// When an earlier selection's text is a substring of a later one, the earlier
+/// is dropped (the user was progressively selecting more text). When the later
+/// selection is *narrower* (a substring of an earlier one), it starts a new
+/// chain — both survive, and the new selection becomes the merge target for
+/// future extensions.
+///
+/// **BrowserSelection**: deduplicated by (url, text) — keep latest per pair.
+///
+/// **Cross-type**: when a BrowserSelection and ExternalSelection have matching
+/// text within 500ms, the ExternalSelection is dropped.
 fn collapse_ext_selections(selections: Vec<Event>) -> Vec<Event> {
     let mut result: Vec<Event> = Vec::new();
 
     for event in selections {
         match &event {
-            Event::ExternalSelection { app, text, .. } => {
-                // Replace a previous entry with the same app + text.
-                if let Some(existing) = result.iter_mut().find(|e| {
-                    matches!(e, Event::ExternalSelection { app: a, text: t, .. } if a == app && t == text)
-                }) {
-                    *existing = event;
+            Event::ExternalSelection {
+                app,
+                window_title,
+                text,
+                ..
+            } => {
+                // Forward-merge: check if an earlier selection from the same
+                // source is a substring of this one (progressive selection).
+                let merged = result.iter().rposition(|e| {
+                    matches!(
+                        e,
+                        Event::ExternalSelection {
+                            app: a,
+                            window_title: wt,
+                            text: t,
+                            ..
+                        } if a == app && wt == window_title && text.contains(t.as_str())
+                    )
+                });
+                if let Some(idx) = merged {
+                    // Replace the earlier, narrower selection with this wider one.
+                    result[idx] = event;
                 } else {
                     result.push(event);
                 }

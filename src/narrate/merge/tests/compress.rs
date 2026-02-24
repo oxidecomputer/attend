@@ -599,6 +599,95 @@ fn ext_selection_empty_window_title() {
     );
 }
 
+/// Progressive selection: earlier narrower selection is forward-merged into
+/// a later wider one from the same app + window.
+#[test]
+fn ext_selection_progressive_forward_merge() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "error"),
+        ext_sel(2.0, "iTerm2", "error[E0308]"),
+        ext_sel(3.0, "iTerm2", "error[E0308]: mismatched types"),
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 1, "progressive selections forward-merged");
+    assert!(matches!(
+        &events[0],
+        Event::ExternalSelection { text, .. } if text == "error[E0308]: mismatched types"
+    ));
+}
+
+/// Narrowing selection starts a new chain: both survive.
+#[test]
+fn ext_selection_narrowing_starts_new_chain() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "error[E0308]: mismatched types"),
+        ext_sel(2.0, "iTerm2", "warning"),
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 2, "narrowing starts new chain, both survive");
+}
+
+/// Narrowing then extending: the narrow selection forward-merges with
+/// the subsequent extension.
+#[test]
+fn ext_selection_narrow_then_extend() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "error[E0308]: mismatched types"),
+        ext_sel(2.0, "iTerm2", "warn"),
+        ext_sel(3.0, "iTerm2", "warning[unused]"),
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(
+        events.len(),
+        2,
+        "first survives, narrow+extend merge to one"
+    );
+    assert!(matches!(
+        &events[1],
+        Event::ExternalSelection { text, .. } if text == "warning[unused]"
+    ));
+}
+
+/// Different app + window_title: no forward-merge even if text is a substring.
+#[test]
+fn ext_selection_different_source_no_merge() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "error"),
+        Event::ExternalSelection {
+            offset_secs: 2.0,
+            app: "iTerm2".to_string(),
+            window_title: "other window".to_string(),
+            text: "error[E0308]".to_string(),
+        },
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 2, "different window_title, no merge");
+}
+
+/// Two separate progressive selections of the same text: both survive.
+/// The user selects "err" → "error" (merged to "error"), then later selects
+/// "err" → "error" again (merged to "error"). Two "error" events remain.
+#[test]
+fn ext_selection_two_progressive_same_text() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "err"),
+        ext_sel(2.0, "iTerm2", "error"),
+        // Gap: user deselected, then re-selected the same text.
+        ext_sel(4.0, "iTerm2", "err"),
+        ext_sel(5.0, "iTerm2", "error"),
+    ];
+    compress_and_merge(&mut events);
+    let ext_events: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, Event::ExternalSelection { .. }))
+        .collect();
+    assert_eq!(
+        ext_events.len(),
+        2,
+        "two separate progressive selections of same text: both survive"
+    );
+}
+
 // ── BrowserSelection compression ──────────────────────────────────────────
 
 /// Helper: browser selection event.

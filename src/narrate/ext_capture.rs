@@ -23,12 +23,6 @@ use super::merge::Event;
 const EXT_POLL_MS: u64 = 200;
 
 /// Minimum dwell time before emitting an external selection (ms).
-///
-/// Only emit after the selected text has been stable for this long. Prevents
-/// rapid re-selections (e.g. double-click expanding to word then sentence)
-/// from generating multiple events.
-const EXT_DWELL_MS: u64 = 300;
-
 /// A snapshot of the currently selected text in the focused application.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalSnapshot {
@@ -71,69 +65,45 @@ pub fn platform_source() -> Option<Box<dyn ExternalSource>> {
 /// drives the tracker via [`tick`] (time-based flush) and [`update`] (new
 /// snapshot). When either method returns `Some`, the caller should emit
 /// an `ExternalSelection` event.
+/// Tracks the last emitted external selection for deduplication.
+///
+/// Unlike the editor cursor dwell tracker, external selections are emitted
+/// immediately on change (no dwell timer). Deduplication of progressive
+/// selections (drag-to-select) is handled downstream by the merge pipeline.
 pub(crate) struct ExtDwellTracker {
-    dwell_duration: Duration,
-    /// The last emitted selection (for deduplication).
+    /// The last emitted selection text (for exact-match dedup).
     prev_text: Option<String>,
-    /// A selection waiting for the dwell timeout.
-    pending: Option<(Instant, ExternalSnapshot)>,
 }
 
 impl ExtDwellTracker {
-    /// Create a new tracker with the given dwell duration.
-    pub fn new(dwell_duration: Duration) -> Self {
-        Self {
-            dwell_duration,
-            prev_text: None,
-            pending: None,
-        }
-    }
-
-    /// Check whether a pending selection has dwelled long enough.
-    ///
-    /// Returns `Some(snapshot)` if the pending selection should be emitted now,
-    /// clearing the pending state. Returns `None` otherwise.
-    pub fn tick(&mut self, now: Instant) -> Option<ExternalSnapshot> {
-        if let Some((changed_at, _)) = &self.pending
-            && now.duration_since(*changed_at) >= self.dwell_duration
-        {
-            let (_, snapshot) = self.pending.take().unwrap();
-            self.prev_text = snapshot.selected_text.clone();
-            return Some(snapshot);
-        }
-        None
+    /// Create a new tracker.
+    pub fn new() -> Self {
+        Self { prev_text: None }
     }
 
     /// Process a new external snapshot.
     ///
-    /// Returns `None` always — selections are deferred to [`tick`]. If the
-    /// selected text changed, the pending snapshot is replaced. If it matches
-    /// the previously emitted text, the pending is cleared (dedup).
-    pub fn update(&mut self, snapshot: ExternalSnapshot, now: Instant) {
+    /// Returns `Some(snapshot)` immediately if the selected text changed.
+    /// Returns `None` if unchanged (exact-match dedup) or empty.
+    pub fn update(
+        &mut self,
+        snapshot: ExternalSnapshot,
+        _now: Instant,
+    ) -> Option<ExternalSnapshot> {
         let current_text = snapshot.selected_text.as_deref();
 
-        // No text selected: clear pending, nothing to emit.
+        // No text selected: nothing to emit.
         if current_text.is_none() || current_text == Some("") {
-            self.pending = None;
-            return;
+            return None;
         }
 
         // Deduplicate: same text as the last emission, skip.
         if current_text == self.prev_text.as_deref() {
-            self.pending = None;
-            return;
+            return None;
         }
 
-        // Check if this differs from the current pending.
-        if let Some((_, ref pending_snap)) = self.pending
-            && pending_snap.selected_text == snapshot.selected_text
-        {
-            // Same text still pending, let the dwell timer continue.
-            return;
-        }
-
-        // New or changed selection: reset the dwell timer.
-        self.pending = Some((now, snapshot));
+        self.prev_text = snapshot.selected_text.clone();
+        Some(snapshot)
     }
 }
 
@@ -159,23 +129,12 @@ pub(super) fn spawn(
     }
 
     Some(thread::spawn(move || {
-        let mut tracker = ExtDwellTracker::new(Duration::from_millis(EXT_DWELL_MS));
+        let mut tracker = ExtDwellTracker::new();
 
         while !stop.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(EXT_POLL_MS));
 
             let now = Instant::now();
-
-            // Flush a dwelled selection if enough time has passed.
-            if let Some(snapshot) = tracker.tick(now) {
-                let offset_secs = start.elapsed().as_secs_f64();
-                events.lock().unwrap().push(Event::ExternalSelection {
-                    offset_secs,
-                    app: snapshot.app,
-                    window_title: snapshot.window_title,
-                    text: snapshot.selected_text.unwrap_or_default(),
-                });
-            }
 
             // Query the platform backend.
             let Some(snapshot) = source.query() else {
@@ -190,20 +149,16 @@ pub(super) fn spawn(
                 continue;
             }
 
-            tracker.update(snapshot, now);
-        }
-
-        // Final flush: emit any pending selection on shutdown.
-        let now = Instant::now();
-        // Force-flush by checking with a far-future time.
-        if let Some(snapshot) = tracker.tick(now + Duration::from_secs(3600)) {
-            let offset_secs = start.elapsed().as_secs_f64();
-            events.lock().unwrap().push(Event::ExternalSelection {
-                offset_secs,
-                app: snapshot.app,
-                window_title: snapshot.window_title,
-                text: snapshot.selected_text.unwrap_or_default(),
-            });
+            // Emit immediately on change (timestamp at change time, not later).
+            if let Some(snapshot) = tracker.update(snapshot, now) {
+                let offset_secs = start.elapsed().as_secs_f64();
+                events.lock().unwrap().push(Event::ExternalSelection {
+                    offset_secs,
+                    app: snapshot.app,
+                    window_title: snapshot.window_title,
+                    text: snapshot.selected_text.unwrap_or_default(),
+                });
+            }
         }
     }))
 }

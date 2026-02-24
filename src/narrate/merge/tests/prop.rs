@@ -360,40 +360,42 @@ proptest! {
         }
     }
 
-    /// ExternalSelection events are never dropped by compress_and_merge
-    /// (they have no compression logic that could eliminate them entirely,
-    /// only dedup within a run).
+    /// Every input ExternalSelection's text is either present in the output
+    /// or is a substring of a surviving ExternalSelection from the same
+    /// (app, window_title) source. No text is silently lost.
     #[test]
-    fn merge_preserves_ext_selection_text(events in arb_events()) {
-        // Collect unique (app, text) pairs across all wordless runs.
-        // Within a run, dedup keeps only one per (app, text), so count
-        // unique pairs per run.
-        let mut sorted = events.clone();
-        sorted.sort_by(|a, b| a.offset_secs().partial_cmp(&b.offset_secs()).unwrap_or(std::cmp::Ordering::Equal));
-
-        let mut expected_count = 0usize;
-        let mut run_pairs: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
-
-        let flush = |pairs: &mut std::collections::HashSet<(String, String)>, count: &mut usize| {
-            *count += pairs.len();
-            pairs.clear();
-        };
-
-        for e in &sorted {
-            match e {
-                Event::Words { .. } => flush(&mut run_pairs, &mut expected_count),
-                Event::ExternalSelection { app, text, .. } => {
-                    run_pairs.insert((app.clone(), text.clone()));
-                }
-                _ => {}
-            }
-        }
-        flush(&mut run_pairs, &mut expected_count);
+    fn merge_preserves_ext_selection_content(events in arb_events()) {
+        let input_texts: Vec<(String, String, String)> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::ExternalSelection { app, window_title, text, .. } =>
+                    Some((app.clone(), window_title.clone(), text.clone())),
+                _ => None,
+            })
+            .collect();
 
         let mut merged = events;
         compress_and_merge(&mut merged);
-        let actual_count = merged.iter().filter(|e| matches!(e, Event::ExternalSelection { .. })).count();
-        prop_assert_eq!(actual_count, expected_count);
+
+        let output_texts: Vec<(String, String, String)> = merged
+            .iter()
+            .filter_map(|e| match e {
+                Event::ExternalSelection { app, window_title, text, .. } =>
+                    Some((app.clone(), window_title.clone(), text.clone())),
+                _ => None,
+            })
+            .collect();
+
+        for (app, wt, text) in &input_texts {
+            let covered = output_texts.iter().any(|(oa, owt, ot)| {
+                oa == app && owt == wt && (ot == text || ot.contains(text.as_str()))
+            });
+            prop_assert!(
+                covered,
+                "input text {:?} from ({}, {}) not covered in output",
+                text, app, wt
+            );
+        }
     }
 
     /// BrowserSelection events are deduplicated per (url, text) within a run.
