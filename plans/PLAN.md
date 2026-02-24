@@ -30,6 +30,7 @@ be performed as specified, please do it.
 | 11 | [Persistent Daemon](./phase-11-persistent-daemon.md) | Not started | Phases 6, 8 |
 | 12a | [External Context Sources (Part A)](./phase-12-context-sources.md) | Done | Phase 10 |
 | 12b | [Firefox Native Messaging (Part B)](./phase-12-context-sources.md) | In progress (B11 remaining) | Phase 12a |
+| 14 | [Loopback Audio Capture](./phase-14-loopback-capture.md) | Not started | Phases 6, 10 |
 
 ## Item Progress
 
@@ -141,6 +142,17 @@ be performed as specified, please do it.
 - [x] B8 Tests: 12 new tests (compress, prop, render, receive)
 - [x] B9 Documentation updates
 - [ ] B11 AMO unlisted signing + GitHub release hosting of `.xpi`
+
+### Phase 14: Loopback Audio Capture
+- [ ] T1 Replace webrtc-vad with webrtc-audio-processing (VAD migration)
+- [ ] T2 Add AudioSource to the event model
+- [ ] T3 Loopback capture stream (macOS only initially)
+- [ ] T4 Echo cancellation wiring
+- [ ] T5 Dual-stream transcription
+- [ ] T6 Render and merge (`<other-speaker>` blocks)
+- [ ] T7 Permission and UX (runtime detection, docs)
+- [ ] T8 Tests
+- [ ] **Linux loopback support** — blocked on cpal PulseAudio backend release (merged to master, not yet in a cpal release). Once available, loopback on Linux is straightforward: PulseAudio/PipeWire monitor sources are standard input devices. No attend code changes expected beyond enabling the `pulseaudio` cpal feature.
 
 ### Phase 11: Persistent Daemon
 - [ ] 11.1 Benchmark model load time
