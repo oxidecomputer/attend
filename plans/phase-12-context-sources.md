@@ -429,14 +429,29 @@ path (same pattern as `attend install --agent claude`).
 
 ### B4. Extension distribution
 
-**For development**: `web-ext run` or `about:debugging` > Load Temporary Add-on.
+The extension is signed as **unlisted** on AMO (addons.mozilla.org). This means
+regular Firefox can install it without `about:debugging`, but it doesn't appear
+in AMO search results.
 
-**For release**: Submit to AMO (addons.mozilla.org) as an **unlisted** extension.
-Signing is free and fast. Users install from a direct `.xpi` URL that attend
-can print during `attend install --browser firefox`.
+**Signing workflow** (developer-side, automated via CI or `make sign`):
 
-**For Firefox Developer Edition / Nightly**: Can load unsigned via
-`xpinstall.signatures.required = false`.
+1. `web-ext sign --channel=unlisted --api-key=$AMO_JWT_ISSUER --api-secret=$AMO_JWT_SECRET`
+2. Produces a signed `.xpi` file
+3. Upload the `.xpi` as a GitHub release asset (tagged to the attend version)
+
+**User install** (`attend install --browser firefox`):
+
+1. Writes the native messaging host manifest (existing step)
+2. Downloads the signed `.xpi` from the GitHub release matching the installed
+   attend version
+3. Prints a one-liner: "Open this file in Firefox to install the extension:
+   `<path-to-downloaded.xpi>`" — or, if feasible, opens it directly via
+   `open <path>` (macOS) / `xdg-open <path>` (Linux)
+
+No `about:debugging` required. No `xpinstall.signatures.required` toggle.
+
+**For development**: `web-ext run` or `about:debugging` > Load Temporary Add-on
+(unchanged — only needed when iterating on the extension source).
 
 ### B5. Chrome compatibility (future)
 
@@ -514,10 +529,11 @@ the same way it's applied to EditorSnapshot content.
 
 1. Write the native messaging host manifest to
    `~/Library/Application Support/Mozilla/NativeMessagingHosts/attend.json`
-2. Print instructions for installing the browser extension:
-   - Development: "Load from `<attend-source>/extension/` via about:debugging"
-   - Release: "Install from <AMO URL>"
-3. Record the installation in `InstallMeta` for `attend uninstall` cleanup
+2. Download the signed `.xpi` from the GitHub release matching the installed
+   attend version (cached locally to avoid re-downloading)
+3. Open the `.xpi` in Firefox (via `open`/`xdg-open`) or print the path for
+   the user to open manually
+4. Record the installation in `InstallMeta` for `attend uninstall` cleanup
 
 ### `attend uninstall --browser firefox`
 
@@ -572,7 +588,7 @@ platforms may have their own permission models handled via `is_available()`.
 | B8 | `receive.rs`: pass BrowserSelection through filter unchanged | Done |
 | B9 | `attend uninstall --browser firefox` | Done |
 | B10 | Tests: 12 new tests (compress, prop, render, receive, bridge) | Done |
-| B11 | AMO submission for extension signing | Documented (manual step) |
+| B11 | AMO unlisted signing + GitHub release hosting of `.xpi` | TODO |
 
 **Implementation notes:**
 - Uses `native_messaging` crate for protocol framing and manifest management
