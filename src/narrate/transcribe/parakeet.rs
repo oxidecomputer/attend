@@ -1,9 +1,10 @@
 //! Parakeet TDT (ONNX) speech-to-text backend.
 //!
 //! Uses the TDT (Token-and-Duration Transducer) variant which predicts
-//! punctuation and capitalization, enabling natural sentence boundaries.
-//! The TDT decoder also correctly accounts for 8x encoder subsampling
-//! in its timestamps, unlike the CTC decoder.
+//! punctuation and capitalization. Word-level timestamps enable accurate
+//! interleaving with external selection events. The TDT decoder correctly
+//! accounts for 8x encoder subsampling in its timestamps, unlike the CTC
+//! decoder.
 
 use std::fs;
 
@@ -84,7 +85,7 @@ impl super::Transcriber for ParakeetTranscriber {
                 chunk.to_vec(),
                 SAMPLE_RATE,
                 1,
-                Some(TimestampMode::Sentences),
+                Some(TimestampMode::Words),
             )?;
 
             for token in result.tokens {
@@ -112,7 +113,7 @@ impl super::Transcriber for ParakeetTranscriber {
             samples.to_vec(),
             SAMPLE_RATE,
             1,
-            Some(TimestampMode::Sentences),
+            Some(TimestampMode::Words),
         );
         let transcribe_time = t0.elapsed();
 
