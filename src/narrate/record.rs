@@ -41,9 +41,6 @@ const DAEMON_LOOP_POLL_MS: u64 = 100;
 /// Number of recent words to feed as transcription context.
 const TRANSCRIPTION_CONTEXT_WORDS: usize = 50;
 
-/// Minimum remaining audio duration (seconds) worth transcribing at stop/flush.
-const MIN_TRANSCRIPTION_DURATION_SECS: f64 = 0.5;
-
 // ---------------------------------------------------------------------------
 // Deferred transcriber (background model loading)
 // ---------------------------------------------------------------------------
@@ -316,40 +313,34 @@ impl DaemonState {
         let mut all_words = std::mem::take(&mut self.pre_transcribed);
 
         // Transcribe any remaining buffered audio (the in-progress segment).
+        // Always transcribe regardless of duration: the silence detector
+        // already identified speech boundaries, and short utterances between
+        // pauses (e.g., counting while clicking) are real speech.
         if !remaining_chunks.is_empty() {
             let remaining_samples = audio::flatten_chunks(&remaining_chunks);
-            let remaining_duration = remaining_samples.len() as f64 / self.sample_rate as f64;
+            let offset = remaining_chunks[0]
+                .instant
+                .duration_since(self.period_start)
+                .as_secs_f64();
 
-            if remaining_duration >= MIN_TRANSCRIPTION_DURATION_SECS {
-                let offset = remaining_chunks[0]
-                    .instant
-                    .duration_since(self.period_start)
-                    .as_secs_f64();
+            tracing::info!(
+                duration_secs = remaining_samples.len() as f64 / self.sample_rate as f64,
+                "Transcribing remaining audio..."
+            );
 
-                tracing::info!(
-                    duration_secs = remaining_duration,
-                    "Transcribing remaining audio..."
-                );
-
-                let samples_16k = audio::resample(
-                    &remaining_samples,
-                    self.sample_rate,
-                    TRANSCRIPTION_SAMPLE_RATE,
-                )?;
-                let transcriber = self.transcriber.get()?;
-                let words = transcriber.transcribe(&samples_16k)?;
-                for w in &words {
-                    all_words.push(Word {
-                        start_secs: w.start_secs + offset,
-                        end_secs: w.end_secs + offset,
-                        text: w.text.clone(),
-                    });
-                }
-            } else {
-                tracing::debug!(
-                    duration_secs = remaining_duration,
-                    "Remaining audio too short, skipping."
-                );
+            let samples_16k = audio::resample(
+                &remaining_samples,
+                self.sample_rate,
+                TRANSCRIPTION_SAMPLE_RATE,
+            )?;
+            let transcriber = self.transcriber.get()?;
+            let words = transcriber.transcribe(&samples_16k)?;
+            for w in &words {
+                all_words.push(Word {
+                    start_secs: w.start_secs + offset,
+                    end_secs: w.end_secs + offset,
+                    text: w.text.clone(),
+                });
             }
         }
 
