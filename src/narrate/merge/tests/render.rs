@@ -2,16 +2,21 @@ use super::super::*;
 
 use crate::narrate::render::{SnipConfig, format_markdown};
 
+/// Convert seconds to a UTC timestamp (for test brevity).
+fn ts(secs: f64) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds((secs * 1000.0) as i64)
+}
+
 /// Speech-only events render as a single prose line.
 #[test]
 fn words_only() {
     let mut events = vec![
         Event::Words {
-            offset_secs: 0.0,
+            timestamp: ts(0.0),
             text: "Please".to_string(),
         },
         Event::Words {
-            offset_secs: 0.5,
+            timestamp: ts(0.5),
             text: "look at this".to_string(),
         },
     ];
@@ -24,11 +29,11 @@ fn words_only() {
 fn words_with_code() {
     let mut events = vec![
         Event::Words {
-            offset_secs: 0.0,
+            timestamp: ts(0.0),
             text: "Look at this function".to_string(),
         },
         Event::EditorSnapshot {
-            offset_secs: 1.0,
+            timestamp: ts(1.0),
             files: vec![],
             regions: vec![CapturedRegion {
                 path: "src/main.rs".to_string(),
@@ -38,7 +43,7 @@ fn words_with_code() {
             }],
         },
         Event::Words {
-            offset_secs: 2.0,
+            timestamp: ts(2.0),
             text: "and refactor it".to_string(),
         },
     ];
@@ -63,11 +68,11 @@ and refactor it
 fn diff_event() {
     let mut events = vec![
         Event::Words {
-            offset_secs: 0.0,
+            timestamp: ts(0.0),
             text: "I just changed this".to_string(),
         },
         Event::FileDiff {
-            offset_secs: 1.0,
+            timestamp: ts(1.0),
             path: "src/lib.rs".to_string(),
             old: "    pub timeout: u64,\n".to_string(),
             new: "    pub timeout: Duration,\n".to_string(),
@@ -91,11 +96,11 @@ I just changed this
 fn chronological_ordering() {
     let mut events = vec![
         Event::Words {
-            offset_secs: 2.0,
+            timestamp: ts(2.0),
             text: "second".to_string(),
         },
         Event::Words {
-            offset_secs: 0.0,
+            timestamp: ts(0.0),
             text: "first".to_string(),
         },
     ];
@@ -126,7 +131,7 @@ fn empty_events() {
 #[test]
 fn code_only_no_prose() {
     let mut events = vec![Event::EditorSnapshot {
-        offset_secs: 0.0,
+        timestamp: ts(0.0),
         files: vec![],
         regions: vec![CapturedRegion {
             path: "src/lib.rs".to_string(),
@@ -145,7 +150,7 @@ fn code_only_no_prose() {
 #[test]
 fn multiple_files_in_snapshot() {
     let mut events = vec![Event::EditorSnapshot {
-        offset_secs: 0.0,
+        timestamp: ts(0.0),
         files: vec![],
         regions: vec![
             CapturedRegion {
@@ -172,11 +177,11 @@ fn multiple_files_in_snapshot() {
 fn full_scenario_snapshot() {
     let mut events = vec![
             Event::Words {
-                offset_secs: 0.0,
+                timestamp: ts(0.0),
                 text: "Please look at this function".to_string(),
             },
             Event::EditorSnapshot {
-                offset_secs: 1.5,
+                timestamp: ts(1.5),
                 files: vec![],
                 regions: vec![CapturedRegion {
                     path: "src/main.rs".to_string(),
@@ -186,11 +191,11 @@ fn full_scenario_snapshot() {
                 }],
             },
             Event::Words {
-                offset_secs: 3.0,
+                timestamp: ts(3.0),
                 text: "and refactor it to use this struct".to_string(),
             },
             Event::EditorSnapshot {
-                offset_secs: 4.0,
+                timestamp: ts(4.0),
                 files: vec![],
                 regions: vec![CapturedRegion {
                     path: "src/lib.rs".to_string(),
@@ -200,17 +205,17 @@ fn full_scenario_snapshot() {
                 }],
             },
             Event::Words {
-                offset_secs: 5.0,
+                timestamp: ts(5.0),
                 text: "I just changed the timeout field".to_string(),
             },
             Event::FileDiff {
-                offset_secs: 5.5,
+                timestamp: ts(5.5),
                 path: "src/lib.rs".to_string(),
                 old: "    pub timeout: u64,\n".to_string(),
                 new: "    pub timeout: Duration,\n".to_string(),
             },
             Event::Words {
-                offset_secs: 6.0,
+                timestamp: ts(6.0),
                 text: "to use Duration instead".to_string(),
             },
         ];
@@ -223,13 +228,13 @@ fn full_scenario_snapshot() {
 fn prose_after_diff() {
     let mut events = vec![
         Event::FileDiff {
-            offset_secs: 0.0,
+            timestamp: ts(0.0),
             path: "foo.rs".to_string(),
             old: "".to_string(),
             new: "new line\n".to_string(),
         },
         Event::Words {
-            offset_secs: 1.0,
+            timestamp: ts(1.0),
             text: "that was the change".to_string(),
         },
     ];
@@ -242,7 +247,7 @@ fn prose_after_diff() {
 #[test]
 fn content_without_trailing_newline() {
     let mut events = vec![Event::EditorSnapshot {
-        offset_secs: 0.0,
+        timestamp: ts(0.0),
         files: vec![],
         regions: vec![CapturedRegion {
             path: "f.rs".to_string(),
@@ -261,7 +266,7 @@ fn content_without_trailing_newline() {
 fn whisper_cleanup_intra_segment() {
     // Within a single segment, spaces before punctuation are cleaned
     let mut events = vec![Event::Words {
-        offset_secs: 0.0,
+        timestamp: ts(0.0),
         text: "I 'm going to fix this .".to_string(),
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
@@ -274,23 +279,23 @@ fn whisper_cleanup_cross_segment() {
     // Punctuation as separate segments (max_len=1 mode)
     let mut events = vec![
         Event::Words {
-            offset_secs: 0.0,
+            timestamp: ts(0.0),
             text: "function".to_string(),
         },
         Event::Words {
-            offset_secs: 0.1,
+            timestamp: ts(0.1),
             text: ".".to_string(),
         },
         Event::Words {
-            offset_secs: 0.2,
+            timestamp: ts(0.2),
             text: "I".to_string(),
         },
         Event::Words {
-            offset_secs: 0.3,
+            timestamp: ts(0.3),
             text: "'m".to_string(),
         },
         Event::Words {
-            offset_secs: 0.4,
+            timestamp: ts(0.4),
             text: "wondering".to_string(),
         },
     ];
@@ -303,15 +308,15 @@ fn whisper_cleanup_cross_segment() {
 fn noise_markers_filtered() {
     let mut events = vec![
         Event::Words {
-            offset_secs: 0.0,
+            timestamp: ts(0.0),
             text: "hello".to_string(),
         },
         Event::Words {
-            offset_secs: 0.5,
+            timestamp: ts(0.5),
             text: "[typing sounds]".to_string(),
         },
         Event::Words {
-            offset_secs: 1.0,
+            timestamp: ts(1.0),
             text: "world".to_string(),
         },
     ];
@@ -325,7 +330,7 @@ fn snip_applied_to_code_block() {
     // 25 lines of content → snipped with default config (threshold=5, head=3, tail=2)
     let content: String = (1..=25).map(|i| format!("line {i}\n")).collect();
     let mut events = vec![Event::EditorSnapshot {
-        offset_secs: 0.0,
+        timestamp: ts(0.0),
         files: vec![],
         regions: vec![CapturedRegion {
             path: "big.rs".to_string(),
@@ -348,7 +353,7 @@ fn snip_applied_to_code_block() {
 fn diff_block_not_snipped() {
     let new_content: String = (1..=25).map(|i| format!("line {i}\n")).collect();
     let mut events = vec![Event::FileDiff {
-        offset_secs: 0.0,
+        timestamp: ts(0.0),
         path: "big.rs".to_string(),
         old: String::new(),
         new: new_content,
@@ -366,7 +371,7 @@ fn diff_block_not_snipped() {
 fn code_only_scenario_snapshot() {
     let mut events = vec![
         Event::EditorSnapshot {
-            offset_secs: 0.0,
+            timestamp: ts(0.0),
             files: vec![],
             regions: vec![CapturedRegion {
                 path: "src/config.rs".to_string(),
@@ -376,7 +381,7 @@ fn code_only_scenario_snapshot() {
             }],
         },
         Event::FileDiff {
-            offset_secs: 1.0,
+            timestamp: ts(1.0),
             path: "src/config.rs".to_string(),
             old: "pub struct Config {\n    pub name: String,\n}\n".to_string(),
             new: "pub struct Config {\n    pub name: String,\n    pub port: u16,\n}\n".to_string(),
@@ -391,23 +396,23 @@ fn code_only_scenario_snapshot() {
 fn multiple_diffs_snapshot() {
     let mut events = vec![
         Event::Words {
-            offset_secs: 0.0,
+            timestamp: ts(0.0),
             text: "I renamed the field in both files".to_string(),
         },
         Event::FileDiff {
-            offset_secs: 1.0,
+            timestamp: ts(1.0),
             path: "src/api.rs".to_string(),
             old: "    timeout: u64,\n".to_string(),
             new: "    timeout: Duration,\n".to_string(),
         },
         Event::FileDiff {
-            offset_secs: 1.5,
+            timestamp: ts(1.5),
             path: "src/client.rs".to_string(),
             old: "    connect_timeout: u64,\n".to_string(),
             new: "    connect_timeout: Duration,\n".to_string(),
         },
         Event::Words {
-            offset_secs: 2.0,
+            timestamp: ts(2.0),
             text: "to use Duration instead of raw u64".to_string(),
         },
     ];
@@ -425,7 +430,7 @@ fn snip_disabled_with_large_threshold() {
         tail: 5,
     };
     let mut events = vec![Event::EditorSnapshot {
-        offset_secs: 0.0,
+        timestamp: ts(0.0),
         files: vec![],
         regions: vec![CapturedRegion {
             path: "big.rs".to_string(),

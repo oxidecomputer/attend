@@ -3,6 +3,11 @@ use super::super::*;
 use crate::narrate::render::{SnipConfig, format_markdown};
 use crate::state::{Col, FileEntry, Line, Position, Selection};
 
+/// Convert seconds to a UTC timestamp (for test brevity).
+fn ts(secs: f64) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds((secs * 1000.0) as i64)
+}
+
 /// Helper: cursor-only snapshot (all selections are cursor-like).
 fn cursor_snap(t: f64, path: &str) -> Event {
     let pos = Position {
@@ -14,7 +19,7 @@ fn cursor_snap(t: f64, path: &str) -> Event {
         end: pos,
     };
     Event::EditorSnapshot {
-        offset_secs: t,
+        timestamp: ts(t),
         files: vec![FileEntry {
             path: path.into(),
             selections: vec![sel],
@@ -44,7 +49,7 @@ fn selection_snap_with(t: f64, path: &str, content: &str) -> Event {
     };
     let sel = Selection { start, end };
     Event::EditorSnapshot {
-        offset_secs: t,
+        timestamp: ts(t),
         files: vec![FileEntry {
             path: path.into(),
             selections: vec![sel],
@@ -66,7 +71,7 @@ fn consecutive_cursor_snapshots() {
         cursor_snap(2.0, "b.rs"),
         cursor_snap(3.0, "c.rs"),
         Event::Words {
-            offset_secs: 4.0,
+            timestamp: ts(4.0),
             text: "hello".to_string(),
         },
         cursor_snap(5.0, "d.rs"),
@@ -114,7 +119,7 @@ fn keeps_diffs_between_snapshots() {
     let mut events = vec![
         cursor_snap(1.0, "a.rs"),
         Event::FileDiff {
-            offset_secs: 2.0,
+            timestamp: ts(2.0),
             path: "changed.rs".to_string(),
             old: "".to_string(),
             new: "added\n".to_string(),
@@ -149,23 +154,23 @@ fn merge_diffs_net_change() {
     // The merged output should show the net diff A→C.
     let mut events = vec![
         Event::Words {
-            offset_secs: 0.0,
+            timestamp: ts(0.0),
             text: "before".to_string(),
         },
         Event::FileDiff {
-            offset_secs: 1.0,
+            timestamp: ts(1.0),
             path: "f.rs".to_string(),
             old: "aaa\nbbb\nccc\n".to_string(),
             new: "aaa\nBBB\nccc\n".to_string(),
         },
         Event::FileDiff {
-            offset_secs: 2.0,
+            timestamp: ts(2.0),
             path: "f.rs".to_string(),
             old: "aaa\nBBB\nccc\n".to_string(),
             new: "aaa\nBBB\nCCC\n".to_string(),
         },
         Event::Words {
-            offset_secs: 3.0,
+            timestamp: ts(3.0),
             text: "after".to_string(),
         },
     ];
@@ -186,13 +191,13 @@ fn merge_diffs_cancelled_change_disappears() {
     // File changes A→B then B→A (reverted). Net diff is empty.
     let mut events = vec![
         Event::FileDiff {
-            offset_secs: 1.0,
+            timestamp: ts(1.0),
             path: "f.rs".to_string(),
             old: "original\n".to_string(),
             new: "changed\n".to_string(),
         },
         Event::FileDiff {
-            offset_secs: 2.0,
+            timestamp: ts(2.0),
             path: "f.rs".to_string(),
             old: "changed\n".to_string(),
             new: "original\n".to_string(),
@@ -211,7 +216,7 @@ fn merge_diffs_cancelled_change_disappears() {
 #[test]
 fn single_word_event() {
     let mut events = vec![Event::Words {
-        offset_secs: 1.0,
+        timestamp: ts(1.0),
         text: "hello".to_string(),
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
@@ -238,7 +243,7 @@ fn single_selection_snapshot() {
 #[test]
 fn single_diff_event() {
     let mut events = vec![Event::FileDiff {
-        offset_secs: 1.0,
+        timestamp: ts(1.0),
         path: "one.rs".to_string(),
         old: "old\n".to_string(),
         new: "new\n".to_string(),
@@ -264,7 +269,7 @@ fn all_cursor_only_no_words() {
     compress_and_merge(&mut events);
     // Only the last cursor-only snapshot should remain.
     assert_eq!(events.len(), 1, "only one snapshot should survive");
-    assert_eq!(events[0].offset_secs(), 4.0, "should be the last one");
+    assert_eq!(events[0].timestamp(), ts(4.0), "should be the last one");
 }
 
 // ── All-diffs scenarios ───────────────────────────────────────────────────
@@ -274,19 +279,19 @@ fn all_cursor_only_no_words() {
 fn all_diffs_same_path_no_words() {
     let mut events = vec![
         Event::FileDiff {
-            offset_secs: 1.0,
+            timestamp: ts(1.0),
             path: "f.rs".to_string(),
             old: "v1\n".to_string(),
             new: "v2\n".to_string(),
         },
         Event::FileDiff {
-            offset_secs: 2.0,
+            timestamp: ts(2.0),
             path: "f.rs".to_string(),
             old: "v2\n".to_string(),
             new: "v3\n".to_string(),
         },
         Event::FileDiff {
-            offset_secs: 3.0,
+            timestamp: ts(3.0),
             path: "f.rs".to_string(),
             old: "v3\n".to_string(),
             new: "v4\n".to_string(),
@@ -307,19 +312,19 @@ fn all_diffs_same_path_no_words() {
 fn all_diffs_different_paths_no_words() {
     let mut events = vec![
         Event::FileDiff {
-            offset_secs: 1.0,
+            timestamp: ts(1.0),
             path: "a.rs".to_string(),
             old: "".to_string(),
             new: "a\n".to_string(),
         },
         Event::FileDiff {
-            offset_secs: 2.0,
+            timestamp: ts(2.0),
             path: "b.rs".to_string(),
             old: "".to_string(),
             new: "b\n".to_string(),
         },
         Event::FileDiff {
-            offset_secs: 3.0,
+            timestamp: ts(3.0),
             path: "c.rs".to_string(),
             old: "".to_string(),
             new: "c\n".to_string(),
@@ -347,7 +352,7 @@ fn interleaved_word_snap_not_merged() {
     let mut events = vec![
         selection_snap_with(1.0, "a.rs", "fn a()\n"),
         Event::Words {
-            offset_secs: 2.0,
+            timestamp: ts(2.0),
             text: "then".to_string(),
         },
         selection_snap_with(3.0, "b.rs", "fn b()\n"),
@@ -366,17 +371,17 @@ fn interleaved_word_snap_not_merged() {
 fn diffs_separated_by_words_not_merged() {
     let mut events = vec![
         Event::FileDiff {
-            offset_secs: 1.0,
+            timestamp: ts(1.0),
             path: "f.rs".to_string(),
             old: "v1\n".to_string(),
             new: "v2\n".to_string(),
         },
         Event::Words {
-            offset_secs: 2.0,
+            timestamp: ts(2.0),
             text: "now".to_string(),
         },
         Event::FileDiff {
-            offset_secs: 3.0,
+            timestamp: ts(3.0),
             path: "f.rs".to_string(),
             old: "v2\n".to_string(),
             new: "v3\n".to_string(),
@@ -396,7 +401,7 @@ fn diffs_separated_by_words_not_merged() {
 #[test]
 fn noop_diff_filtered_by_render() {
     let mut events = vec![Event::FileDiff {
-        offset_secs: 1.0,
+        timestamp: ts(1.0),
         path: "noop.rs".to_string(),
         old: "same\n".to_string(),
         new: "same\n".to_string(),
@@ -417,7 +422,7 @@ fn mixed_diffs_and_snapshots_in_wordless_run() {
     let mut events = vec![
         selection_snap_with(1.0, "view.rs", "fn view()\n"),
         Event::FileDiff {
-            offset_secs: 2.0,
+            timestamp: ts(2.0),
             path: "edit.rs".to_string(),
             old: "old\n".to_string(),
             new: "new\n".to_string(),
@@ -437,7 +442,7 @@ fn mixed_diffs_and_snapshots_in_wordless_run() {
 fn trailing_cursor_dropped_with_speech() {
     let mut events = vec![
         Event::Words {
-            offset_secs: 1.0,
+            timestamp: ts(1.0),
             text: "hello".to_string(),
         },
         cursor_snap(2.0, "trail.rs"),
@@ -466,12 +471,12 @@ fn trailing_cursor_kept_without_speech() {
 fn out_of_order_sorted_before_merge() {
     let mut events = vec![
         Event::Words {
-            offset_secs: 5.0,
+            timestamp: ts(5.0),
             text: "second".to_string(),
         },
         cursor_snap(3.0, "mid.rs"),
         Event::Words {
-            offset_secs: 1.0,
+            timestamp: ts(1.0),
             text: "first".to_string(),
         },
     ];
@@ -480,8 +485,8 @@ fn out_of_order_sorted_before_merge() {
     // cursor at 3.0 is between two words, so it survives.
     assert_eq!(events.len(), 3);
     assert!(
-        events[0].offset_secs() <= events[1].offset_secs()
-            && events[1].offset_secs() <= events[2].offset_secs(),
+        events[0].timestamp() <= events[1].timestamp()
+            && events[1].timestamp() <= events[2].timestamp(),
         "output must be sorted"
     );
 }
@@ -491,7 +496,7 @@ fn out_of_order_sorted_before_merge() {
 /// Helper: external selection event.
 fn ext_sel(t: f64, app: &str, text: &str) -> Event {
     Event::ExternalSelection {
-        offset_secs: t,
+        timestamp: ts(t),
         app: app.to_string(),
         window_title: "window".to_string(),
         text: text.to_string(),
@@ -508,7 +513,7 @@ fn ext_selection_dedup_same_app_text() {
     ];
     compress_and_merge(&mut events);
     assert_eq!(events.len(), 1, "duplicates compressed to one");
-    assert_eq!(events[0].offset_secs(), 3.0, "kept the latest");
+    assert_eq!(events[0].timestamp(), ts(3.0), "kept the latest");
 }
 
 /// External selections with different text survive compression.
@@ -539,7 +544,7 @@ fn ext_selection_across_word_boundary() {
     let mut events = vec![
         ext_sel(1.0, "iTerm2", "error"),
         Event::Words {
-            offset_secs: 2.0,
+            timestamp: ts(2.0),
             text: "look at this".to_string(),
         },
         ext_sel(3.0, "iTerm2", "error"),
@@ -587,7 +592,7 @@ fn ext_selection_renders_blockquote() {
 #[test]
 fn ext_selection_empty_window_title() {
     let mut events = vec![Event::ExternalSelection {
-        offset_secs: 1.0,
+        timestamp: ts(1.0),
         app: "Safari".to_string(),
         window_title: String::new(),
         text: "some text".to_string(),
@@ -654,7 +659,7 @@ fn ext_selection_different_source_no_merge() {
     let mut events = vec![
         ext_sel(1.0, "iTerm2", "error"),
         Event::ExternalSelection {
-            offset_secs: 2.0,
+            timestamp: ts(2.0),
             app: "iTerm2".to_string(),
             window_title: "other window".to_string(),
             text: "error[E0308]".to_string(),
@@ -693,7 +698,7 @@ fn ext_selection_two_progressive_same_text() {
 /// Helper: browser selection event.
 fn browser_sel(t: f64, url: &str, text: &str) -> Event {
     Event::BrowserSelection {
-        offset_secs: t,
+        timestamp: ts(t),
         url: url.to_string(),
         title: "Page Title".to_string(),
         text: text.to_string(),
@@ -710,7 +715,7 @@ fn browser_selection_dedup_same_url_text() {
     ];
     compress_and_merge(&mut events);
     assert_eq!(events.len(), 1, "duplicates compressed to one");
-    assert_eq!(events[0].offset_secs(), 3.0, "kept the latest");
+    assert_eq!(events[0].timestamp(), ts(3.0), "kept the latest");
 }
 
 /// Browser selections with different text survive compression.
@@ -741,7 +746,7 @@ fn browser_selection_across_word_boundary() {
     let mut events = vec![
         browser_sel(1.0, "https://docs.rs/tokio", "spawn"),
         Event::Words {
-            offset_secs: 2.0,
+            timestamp: ts(2.0),
             text: "look at this".to_string(),
         },
         browser_sel(3.0, "https://docs.rs/tokio", "spawn"),
@@ -777,7 +782,7 @@ fn browser_selection_renders_markdown() {
 #[test]
 fn browser_selection_empty_title() {
     let mut events = vec![Event::BrowserSelection {
-        offset_secs: 1.0,
+        timestamp: ts(1.0),
         url: "https://example.com".to_string(),
         title: String::new(),
         text: "hello".to_string(),

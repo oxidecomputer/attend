@@ -11,7 +11,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Instant;
 
 use camino::Utf8PathBuf;
 
@@ -20,10 +19,6 @@ use super::merge::Event;
 /// Handle for the background editor/diff/ext polling threads.
 pub(crate) struct CaptureHandle {
     stop_flag: Arc<AtomicBool>,
-    /// The `Instant` used as time epoch by all capture threads.
-    /// The recording daemon must use this same instant as `period_start`
-    /// so that word offsets and capture event offsets are aligned.
-    pub start: Instant,
     editor_events: Arc<Mutex<Vec<Event>>>,
     diff_events: Arc<Mutex<Vec<Event>>>,
     ext_events: Arc<Mutex<Vec<Event>>>,
@@ -63,14 +58,9 @@ impl CaptureHandle {
 /// Start background threads for editor polling, file diff tracking, and
 /// external selection capture.
 ///
-/// The editor capture thread publishes open file paths into `open_paths`,
-/// which the diff capture thread reads instead of querying the editor
-/// independently. This eliminates a redundant database query + offset
-/// resolution per diff poll cycle.
-///
-/// The external capture thread polls the platform accessibility API for
-/// selected text in the focused application. It is not spawned if the
-/// platform has no backend or accessibility permission is not granted.
+/// All capture threads use `Utc::now()` for event timestamps, so there is
+/// no shared time epoch to maintain. The recording daemon computes word
+/// timestamps from `period_start_utc + word.start_secs`, which is also UTC.
 ///
 /// Pass `None` for `cwd` to keep paths absolute (filtering deferred to receive).
 pub(crate) fn start(
@@ -78,7 +68,6 @@ pub(crate) fn start(
     ext_ignore_apps: Vec<String>,
 ) -> anyhow::Result<CaptureHandle> {
     let stop_flag = Arc::new(AtomicBool::new(false));
-    let start = Instant::now();
 
     let editor_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
     let diff_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
@@ -92,26 +81,22 @@ pub(crate) fn start(
         cwd,
         Arc::clone(&editor_events),
         Arc::clone(&open_paths),
-        start,
     );
 
     let diff_thread = super::diff_capture::spawn(
         Arc::clone(&stop_flag),
         Arc::clone(&open_paths),
         Arc::clone(&diff_events),
-        start,
     );
 
     let ext_thread = super::ext_capture::spawn(
         Arc::clone(&stop_flag),
         Arc::clone(&ext_events),
-        start,
         ext_ignore_apps,
     );
 
     Ok(CaptureHandle {
         stop_flag,
-        start,
         editor_events,
         diff_events,
         ext_events,

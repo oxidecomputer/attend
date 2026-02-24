@@ -21,7 +21,7 @@ crossterm = "0.29"
 clap_complete = "4"
 dirs = "6"
 camino = { version = "1", features = ["serde1"] }
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 fundsp = "0.23"
 jsonc-parser = { version = "0.29", features = ["serde", "cst"] }
 nix = { version = "0.31", features = ["signal", "process"] }

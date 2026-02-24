@@ -111,11 +111,13 @@ struct DaemonState {
     buffered_chunks: Vec<AudioChunk>,
     /// Words transcribed on the fly during this period.
     pre_transcribed: Vec<Word>,
-    /// When the current period started (for computing word offsets).
+    /// When the current period started (for computing audio segment offsets).
     period_start: Instant,
-    /// Wall-clock time when the current period started (for browser event offsets).
+    /// Wall-clock time when the current period started.
+    /// Word timestamps are computed as `period_start_utc + segment_offset + word.start_secs`.
     period_start_utc: chrono::DateTime<chrono::Utc>,
-    /// Accumulated time base across flushes (seconds).
+    /// Accumulated offset across flushes: added to audio segment offsets
+    /// so word timestamps account for previous periods.
     time_base_secs: f64,
     /// When the last drain/flush occurred.
     last_drain: Instant,
@@ -294,9 +296,7 @@ impl DaemonState {
     fn collect_browser_staging(&self) -> super::BrowserStaging {
         self.session_id
             .as_ref()
-            .map(|sid| {
-                super::collect_browser_staging(sid, self.period_start_utc, self.time_base_secs)
-            })
+            .map(|sid| super::collect_browser_staging(sid, self.period_start_utc))
             .unwrap_or_default()
     }
 
@@ -357,8 +357,11 @@ impl DaemonState {
         let mut events: Vec<Event> = Vec::new();
 
         for word in &all_words {
+            let secs = word.start_secs + self.time_base_secs;
+            let timestamp =
+                self.period_start_utc + chrono::Duration::milliseconds((secs * 1000.0) as i64);
             events.push(Event::Words {
-                offset_secs: word.start_secs + self.time_base_secs,
+                timestamp,
                 text: word.text.clone(),
             });
         }
@@ -611,9 +614,7 @@ pub fn daemon() -> anyhow::Result<()> {
         None
     };
 
-    // Use the same time epoch as the capture threads so word offsets
-    // and editor/ext selection offsets are aligned for interleaving.
-    let now = editor_events.start;
+    let now = Instant::now();
     let mut state = DaemonState {
         transcriber,
         audio_capture: Some(capture),

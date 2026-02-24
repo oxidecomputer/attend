@@ -77,7 +77,9 @@ pub(super) fn run() -> anyhow::Result<()> {
     // accumulate in a staging directory and are included when the user
     // manually concludes narration (stop/flush).
     let events = vec![Event::BrowserSelection {
-        offset_secs: 0.0,
+        // Placeholder: the recording daemon overwrites this with the
+        // UTC timestamp parsed from the staging filename.
+        timestamp: chrono::Utc::now(),
         url: msg.url,
         title: msg.title,
         text,

@@ -6,6 +6,11 @@ use super::*;
 use crate::narrate::merge::{CapturedRegion, Event};
 use crate::state::SessionId;
 
+/// Convert seconds to a UTC timestamp (for test brevity).
+fn ts(secs: f64) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds((secs * 1000.0) as i64)
+}
+
 /// Collecting pending files from a nonexistent session returns empty.
 #[test]
 fn collect_pending_empty_dir() {
@@ -26,7 +31,7 @@ fn read_pending_empty() {
 fn read_pending_single_json() {
     let dir = tempfile::tempdir().unwrap();
     let events = vec![Event::Words {
-        offset_secs: 0.0,
+        timestamp: ts(0.0),
         text: "hello world".to_string(),
     }];
     let path = dir.path().join("2026-02-18T10-00-00Z.json");
@@ -45,11 +50,11 @@ fn read_pending_filters_by_cwd() {
     let dir = tempfile::tempdir().unwrap();
     let events = vec![
         Event::Words {
-            offset_secs: 0.0,
+            timestamp: ts(0.0),
             text: "look at this".to_string(),
         },
         Event::EditorSnapshot {
-            offset_secs: 1.0,
+            timestamp: ts(1.0),
             files: vec![],
             regions: vec![
                 CapturedRegion {
@@ -87,7 +92,7 @@ fn read_pending_filters_by_cwd() {
 fn read_pending_includes_extra_dirs() {
     let dir = tempfile::tempdir().unwrap();
     let events = vec![Event::EditorSnapshot {
-        offset_secs: 0.0,
+        timestamp: ts(0.0),
         files: vec![],
         regions: vec![CapturedRegion {
             path: "/shared/utils.rs".to_string(),
@@ -114,7 +119,7 @@ fn read_pending_includes_extra_dirs() {
 fn filter_events_keeps_words() {
     let cwd = Utf8Path::new("/project");
     let mut events = vec![Event::Words {
-        offset_secs: 0.0,
+        timestamp: ts(0.0),
         text: "hello".to_string(),
     }];
     filter_events(&mut events, cwd, &[]);
@@ -126,7 +131,7 @@ fn filter_events_keeps_words() {
 fn filter_events_drops_outside_diff() {
     let cwd = Utf8Path::new("/project");
     let mut events = vec![Event::FileDiff {
-        offset_secs: 0.0,
+        timestamp: ts(0.0),
         path: "/other/file.rs".to_string(),
         old: "a\n".to_string(),
         new: "b\n".to_string(),
@@ -140,7 +145,7 @@ fn filter_events_drops_outside_diff() {
 fn filter_events_keeps_ext_selection() {
     let cwd = Utf8Path::new("/project");
     let mut events = vec![Event::ExternalSelection {
-        offset_secs: 0.0,
+        timestamp: ts(0.0),
         app: "iTerm2".to_string(),
         window_title: "~/other-project".to_string(),
         text: "error message".to_string(),
@@ -154,7 +159,7 @@ fn filter_events_keeps_ext_selection() {
 fn filter_events_keeps_browser_selection() {
     let cwd = Utf8Path::new("/project");
     let mut events = vec![Event::BrowserSelection {
-        offset_secs: 0.0,
+        timestamp: ts(0.0),
         url: "https://example.com".to_string(),
         title: "Example Page".to_string(),
         text: "some text".to_string(),
@@ -169,7 +174,7 @@ fn relativize_events_strips_prefix() {
     let cwd = Utf8Path::new("/project");
     let mut events = vec![
         Event::EditorSnapshot {
-            offset_secs: 0.0,
+            timestamp: ts(0.0),
             files: vec![],
             regions: vec![CapturedRegion {
                 path: "/project/src/lib.rs".to_string(),
@@ -179,7 +184,7 @@ fn relativize_events_strips_prefix() {
             }],
         },
         Event::FileDiff {
-            offset_secs: 1.0,
+            timestamp: ts(1.0),
             path: "/project/src/main.rs".to_string(),
             old: "a\n".to_string(),
             new: "b\n".to_string(),
@@ -209,11 +214,11 @@ fn read_pending_merges_multiple_files() {
     // First file: words + editor snapshot
     let events1 = vec![
         Event::Words {
-            offset_secs: 0.0,
+            timestamp: ts(0.0),
             text: "look at this".to_string(),
         },
         Event::EditorSnapshot {
-            offset_secs: 1.0,
+            timestamp: ts(1.0),
             files: vec![],
             regions: vec![CapturedRegion {
                 path: "/project/src/main.rs".to_string(),
@@ -225,7 +230,7 @@ fn read_pending_merges_multiple_files() {
     ];
     // Second file: words timestamped after the first file's events.
     let events2 = vec![Event::Words {
-        offset_secs: 2.0,
+        timestamp: ts(2.0),
         text: "refactor that".to_string(),
     }];
 
@@ -277,11 +282,11 @@ fn collect_read_archive_round_trip() {
     fs::create_dir_all(&pending).unwrap();
 
     let events1 = vec![Event::Words {
-        offset_secs: 0.0,
+        timestamp: ts(0.0),
         text: "first dictation".to_string(),
     }];
     let events2 = vec![Event::Words {
-        offset_secs: 1.0,
+        timestamp: ts(1.0),
         text: "second dictation".to_string(),
     }];
 

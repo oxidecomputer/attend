@@ -20,13 +20,13 @@
 //!   Carries the full `old` and `new` content so the merge pipeline can
 //!   compute net changes across multiple edits.
 //!
-//! All events share an `offset_secs` field: seconds from recording start.
+//! All events share an `timestamp` field: seconds from recording start.
 //!
 //! # Merge pipeline
 //!
 //! [`compress_and_merge`] processes the raw event stream in three steps:
 //!
-//! 1. **Chronological sort** by `offset_secs`.
+//! 1. **Chronological sort** by `timestamp`.
 //!
 //! 2. **Single-pass run processing**: the sorted list is split into
 //!    alternating `Words` events and non-speech "runs" (maximal sequences
@@ -65,20 +65,20 @@ use serde::{Deserialize, Serialize};
 use crate::state::FileEntry;
 pub use crate::view::CapturedRegion;
 
-/// A timestamped event from one of the three capture streams.
+/// A timestamped event from one of the capture streams.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
     /// A transcribed word or group of words.
     Words {
-        /// Seconds from recording start.
-        offset_secs: f64,
+        /// UTC wall-clock time when the word was spoken.
+        timestamp: chrono::DateTime<chrono::Utc>,
         /// The transcribed text.
         text: String,
     },
     /// An editor state snapshot captured when selections changed.
     EditorSnapshot {
-        /// Seconds from recording start.
-        offset_secs: f64,
+        /// UTC wall-clock time of capture.
+        timestamp: chrono::DateTime<chrono::Utc>,
         /// Files with their selections at this point (retained for debugging/archive).
         #[allow(dead_code)]
         files: Vec<FileEntry>,
@@ -87,8 +87,8 @@ pub enum Event {
     },
     /// A file diff captured when file content changed.
     FileDiff {
-        /// Seconds from recording start.
-        offset_secs: f64,
+        /// UTC wall-clock time of capture.
+        timestamp: chrono::DateTime<chrono::Utc>,
         /// Absolute path of the changed file.
         path: String,
         /// File content before the change.
@@ -98,8 +98,8 @@ pub enum Event {
     },
     /// Text selected in an external application (via platform accessibility API).
     ExternalSelection {
-        /// Seconds from recording start.
-        offset_secs: f64,
+        /// UTC wall-clock time of capture.
+        timestamp: chrono::DateTime<chrono::Utc>,
         /// Application name (e.g. "Firefox", "iTerm2", "Safari").
         app: String,
         /// Window title (e.g. page title, terminal tab name).
@@ -110,8 +110,8 @@ pub enum Event {
     /// Text selected in a browser, with rich page context.
     /// Delivered via a browser extension's native messaging bridge.
     BrowserSelection {
-        /// Seconds from recording start (or wall-clock offset for bridge events).
-        offset_secs: f64,
+        /// UTC wall-clock time of capture.
+        timestamp: chrono::DateTime<chrono::Utc>,
         /// Page URL.
         url: String,
         /// Page title.
@@ -122,14 +122,14 @@ pub enum Event {
 }
 
 impl Event {
-    /// Sort key: seconds from recording start.
-    pub fn offset_secs(&self) -> f64 {
+    /// Sort key: UTC timestamp.
+    pub fn timestamp(&self) -> chrono::DateTime<chrono::Utc> {
         match self {
-            Event::Words { offset_secs, .. }
-            | Event::EditorSnapshot { offset_secs, .. }
-            | Event::FileDiff { offset_secs, .. }
-            | Event::ExternalSelection { offset_secs, .. }
-            | Event::BrowserSelection { offset_secs, .. } => *offset_secs,
+            Event::Words { timestamp, .. }
+            | Event::EditorSnapshot { timestamp, .. }
+            | Event::FileDiff { timestamp, .. }
+            | Event::ExternalSelection { timestamp, .. }
+            | Event::BrowserSelection { timestamp, .. } => *timestamp,
         }
     }
 }
@@ -174,7 +174,7 @@ fn is_cursor_only(event: &Event) -> bool {
 
 /// Remove all cursor-only snapshots from a run except the last one.
 ///
-/// **Input**: a non-Words run (sorted by offset_secs, no `Words` events).
+/// **Input**: a non-Words run (sorted by timestamp, no `Words` events).
 /// **Output**: the same run with redundant cursor-only snapshots removed.
 ///
 /// **Invariant**: selection (highlight) snapshots are never removed.
@@ -202,8 +202,16 @@ fn collapse_cursor_only(run: &mut Vec<Event>) {
 /// **Invariant**: every unique `CapturedRegion` from the input appears in
 /// the output exactly once (dedup via `PartialEq`).
 fn union_snapshots(
-    snapshots: Vec<(f64, Vec<FileEntry>, Vec<CapturedRegion>)>,
-) -> Option<(f64, Vec<FileEntry>, Vec<CapturedRegion>)> {
+    snapshots: Vec<(
+        chrono::DateTime<chrono::Utc>,
+        Vec<FileEntry>,
+        Vec<CapturedRegion>,
+    )>,
+) -> Option<(
+    chrono::DateTime<chrono::Utc>,
+    Vec<FileEntry>,
+    Vec<CapturedRegion>,
+)> {
     if snapshots.is_empty() {
         return None;
     }
@@ -212,10 +220,10 @@ fn union_snapshots(
     let mut seen_files = HashSet::new();
     let mut merged_regions = Vec::new();
     let mut seen_regions = HashSet::new();
-    let mut last_offset = 0.0_f64;
+    let mut last_ts = snapshots[0].0;
 
-    for (offset, files, regions) in snapshots {
-        last_offset = offset;
+    for (ts, files, regions) in snapshots {
+        last_ts = ts;
         for f in files {
             if seen_files.insert(f.clone()) {
                 merged_files.push(f);
@@ -228,7 +236,7 @@ fn union_snapshots(
         }
     }
 
-    Some((last_offset, merged_files, merged_regions))
+    Some((last_ts, merged_files, merged_regions))
 }
 
 /// Collapse same-path diffs into net-change events (first `old`, last `new`).
@@ -241,16 +249,16 @@ fn union_snapshots(
 /// **Invariant**: for each path, `old` is from the earliest diff and `new`
 /// is from the latest diff in the input.
 fn net_change_diffs(
-    diffs: Vec<(f64, String, String, String)>,
-) -> Vec<(f64, String, String, String)> {
-    let mut by_path: Vec<(f64, String, String, String)> = Vec::new();
+    diffs: Vec<(chrono::DateTime<chrono::Utc>, String, String, String)>,
+) -> Vec<(chrono::DateTime<chrono::Utc>, String, String, String)> {
+    let mut by_path: Vec<(chrono::DateTime<chrono::Utc>, String, String, String)> = Vec::new();
 
-    for (offset, path, old, new) in diffs {
+    for (ts, path, old, new) in diffs {
         if let Some(entry) = by_path.iter_mut().find(|(_, p, ..)| p == &path) {
-            entry.0 = offset; // latest offset
+            entry.0 = ts; // latest timestamp
             entry.3 = new; // latest new
         } else {
-            by_path.push((offset, path, old, new));
+            by_path.push((ts, path, old, new));
         }
     }
 
@@ -334,15 +342,15 @@ fn collapse_ext_selections(selections: Vec<Event>) -> Vec<Event> {
 /// richer context (URL, HTML→markdown) than the accessibility API, so the browser
 /// event wins.
 fn dedup_browser_vs_external(events: &mut Vec<Event>) {
-    const DEDUP_WINDOW_SECS: f64 = 0.5;
+    let dedup_window = chrono::Duration::milliseconds(500);
 
     // Collect browser selection timestamps and texts for matching.
-    let browser_entries: Vec<(f64, String)> = events
+    let browser_entries: Vec<(chrono::DateTime<chrono::Utc>, String)> = events
         .iter()
         .filter_map(|e| match e {
             Event::BrowserSelection {
-                offset_secs, text, ..
-            } => Some((*offset_secs, text.trim().to_string())),
+                timestamp, text, ..
+            } => Some((*timestamp, text.trim().to_string())),
             _ => None,
         })
         .collect();
@@ -353,15 +361,15 @@ fn dedup_browser_vs_external(events: &mut Vec<Event>) {
 
     events.retain(|e| {
         let Event::ExternalSelection {
-            offset_secs, text, ..
+            timestamp, text, ..
         } = e
         else {
             return true;
         };
         let trimmed = text.trim();
         // Drop if any BrowserSelection has matching text within the window.
-        !browser_entries.iter().any(|(bs_offset, bs_text)| {
-            bs_text == trimmed && (offset_secs - bs_offset).abs() <= DEDUP_WINDOW_SECS
+        !browser_entries.iter().any(|(bs_ts, bs_text)| {
+            bs_text == trimmed && (*timestamp - *bs_ts).abs().le(&dedup_window)
         })
     });
 }
@@ -380,7 +388,7 @@ fn dedup_browser_vs_external(events: &mut Vec<Event>) {
 /// - At most one `FileDiff` per path in the output.
 /// - No cursor-only snapshots survive unless they are the sole cursor-only
 ///   in the run (the last one).
-/// - Output is sorted by offset_secs.
+/// - Output is sorted by timestamp.
 fn process_run(mut run: Vec<Event>) -> Vec<Event> {
     if run.len() <= 1 {
         return run;
@@ -401,19 +409,19 @@ fn process_run(mut run: Vec<Event>) -> Vec<Event> {
     for event in run {
         match event {
             Event::EditorSnapshot {
-                offset_secs,
+                timestamp,
                 files,
                 regions,
             } => {
-                snapshots.push((offset_secs, files, regions));
+                snapshots.push((timestamp, files, regions));
             }
             Event::FileDiff {
-                offset_secs,
+                timestamp,
                 path,
                 old,
                 new,
             } => {
-                diffs.push((offset_secs, path, old, new));
+                diffs.push((timestamp, path, old, new));
             }
             Event::ExternalSelection { .. } | Event::BrowserSelection { .. } => {
                 ext_selections.push(event);
@@ -429,19 +437,19 @@ fn process_run(mut run: Vec<Event>) -> Vec<Event> {
     // Reassemble in chronological order.
     let mut result = Vec::with_capacity(1 + merged_diffs.len() + merged_ext.len());
 
-    if let Some((offset_secs, files, regions)) = merged_snap
+    if let Some((timestamp, files, regions)) = merged_snap
         && !regions.is_empty()
     {
         result.push(Event::EditorSnapshot {
-            offset_secs,
+            timestamp,
             files,
             regions,
         });
     }
 
-    for (offset_secs, path, old, new) in merged_diffs {
+    for (timestamp, path, old, new) in merged_diffs {
         result.push(Event::FileDiff {
-            offset_secs,
+            timestamp,
             path,
             old,
             new,
@@ -450,11 +458,7 @@ fn process_run(mut run: Vec<Event>) -> Vec<Event> {
 
     result.extend(merged_ext);
 
-    result.sort_by(|a, b| {
-        a.offset_secs()
-            .partial_cmp(&b.offset_secs())
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    result.sort_by_key(|a| a.timestamp());
 
     result
 }
@@ -470,11 +474,7 @@ fn process_run(mut run: Vec<Event>) -> Vec<Event> {
 /// paths).
 pub fn compress_and_merge(events: &mut Vec<Event>) {
     // Step 1: chronological sort.
-    events.sort_by(|a, b| {
-        a.offset_secs()
-            .partial_cmp(&b.offset_secs())
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    events.sort_by_key(|a| a.timestamp());
 
     // Step 2: single pass — split on Words boundaries, process each run.
     let mut output = Vec::with_capacity(events.len());

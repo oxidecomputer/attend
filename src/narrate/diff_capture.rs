@@ -12,7 +12,7 @@ use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use camino::Utf8PathBuf;
 
@@ -31,7 +31,6 @@ pub(super) fn spawn(
     stop: Arc<AtomicBool>,
     open_paths: Arc<Mutex<Vec<Utf8PathBuf>>>,
     events: Arc<Mutex<Vec<Event>>>,
-    start: Instant,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut file_contents: HashMap<Utf8PathBuf, String> = HashMap::new();
@@ -84,11 +83,11 @@ pub(super) fn spawn(
                 if let Some(old_content) = file_contents.get(path)
                     && *old_content != new_content
                 {
-                    let offset_secs = start.elapsed().as_secs_f64();
+                    let timestamp = chrono::Utc::now();
                     // Keep absolute path — filtering deferred to receive.
                     let display_path = path.as_str().to_string();
                     events.lock().unwrap().push(Event::FileDiff {
-                        offset_secs,
+                        timestamp,
                         path: display_path,
                         old: old_content.clone(),
                         new: new_content.clone(),

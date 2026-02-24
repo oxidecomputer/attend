@@ -117,23 +117,18 @@ impl BrowserStaging {
 
 /// Collect staged browser selection events for a session.
 ///
-/// File timestamps (from the filename) are converted to `offset_secs`
-/// relative to `period_start_utc` plus `time_base_secs`, so browser
-/// events interleave correctly with speech and editor events.
+/// File timestamps (from the filename) are assigned as UTC timestamps
+/// on the events, so they sort correctly with all other event types.
 ///
-/// Files are **not** removed until [`BrowserStaging::cleanup`] is called,
+/// Files are **not** removed until [`BrowserCleanup::cleanup`] is called,
 /// so a crash between collection and narration write does not lose events.
 pub(crate) fn collect_browser_staging(
     session_id: &SessionId,
     period_start_utc: chrono::DateTime<chrono::Utc>,
-    time_base_secs: f64,
 ) -> BrowserStaging {
     let dir = browser_staging_dir(session_id);
     let Ok(entries) = std::fs::read_dir(&dir) else {
-        return BrowserStaging {
-            events: Vec::new(),
-            files: Vec::new(),
-        };
+        return BrowserStaging::default();
     };
 
     let mut files: Vec<std::path::PathBuf> = entries
@@ -146,43 +141,29 @@ pub(crate) fn collect_browser_staging(
     let mut events = Vec::new();
     for path in &files {
         // Parse wall-clock timestamp from filename (e.g., "2026-02-23T22-42-28Z.json").
-        // The format is "%Y-%m-%dT%H-%M-%SZ" (colons replaced with dashes).
         let file_time = path.file_stem().and_then(|s| s.to_str()).and_then(|s| {
             chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H-%M-%SZ")
                 .ok()
                 .map(|naive| naive.and_utc())
         });
 
-        // Skip events that predate the current recording period. These are
-        // stale selections from before the user started narrating.
+        // Skip events that predate the current recording period.
         if let Some(ft) = file_time
             && ft < period_start_utc
         {
-            // Still remove stale files (best-effort cleanup).
             let _ = std::fs::remove_file(path);
             continue;
         }
 
-        let offset_secs = file_time
-            .map(|ft| {
-                let delta = ft
-                    .signed_duration_since(period_start_utc)
-                    .num_milliseconds() as f64
-                    / 1000.0;
-                (delta + time_base_secs).max(0.0)
-            })
-            .unwrap_or(0.0);
+        let timestamp = file_time.unwrap_or(chrono::Utc::now());
 
         if let Ok(content) = std::fs::read_to_string(path)
             && let Ok(file_events) = serde_json::from_str::<Vec<merge::Event>>(&content)
         {
             for mut event in file_events {
-                // Assign computed offset so the event sorts correctly.
-                if let merge::Event::BrowserSelection {
-                    offset_secs: os, ..
-                } = &mut event
-                {
-                    *os = offset_secs
+                // Assign the file's UTC timestamp.
+                if let merge::Event::BrowserSelection { timestamp: ts, .. } = &mut event {
+                    *ts = timestamp;
                 }
                 events.push(event);
             }

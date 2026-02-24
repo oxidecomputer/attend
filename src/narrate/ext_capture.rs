@@ -115,7 +115,6 @@ impl ExtDwellTracker {
 pub(super) fn spawn(
     stop: Arc<AtomicBool>,
     events: Arc<Mutex<Vec<Event>>>,
-    start: Instant,
     ignore_apps: Vec<String>,
 ) -> Option<thread::JoinHandle<()>> {
     let source = platform_source()?;
@@ -149,11 +148,11 @@ pub(super) fn spawn(
                 continue;
             }
 
-            // Emit immediately on change (timestamp at change time, not later).
+            // Emit immediately on change with UTC timestamp.
             if let Some(snapshot) = tracker.update(snapshot, now) {
-                let offset_secs = start.elapsed().as_secs_f64();
+                let timestamp = chrono::Utc::now();
                 events.lock().unwrap().push(Event::ExternalSelection {
-                    offset_secs,
+                    timestamp,
                     app: snapshot.app,
                     window_title: snapshot.window_title,
                     text: snapshot.selected_text.unwrap_or_default(),

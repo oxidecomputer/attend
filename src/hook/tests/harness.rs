@@ -9,6 +9,11 @@ use crate::agent::Agent;
 use crate::narrate::merge::Event;
 use crate::state::{self, EditorState, SessionId};
 
+/// Convert seconds to a UTC timestamp (for test brevity).
+fn ts(secs: f64) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds((secs * 1000.0) as i64)
+}
+
 /// Monotonic counter for unique pending file names across test threads.
 static PENDING_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -130,7 +135,7 @@ impl TestHarness {
         let seq = PENDING_SEQ.fetch_add(1, Ordering::Relaxed);
         let filename = format!("{seq:020}.json");
         let events = vec![Event::Words {
-            offset_secs: 0.0,
+            timestamp: ts(0.0),
             text: text.to_string(),
         }];
         let content = serde_json::to_string(&events).unwrap();

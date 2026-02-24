@@ -5,11 +5,16 @@ use super::super::*;
 use crate::narrate::render::{SnipConfig, format_markdown};
 use crate::state::{Col, FileEntry, Line, Position, Selection};
 
+/// Convert seconds to a UTC timestamp (for test brevity).
+fn ts(secs: f64) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds((secs * 1000.0) as i64)
+}
+
 // ── Strategies ──────────────────────────────────────────────────────────────
 
 fn arb_words() -> impl Strategy<Value = Event> {
     (0.0..100.0f64, "[a-z ]{1,30}").prop_map(|(t, text)| Event::Words {
-        offset_secs: t,
+        timestamp: ts(t),
         text,
     })
 }
@@ -25,7 +30,7 @@ fn arb_cursor_snapshot() -> impl Strategy<Value = Event> {
             end: pos,
         };
         Event::EditorSnapshot {
-            offset_secs: t,
+            timestamp: ts(t),
             files: vec![FileEntry {
                 path: path.clone().into(),
                 selections: vec![sel],
@@ -52,7 +57,7 @@ fn arb_selection_snapshot() -> impl Strategy<Value = Event> {
         };
         let sel = Selection { start, end };
         Event::EditorSnapshot {
-            offset_secs: t,
+            timestamp: ts(t),
             files: vec![FileEntry {
                 path: path.clone().into(),
                 selections: vec![sel],
@@ -75,7 +80,7 @@ fn arb_diff() -> impl Strategy<Value = Event> {
         "[a-z ]{0,20}",
     )
         .prop_map(|(t, path, old, new)| Event::FileDiff {
-            offset_secs: t,
+            timestamp: ts(t),
             path,
             old: format!("{old}\n"),
             new: format!("{new}\n"),
@@ -90,7 +95,7 @@ fn arb_ext_selection() -> impl Strategy<Value = Event> {
         "[a-z ]{1,30}",
     )
         .prop_map(|(t, app, title, text)| Event::ExternalSelection {
-            offset_secs: t,
+            timestamp: ts(t),
             app,
             window_title: title,
             text,
@@ -109,7 +114,7 @@ fn arb_browser_selection() -> impl Strategy<Value = Event> {
         "[a-z ]{1,30}",
     )
         .prop_map(|(t, url, title, text)| Event::BrowserSelection {
-            offset_secs: t,
+            timestamp: ts(t),
             url,
             title,
             text,
@@ -136,16 +141,16 @@ fn arb_events() -> impl Strategy<Value = Vec<Event>> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(200))]
 
-    /// compress_and_merge produces events sorted by offset_secs.
+    /// compress_and_merge produces events sorted by timestamp.
     #[test]
     fn merge_output_sorted(mut events in arb_events()) {
         compress_and_merge(&mut events);
         for w in events.windows(2) {
             prop_assert!(
-                w[0].offset_secs() <= w[1].offset_secs(),
-                "output not sorted: {} > {}",
-                w[0].offset_secs(),
-                w[1].offset_secs()
+                w[0].timestamp() <= w[1].timestamp(),
+                "output not sorted: {:?} > {:?}",
+                w[0].timestamp(),
+                w[1].timestamp()
             );
         }
     }
@@ -153,10 +158,10 @@ proptest! {
     /// compress_and_merge preserves all Words events in chronological order.
     #[test]
     fn merge_preserves_words_in_order(events in arb_events()) {
-        // Collect words in the order they'd appear after sorting by offset
+        // Collect words in the order they'd appear after sorting by timestamp
         // (the first thing compress_and_merge does).
         let mut sorted = events.clone();
-        sorted.sort_by(|a, b| a.offset_secs().partial_cmp(&b.offset_secs()).unwrap_or(std::cmp::Ordering::Equal));
+        sorted.sort_by(|a, b| a.timestamp().cmp(&b.timestamp()));
         let words_before: Vec<String> = sorted
             .iter()
             .filter_map(|e| match e {
@@ -186,8 +191,8 @@ proptest! {
         prop_assert_eq!(first.len(), snapshot.len(), "idempotency violated: length changed");
         for (a, b) in first.iter().zip(snapshot.iter()) {
             prop_assert!(
-                (a.offset_secs() - b.offset_secs()).abs() < 1e-10,
-                "idempotency violated: offset changed"
+                a.timestamp() == b.timestamp(),
+                "idempotency violated: timestamp changed"
             );
         }
     }
@@ -405,7 +410,7 @@ proptest! {
     #[test]
     fn merge_preserves_browser_selection_text(events in arb_events()) {
         let mut sorted = events.clone();
-        sorted.sort_by(|a, b| a.offset_secs().partial_cmp(&b.offset_secs()).unwrap_or(std::cmp::Ordering::Equal));
+        sorted.sort_by(|a, b| a.timestamp().cmp(&b.timestamp()));
 
         let mut expected_count = 0usize;
         let mut run_pairs: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
@@ -438,7 +443,7 @@ proptest! {
     fn merge_preserves_diff_paths(events in arb_events()) {
         // Sort input the same way compress_and_merge does.
         let mut sorted = events.clone();
-        sorted.sort_by(|a, b| a.offset_secs().partial_cmp(&b.offset_secs()).unwrap_or(std::cmp::Ordering::Equal));
+        sorted.sort_by(|a, b| a.timestamp().cmp(&b.timestamp()));
 
         // For each wordless run, compute expected surviving diff paths.
         let mut expected_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
