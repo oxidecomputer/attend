@@ -62,12 +62,14 @@ fn read_pending_filters_by_cwd() {
                     content: "fn main() {}\n".to_string(),
                     first_line: 1,
                     selections: vec![],
+                    language: None,
                 },
                 CapturedRegion {
                     path: "/other/lib.rs".to_string(),
                     content: "fn other() {}\n".to_string(),
                     first_line: 1,
                     selections: vec![],
+                    language: None,
                 },
             ],
         },
@@ -99,6 +101,7 @@ fn read_pending_includes_extra_dirs() {
             content: "fn shared() {}\n".to_string(),
             first_line: 1,
             selections: vec![],
+            language: None,
         }],
     }];
     let path = dir.path().join("test.json");
@@ -181,6 +184,7 @@ fn relativize_events_strips_prefix() {
                 content: "code\n".to_string(),
                 first_line: 1,
                 selections: vec![],
+                language: None,
             }],
         },
         Event::FileDiff {
@@ -225,6 +229,7 @@ fn read_pending_merges_multiple_files() {
                 content: "fn main() {}\n".to_string(),
                 first_line: 1,
                 selections: vec![],
+                language: None,
             }],
         },
     ];

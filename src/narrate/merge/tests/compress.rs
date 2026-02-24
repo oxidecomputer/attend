@@ -29,6 +29,7 @@ fn cursor_snap(t: f64, path: &str) -> Event {
             content: "x\n".to_string(),
             first_line: 1,
             selections: vec![sel],
+            language: None,
         }],
     }
 }
@@ -59,6 +60,7 @@ fn selection_snap_with(t: f64, path: &str, content: &str) -> Event {
             content: content.to_string(),
             first_line: 1,
             selections: vec![sel],
+            language: None,
         }],
     }
 }

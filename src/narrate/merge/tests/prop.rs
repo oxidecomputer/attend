@@ -19,8 +19,18 @@ fn arb_words() -> impl Strategy<Value = Event> {
     })
 }
 
+fn arb_language() -> impl Strategy<Value = Option<String>> {
+    prop_oneof![
+        4 => Just(None),
+        1 => Just(Some("rust".to_string())),
+        1 => Just(Some("python".to_string())),
+        1 => Just(Some("javascript".to_string())),
+        1 => Just(Some("c".to_string())),
+    ]
+}
+
 fn arb_cursor_snapshot() -> impl Strategy<Value = Event> {
-    (0.0..100.0f64, "[a-z]{1,8}\\.rs").prop_map(|(t, path)| {
+    (0.0..100.0f64, "[a-z]{1,8}\\.rs", arb_language()).prop_map(|(t, path, language)| {
         let pos = Position {
             line: Line::new(1).unwrap(),
             col: Col::new(1).unwrap(),
@@ -40,13 +50,14 @@ fn arb_cursor_snapshot() -> impl Strategy<Value = Event> {
                 content: "x\n".to_string(),
                 first_line: 1,
                 selections: vec![sel],
+                language,
             }],
         }
     })
 }
 
 fn arb_selection_snapshot() -> impl Strategy<Value = Event> {
-    (0.0..100.0f64, "[a-z]{1,8}\\.rs").prop_map(|(t, path)| {
+    (0.0..100.0f64, "[a-z]{1,8}\\.rs", arb_language()).prop_map(|(t, path, language)| {
         let start = Position {
             line: Line::new(1).unwrap(),
             col: Col::new(1).unwrap(),
@@ -67,6 +78,7 @@ fn arb_selection_snapshot() -> impl Strategy<Value = Event> {
                 content: "selected content\n".to_string(),
                 first_line: 1,
                 selections: vec![sel],
+                language,
             }],
         }
     })

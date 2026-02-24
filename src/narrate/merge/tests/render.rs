@@ -40,6 +40,7 @@ fn words_with_code() {
                 content: "fn main() {\n    println!(\"hello\");\n}\n".to_string(),
                 first_line: 1,
                 selections: vec![],
+                language: None,
             }],
         },
         Event::Words {
@@ -138,6 +139,7 @@ fn code_only_no_prose() {
             content: "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n".to_string(),
             first_line: 42,
             selections: vec![],
+            language: None,
         }],
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
@@ -158,12 +160,14 @@ fn multiple_files_in_snapshot() {
                 content: "def foo():\n    pass\n".to_string(),
                 first_line: 1,
                 selections: vec![],
+                language: None,
             },
             CapturedRegion {
                 path: "src/b.js".to_string(),
                 content: "const x = 1;\n".to_string(),
                 first_line: 10,
                 selections: vec![],
+                language: None,
             },
         ],
     }];
@@ -188,6 +192,7 @@ fn full_scenario_snapshot() {
                     content: "fn parse_config(path: &Path) -> Result<Config> {\n    let raw = std::fs::read_to_string(path)?;\n    toml::from_str(&raw)\n}\n".to_string(),
                     first_line: 42,
                     selections: vec![],
+                    language: None,
                 }],
             },
             Event::Words {
@@ -202,6 +207,7 @@ fn full_scenario_snapshot() {
                     content: "pub struct Config {\n    pub name: String,\n    pub timeout: Duration,\n}\n".to_string(),
                     first_line: 8,
                     selections: vec![],
+                    language: None,
                 }],
             },
             Event::Words {
@@ -254,6 +260,7 @@ fn content_without_trailing_newline() {
             content: "no trailing newline".to_string(),
             first_line: 1,
             selections: vec![],
+            language: None,
         }],
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
@@ -337,6 +344,7 @@ fn snip_applied_to_code_block() {
             content,
             first_line: 1,
             selections: vec![],
+            language: None,
         }],
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
@@ -378,6 +386,7 @@ fn code_only_scenario_snapshot() {
                 content: "pub struct Config {\n    pub name: String,\n}\n".to_string(),
                 first_line: 1,
                 selections: vec![],
+                language: None,
             }],
         },
         Event::FileDiff {
@@ -437,9 +446,58 @@ fn snip_disabled_with_large_threshold() {
             content: content.clone(),
             first_line: 1,
             selections: vec![],
+            language: None,
         }],
     }];
     let md = format_markdown(&mut events, cfg);
     assert!(!md.contains("omitted"));
     assert!(md.contains("line 50\n"));
+}
+
+// ── Language tag rendering ────────────────────────────────────────────────
+
+/// Fence includes language tag when `language` is Some.
+#[test]
+fn language_tag_in_fence() {
+    let mut events = vec![Event::EditorSnapshot {
+        timestamp: ts(0.0),
+        files: vec![],
+        regions: vec![CapturedRegion {
+            path: "src/main.rs".to_string(),
+            content: "fn main() {}\n".to_string(),
+            first_line: 1,
+            selections: vec![],
+            language: Some("rust".to_string()),
+        }],
+    }];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    assert!(
+        md.contains("```rust\n"),
+        "fence should include language tag: {md:?}"
+    );
+}
+
+/// Bare fence when `language` is None.
+#[test]
+fn bare_fence_when_no_language() {
+    let mut events = vec![Event::EditorSnapshot {
+        timestamp: ts(0.0),
+        files: vec![],
+        regions: vec![CapturedRegion {
+            path: "src/main.rs".to_string(),
+            content: "fn main() {}\n".to_string(),
+            first_line: 1,
+            selections: vec![],
+            language: None,
+        }],
+    }];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    assert!(
+        md.contains("```\n// src/main.rs"),
+        "fence should be bare when no language: {md:?}"
+    );
+    assert!(
+        !md.contains("```rust"),
+        "no language tag should appear: {md:?}"
+    );
 }
