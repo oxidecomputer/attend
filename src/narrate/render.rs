@@ -70,6 +70,16 @@ fn snip(text: &str, cfg: SnipConfig, first_line: Option<usize>) -> String {
 
 /// Returns true if `text` starts with a character that should attach to
 /// the preceding word without a space (punctuation, contractions).
+///
+/// This is an intentional allowlist rather than a Unicode category check.
+/// The `Po` (Other Punctuation) general category is a grab-bag that includes
+/// characters which should *not* fuse left (`#`, `&`, `*`, `@`, `\`, `/`,
+/// `¡`, `¿`), so no combination of Unicode categories works as a predicate.
+///
+/// Parakeet's 8192-token SentencePiece vocabulary contains only ASCII
+/// punctuation (no `Pe`/`Pf`/`Pi`/`Ps` characters at all), so the fuse-left
+/// Po set is just `. , : ! ? ' %`. The extra entries (`; " ) ] }`) cover
+/// Whisper output and are harmless for Parakeet.
 fn starts_with_punctuation(text: &str) -> bool {
     text.as_bytes().first().is_some_and(|&b| {
         matches!(
