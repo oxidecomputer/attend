@@ -113,6 +113,7 @@ pub(super) fn spawn(
     open_paths: Arc<Mutex<Vec<Utf8PathBuf>>>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
+        let mut lang_cache = view::LanguageCache::new();
         let mut tracker = DwellTracker::new(Duration::from_millis(CURSOR_DWELL_MS));
 
         while !stop.load(Ordering::Relaxed) {
@@ -123,7 +124,7 @@ pub(super) fn spawn(
             // Flush a dwelled cursor-only snapshot if enough time has passed.
             if let Some(files) = tracker.tick(now) {
                 let timestamp = chrono::Utc::now();
-                let regions = capture_snapshot_regions(&files, None);
+                let regions = capture_snapshot_regions(&files, None, &mut lang_cache);
                 events.lock().unwrap().push(Event::EditorSnapshot {
                     timestamp,
                     files,
@@ -141,7 +142,7 @@ pub(super) fn spawn(
 
             if let Some(files) = tracker.update(state.files, now) {
                 let timestamp = chrono::Utc::now();
-                let regions = capture_snapshot_regions(&files, None);
+                let regions = capture_snapshot_regions(&files, None, &mut lang_cache);
                 events.lock().unwrap().push(Event::EditorSnapshot {
                     timestamp,
                     files,
@@ -156,12 +157,13 @@ pub(super) fn spawn(
 fn capture_snapshot_regions(
     files: &[state::FileEntry],
     cwd: Option<&Utf8Path>,
+    lang_cache: &mut view::LanguageCache,
 ) -> Vec<view::CapturedRegion> {
     let extent = view::Extent::Lines {
         before: 1,
         after: 1,
     };
-    view::capture_regions(files, cwd, extent).unwrap_or_default()
+    view::capture_regions(files, cwd, extent, lang_cache).unwrap_or_default()
 }
 
 #[cfg(test)]

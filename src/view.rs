@@ -1,4 +1,5 @@
 mod annotate;
+mod detect;
 mod parse;
 
 use std::io::IsTerminal;
@@ -14,6 +15,7 @@ use crate::state::{Line, Position, Selection};
 use annotate::line_events;
 use annotate::{Group, render_line_range};
 
+pub use detect::LanguageCache;
 pub use parse::parse_compact;
 
 // ---------------------------------------------------------------------------
@@ -295,6 +297,11 @@ pub struct CapturedRegion {
     pub first_line: u32,
     /// Absolute file positions of selections/cursors within this region.
     pub selections: Vec<Selection>,
+    /// Programming language detected from the file path (e.g. "rust", "python").
+    /// Uses GFM-compatible identifiers. `None` when detection fails, the file
+    /// type is unknown, or the language lacks GFM syntax highlighting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 /// Capture raw file regions from editor entries, parallel to [`render_json`]
@@ -305,6 +312,7 @@ pub fn capture_regions(
     entries: &[FileEntry],
     cwd: Option<&Utf8Path>,
     extent: Extent,
+    lang_cache: &mut LanguageCache,
 ) -> anyhow::Result<Vec<CapturedRegion>> {
     let mut regions = Vec::new();
 
@@ -332,6 +340,9 @@ pub fn capture_regions(
         };
         let lines: Vec<&str> = content.lines().collect();
 
+        // Detect language once per file (cached across captures).
+        let language = lang_cache.detect(&abs_path);
+
         let groups = Group::compute(&entry.selections, lines.len(), extent);
 
         for group in &groups {
@@ -342,6 +353,7 @@ pub fn capture_regions(
                 content: raw,
                 first_line: group.first_line.get() as u32,
                 selections: sels,
+                language: language.clone(),
             });
         }
     }

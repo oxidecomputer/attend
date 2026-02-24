@@ -166,7 +166,10 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                         &region.selections,
                     );
                     let snipped = snip(&annotated, snip_cfg, Some(region.first_line as usize));
-                    out.push_str("```\n");
+                    match &region.language {
+                        Some(lang) => out.push_str(&format!("```{lang}\n")),
+                        None => out.push_str("```\n"),
+                    }
                     out.push_str(&format!("// {}:{}\n", region.path, region.first_line));
                     out.push_str(&snipped);
                     if !snipped.ends_with('\n') {
