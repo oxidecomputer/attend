@@ -34,12 +34,12 @@ fn main() {}
 ```
 
 **Shell commands** — a fenced code block tagged with the shell name. The
-command is prefixed with `$ `. An optional `in <dir>/:` label above the fence
+command is prefixed with `$ `. An optional `In <dir>/:` label above the fence
 shows the working directory when not at project root. A trailing `# exit
 <code>, <dur>s` comment appears when the command failed or took over one second
 (its absence means exit 0, fast):
 
-in `subdir/`:
+In `subdir/`:
 ```fish
 $ cargo test --lib  # exit 1, 3.2s
 ```

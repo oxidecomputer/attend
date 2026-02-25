@@ -569,7 +569,7 @@ fn shell_command_with_cwd() {
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
     assert!(
-        md.contains("in `subdir/nested/`:\n"),
+        md.contains("In `subdir/nested/`:\n"),
         "should show cwd comment: {md:?}"
     );
 }
@@ -586,7 +586,7 @@ fn shell_command_project_root_no_cwd() {
         duration_secs: Some(0.1),
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
-    assert!(!md.contains("in `"), "no cwd label at project root");
+    assert!(!md.contains("In `"), "no cwd label at project root");
 }
 
 /// Shell command interleaved with speech renders in chronological order.
