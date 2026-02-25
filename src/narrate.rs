@@ -120,6 +120,23 @@ pub(crate) fn shell_staging_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
     cache_dir().join("shell-staging").join(dir_key(session_id))
 }
 
+/// Directory where yanked narration files are written.
+///
+/// Yank writes here instead of `pending/` so the hook delivery path
+/// never sees the content (no race between yank CLI and hook delivery).
+pub(crate) fn yanked_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
+    cache_dir().join("yanked").join(dir_key(session_id))
+}
+
+/// Path to the yank sentinel file.
+///
+/// Signals the daemon to stop recording and write output to `yanked/`
+/// instead of `pending/`. The CLI writes this sentinel; the daemon
+/// checks it each loop iteration.
+pub(crate) fn yank_sentinel_path() -> Utf8PathBuf {
+    cache_dir().join("yank")
+}
+
 // ── Generalized staging infrastructure ──────────────────────────────────────
 
 /// Collected staging events, with file paths for deferred cleanup.

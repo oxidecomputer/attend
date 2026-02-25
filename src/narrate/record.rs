@@ -20,7 +20,7 @@ use super::silence::SilenceDetector;
 use super::transcribe::{Engine, Word};
 use super::{
     cache_dir, flush_sentinel_path, pause_sentinel_path, pending_dir, record_lock_path,
-    resolve_session, stop_sentinel_path,
+    resolve_session, stop_sentinel_path, yank_sentinel_path, yanked_dir,
 };
 use crate::config::Config;
 use crate::state::SessionId;
@@ -126,6 +126,7 @@ struct DaemonState {
     stop_sentinel: camino::Utf8PathBuf,
     flush_sentinel: camino::Utf8PathBuf,
     pause_sentinel: camino::Utf8PathBuf,
+    yank_sentinel: camino::Utf8PathBuf,
     /// Whether the daemon is currently paused.
     paused: bool,
     /// When the current pause started (for time_base_secs adjustment on resume).
@@ -197,6 +198,51 @@ impl DaemonState {
         let browser_staging = self.collect_browser_staging();
         let shell_staging = self.collect_shell_staging();
         let had_content = self.transcribe_and_write(
+            editor_snapshots,
+            file_diffs,
+            ext_selections,
+            browser_staging,
+            shell_staging,
+        )?;
+        if !had_content {
+            // Intentionally ignored: chime failure non-fatal.
+            let _ = audio::play_empty_chime();
+        }
+        Ok(true)
+    }
+
+    /// Check for yank sentinel. If found, finalize and write narration to
+    /// the `yanked/` directory (instead of `pending/`) so the yank CLI can
+    /// read it without racing with hook delivery.
+    ///
+    /// Returns `true` if the daemon should exit (yank was handled).
+    fn check_yank(&mut self) -> anyhow::Result<bool> {
+        if !self.yank_sentinel.exists() {
+            return Ok(false);
+        }
+
+        // Same stop chime: yank is just stop with a different output destination.
+        let _ = audio::play_chime(false);
+
+        // Grab any final chunks that arrived after the last ingest.
+        let capture = self
+            .audio_capture
+            .take()
+            .expect("audio capture already stopped");
+        let recording = capture.stop();
+        self.buffered_chunks.extend(recording.chunks);
+        // Best-effort cleanup.
+        let _ = fs::remove_file(&self.yank_sentinel);
+
+        let editor = self
+            .editor_capture
+            .take()
+            .expect("editor capture already stopped");
+        let (editor_snapshots, file_diffs, ext_selections) = editor.collect();
+        let browser_staging = self.collect_browser_staging();
+        let shell_staging = self.collect_shell_staging();
+        let had_content = self.transcribe_and_write_to(
+            yanked_dir(self.session_id.as_ref()),
             editor_snapshots,
             file_diffs,
             ext_selections,
@@ -410,11 +456,35 @@ impl DaemonState {
     }
 
     /// Transcribe remaining audio, combine with pre-transcribed words, merge
-    /// with editor events, and write the pending narration file.
+    /// with editor events, and write to the pending narration directory.
     ///
     /// Returns `true` if content was produced, `false` if nothing was captured.
     fn transcribe_and_write(
         &mut self,
+        editor_snapshots: Vec<Event>,
+        file_diffs: Vec<Event>,
+        ext_selections: Vec<Event>,
+        browser_staging: super::StagingResult,
+        shell_staging: super::StagingResult,
+    ) -> anyhow::Result<bool> {
+        let dir = pending_dir(self.session_id.as_ref());
+        self.transcribe_and_write_to(
+            dir,
+            editor_snapshots,
+            file_diffs,
+            ext_selections,
+            browser_staging,
+            shell_staging,
+        )
+    }
+
+    /// Transcribe remaining audio, combine with pre-transcribed words, merge
+    /// with editor events, and write to the specified output directory.
+    ///
+    /// Returns `true` if content was produced, `false` if nothing was captured.
+    fn transcribe_and_write_to(
+        &mut self,
+        dest_dir: camino::Utf8PathBuf,
         editor_snapshots: Vec<Event>,
         file_diffs: Vec<Event>,
         ext_selections: Vec<Event>,
@@ -498,9 +568,8 @@ impl DaemonState {
         let json = serde_json::to_string(&events)?;
 
         let ts = utc_now().replace(':', "-");
-        let dir = pending_dir(self.session_id.as_ref());
-        fs::create_dir_all(&dir)?;
-        let path = dir.join(format!("{ts}.json"));
+        fs::create_dir_all(&dest_dir)?;
+        let path = dest_dir.join(format!("{ts}.json"));
         crate::util::atomic_write_str(&path, &json)?;
         tracing::info!(path = %path, "Narration written");
 
@@ -671,6 +740,99 @@ pub fn pause() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Yank: stop recording and copy rendered narration to the system clipboard.
+///
+/// Writes the yank sentinel (not stop), waits for the daemon to exit, reads
+/// the yanked output, renders to markdown, and copies to clipboard. If no
+/// content was captured, prints a message and leaves the clipboard unchanged.
+pub fn yank() -> anyhow::Result<()> {
+    if !record_lock_path().exists() {
+        eprintln!("Not recording. Run `attend narrate toggle` or `attend narrate start` to begin.");
+        return Ok(());
+    }
+
+    let sentinel = yank_sentinel_path();
+    if let Some(parent) = sentinel.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&sentinel, "")?;
+
+    // Wait for daemon to exit (same pattern as stop).
+    for _ in 0..SENTINEL_WAIT_ITERATIONS {
+        if !record_lock_path().exists() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(SENTINEL_POLL_MS));
+    }
+
+    if record_lock_path().exists() {
+        eprintln!("Stop signal sent; daemon may still be transcribing.");
+    }
+
+    // Read and render yanked content.
+    let cwd = camino::Utf8PathBuf::try_from(std::env::current_dir().unwrap_or_default())
+        .unwrap_or_else(|_| camino::Utf8PathBuf::from("."));
+    let config = crate::config::Config::load(&cwd);
+    let session_id = resolve_session(None);
+
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(ref sid) = session_id {
+        files.extend(collect_json_files(&super::yanked_dir(Some(sid))));
+    }
+    files.extend(collect_json_files(&super::yanked_dir(None)));
+    files.sort();
+
+    // Filter by cwd when there's a session (the narration is for a specific
+    // project). Without a session, include all content unfiltered — the user
+    // isn't targeting a particular project and can paste anywhere.
+    let cwd_filter = session_id.as_ref().map(|_| cwd.as_path());
+    if let Some(content) = super::receive::read_pending(&files, cwd_filter, &config.include_dirs) {
+        let mut clipboard = arboard::Clipboard::new()
+            .map_err(|e| anyhow::anyhow!("cannot access clipboard: {e}"))?;
+        clipboard
+            .set_text(&content)
+            .map_err(|e| anyhow::anyhow!("cannot write to clipboard: {e}"))?;
+
+        let lines = content.lines().count();
+        let chars = content.len();
+        eprintln!("Copied {lines} lines ({chars} chars) to clipboard.");
+    } else {
+        eprintln!("No narration content.");
+    }
+
+    // Archive yanked files (same retention/cleanup as pending narrations).
+    let archive = super::archive_dir(session_id.as_ref());
+    let _ = fs::create_dir_all(&archive);
+    for path in &files {
+        if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+            let dest = archive.join(filename);
+            let _ = fs::rename(path, dest.as_std_path());
+        }
+    }
+    // Best-effort: only succeeds if empty.
+    if let Some(ref sid) = session_id {
+        let _ = fs::remove_dir(super::yanked_dir(Some(sid)));
+    }
+    let _ = fs::remove_dir(super::yanked_dir(None));
+
+    // Prune old archives.
+    super::receive::auto_prune(&config);
+
+    Ok(())
+}
+
+/// Collect `.json` files from a directory.
+fn collect_json_files(dir: &camino::Utf8Path) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
+        .collect()
+}
+
 /// The actual recording daemon entry point.
 ///
 /// Acquires the record lock, captures audio + editor state + file diffs,
@@ -715,6 +877,7 @@ pub fn daemon() -> anyhow::Result<()> {
     let _ = fs::remove_file(stop_sentinel_path());
     let _ = fs::remove_file(flush_sentinel_path());
     let _ = fs::remove_file(pause_sentinel_path());
+    let _ = fs::remove_file(yank_sentinel_path());
 
     // Start audio capture immediately — audio accumulates in the background
     // while the model loads and the chime plays.
@@ -768,6 +931,7 @@ pub fn daemon() -> anyhow::Result<()> {
         stop_sentinel: stop_sentinel_path(),
         flush_sentinel: flush_sentinel_path(),
         pause_sentinel: pause_sentinel_path(),
+        yank_sentinel: yank_sentinel_path(),
         paused: false,
         pause_started_at: None,
     };
@@ -777,6 +941,9 @@ pub fn daemon() -> anyhow::Result<()> {
             state.ingest_chunks()?;
         }
         if state.check_stop()? {
+            break;
+        }
+        if state.check_yank()? {
             break;
         }
         if state.check_flush()? {

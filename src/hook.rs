@@ -240,7 +240,7 @@ fn handle_listen_hook(
             let config = crate::config::Config::load(&cwd);
             let files = crate::narrate::receive::collect_pending(session_id);
             if let Some(content) =
-                crate::narrate::receive::read_pending(&files, &cwd, &config.include_dirs)
+                crate::narrate::receive::read_pending(&files, Some(&cwd), &config.include_dirs)
             {
                 crate::narrate::receive::archive_pending(&files, session_id);
                 crate::narrate::receive::auto_prune(&config);

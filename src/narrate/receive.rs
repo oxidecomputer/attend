@@ -58,10 +58,15 @@ fn collect_pending_dir(dir: &Utf8Path) -> Vec<PathBuf> {
 
 /// Deserialize, filter, relativize, and render pending JSON event files.
 ///
+/// When `cwd` is `Some`, events are filtered to files under `cwd` or
+/// `include_dirs`, and paths are relativized. When `None`, all events
+/// pass through unfiltered with absolute paths (used by yank without a
+/// session, where there is no project context to filter against).
+///
 /// Returns `None` if no content remains after filtering.
 pub(crate) fn read_pending(
     files: &[PathBuf],
-    cwd: &Utf8Path,
+    cwd: Option<&Utf8Path>,
     include_dirs: &[Utf8PathBuf],
 ) -> Option<String> {
     if files.is_empty() {
@@ -73,8 +78,10 @@ pub(crate) fn read_pending(
         if let Ok(content) = fs::read_to_string(path)
             && let Ok(mut events) = serde_json::from_str::<Vec<Event>>(&content)
         {
-            filter_events(&mut events, cwd, include_dirs);
-            relativize_events(&mut events, cwd);
+            if let Some(cwd) = cwd {
+                filter_events(&mut events, cwd, include_dirs);
+                relativize_events(&mut events, cwd);
+            }
             all_events.append(&mut events);
         }
     }
@@ -313,7 +320,7 @@ fn run_once(session_id: Option<SessionId>) -> anyhow::Result<()> {
     };
 
     let files = collect_pending(&session_id);
-    if let Some(content) = read_pending(&files, &cwd, &config.include_dirs) {
+    if let Some(content) = read_pending(&files, Some(&cwd), &config.include_dirs) {
         println!("{content}");
         archive_pending(&files, &session_id);
         auto_prune(&config);

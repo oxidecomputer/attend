@@ -30,9 +30,9 @@ be performed as specified, please do it.
 | 12a | [External Context Sources (Part A)](./phase-12-context-sources.md) | Done | Phase 10 |
 | 12b | [Firefox Native Messaging (Part B)](./phase-12-context-sources.md) | Done | Phase 12a |
 | 13 | [No-Session Support](./phase-13-no-session.md) | Done (0bea28a) | Phase 12b |
-| 14 | [Pause](./phase-14-pause.md) | In progress | Phase 6 |
+| 14 | [Pause](./phase-14-pause.md) | Done (9729a96) | Phase 6 |
 | 15 | [Shell Hook Integration](./phase-15-shell-hooks.md) | Done (4bfd7aa) | Phases 6, 10, 12b, 13 |
-| 16 | [Yank-to-Clipboard](./phase-16-yank.md) | Not started | Phases 13, 14 |
+| 16 | [Yank-to-Clipboard](./phase-16-yank.md) | Done | Phases 13, 14 |
 | 17 | [Loopback Audio Capture](./phase-17-loopback-capture.md) | Not started | Phases 6, 10 |
 | 18 | [Persistent Daemon](./phase-18-persistent-daemon.md) | Not started | Phase 14 |
 
@@ -155,16 +155,16 @@ be performed as specified, please do it.
 - [x] 13.5 Tests: no-session staging, pending read from `_local`, browser bridge fallback
 
 ### Phase 14: Pause
-- [ ] 14.1 Pause sentinel path + `attend narrate pause` CLI subcommand
-- [ ] 14.2 `audio::CaptureHandle::pause()` / `resume()`
-- [ ] 14.3 `capture::CaptureHandle` paused flag + `pause()` / `resume()`
-- [ ] 14.4 Editor/diff/ext threads: check `paused` flag, skip polling when set
-- [ ] 14.5 `DaemonState` pause support (flush-then-suspend, resume detection)
-- [ ] 14.6 Pause/resume chimes + empty chime
-- [ ] 14.7 Wire chimes into daemon (pause, resume, empty on stop/flush)
-- [ ] 14.8 `narrate status`: report "paused" state
-- [ ] 14.9 Zed task + keybinding for pause
-- [ ] 14.10 Tests: pause/resume sentinel, full suspend, empty chime
+- [x] 14.1 Pause sentinel path + `attend narrate pause` CLI subcommand
+- [x] 14.2 `audio::CaptureHandle::pause()` / `resume()`
+- [x] 14.3 `capture::CaptureHandle` paused flag + `pause()` / `resume()`
+- [x] 14.4 Editor/diff/ext threads: check `paused` flag, skip polling when set
+- [x] 14.5 `DaemonState` pause support (flush-then-suspend, resume detection)
+- [x] 14.6 Pause/resume chimes + empty chime
+- [x] 14.7 Wire chimes into daemon (pause, resume, empty on stop/flush)
+- [x] 14.8 `narrate status`: report "paused" state
+- [x] 14.9 Zed task + keybinding for pause
+- [x] 14.10 Tests: pause/resume sentinel, full suspend, empty chime
 
 ### Phase 15: Shell Hook Integration
 - [x] 15.1 `Event::ShellCommand` variant + serde (with cwd field for filtering)
@@ -181,12 +181,12 @@ be performed as specified, please do it.
 - [x] 15.12 Tests: 21 new tests (compress, prop, render, receive filter)
 
 ### Phase 16: Yank-to-Clipboard
-- [ ] 16.1 `yanked_dir()` + yank sentinel path
-- [ ] 16.2 `check_yank()` in daemon (write to `yanked/` dir)
-- [ ] 16.3 `attend narrate yank` CLI subcommand
-- [ ] 16.4 Clipboard write via `arboard`
-- [ ] 16.5 Zed task + keybinding for yank
-- [ ] 16.6 Tests: yank output, empty yank preserves clipboard, `yanked/` cleanup
+- [x] 16.1 `yanked_dir()` + yank sentinel path
+- [x] 16.2 `check_yank()` in daemon (write to `yanked/` dir)
+- [x] 16.3 `attend narrate yank` CLI subcommand
+- [x] 16.4 Clipboard write via `arboard`
+- [x] 16.5 Zed task + keybinding for yank
+- [x] 16.6 Tests: yank output, empty yank preserves clipboard, `yanked/` cleanup
 
 ### Phase 17: Loopback Audio Capture
 - [ ] 17.1 Replace webrtc-vad with webrtc-audio-processing (VAD migration)

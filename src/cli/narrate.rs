@@ -16,6 +16,8 @@ pub enum NarrateCommand {
     Stop,
     /// Pause or resume narration.
     Pause,
+    /// Stop narration and copy to clipboard.
+    Yank,
     /// Show recording and system status.
     Status,
     /// Remove old archived narration files.
@@ -63,6 +65,7 @@ impl NarrateCommand {
             NarrateCommand::Start => record::start(),
             NarrateCommand::Stop => record::stop(),
             NarrateCommand::Pause => record::pause(),
+            NarrateCommand::Yank => record::yank(),
             NarrateCommand::Status => crate::narrate::status(),
             NarrateCommand::Clean { older_than } => crate::narrate::clean(older_than),
             NarrateCommand::RecordDaemon => record::daemon(),

@@ -28,7 +28,7 @@ fn collect_pending_empty_dir() {
 #[test]
 fn read_pending_empty() {
     let cwd = Utf8Path::new("/project");
-    assert!(read_pending(&[], cwd, &[]).is_none());
+    assert!(read_pending(&[], Some(cwd), &[]).is_none());
 }
 
 /// A single JSON file with a Words event renders as prose.
@@ -43,7 +43,7 @@ fn read_pending_single_json() {
     fs::write(&path, serde_json::to_string(&events).unwrap()).unwrap();
 
     let cwd = Utf8Path::new("/project");
-    let result = read_pending(&[path], cwd, &[]).unwrap();
+    let result = read_pending(&[path], Some(cwd), &[]).unwrap();
     assert!(result.contains("hello world"));
     // read_pending returns raw markdown; <narration> tags are applied at render time.
     assert!(!result.contains("<narration>"));
@@ -83,7 +83,7 @@ fn read_pending_filters_by_cwd() {
     fs::write(&path, serde_json::to_string(&events).unwrap()).unwrap();
 
     let cwd = Utf8Path::new("/project");
-    let result = read_pending(&[path], cwd, &[]).unwrap();
+    let result = read_pending(&[path], Some(cwd), &[]).unwrap();
     assert!(
         result.contains("src/main.rs"),
         "project file should be included"
@@ -114,11 +114,11 @@ fn read_pending_includes_extra_dirs() {
 
     let cwd = Utf8Path::new("/project");
     // Without include_dirs, the file is filtered out
-    assert!(read_pending(std::slice::from_ref(&path), cwd, &[]).is_none());
+    assert!(read_pending(std::slice::from_ref(&path), Some(cwd), &[]).is_none());
 
     // With include_dirs, the file passes
     let include = vec![Utf8PathBuf::from("/shared")];
-    let result = read_pending(&[path], cwd, &include).unwrap();
+    let result = read_pending(&[path], Some(cwd), &include).unwrap();
     assert!(result.contains("/shared/utils.rs"));
 }
 
@@ -250,7 +250,7 @@ fn read_pending_merges_multiple_files() {
     fs::write(&f2, serde_json::to_string(&events2).unwrap()).unwrap();
 
     let cwd = Utf8Path::new("/project");
-    let result = read_pending(&[f1, f2], cwd, &[]).unwrap();
+    let result = read_pending(&[f1, f2], Some(cwd), &[]).unwrap();
     // Prose from both files appears.
     assert!(result.contains("look at this"));
     assert!(result.contains("refactor that"));
@@ -311,7 +311,7 @@ fn collect_read_archive_round_trip() {
 
     // Read should merge into a single narration block.
     let cwd = Utf8Path::new("/project");
-    let content = read_pending(&files, cwd, &[]).unwrap();
+    let content = read_pending(&files, Some(cwd), &[]).unwrap();
     assert!(content.contains("first dictation"));
     assert!(content.contains("second dictation"));
 
@@ -464,7 +464,7 @@ fn read_pending_renders_shell_command() {
     fs::write(&path, serde_json::to_string(&events).unwrap()).unwrap();
 
     let cwd = Utf8Path::new("/project");
-    let result = read_pending(&[path], cwd, &[]).unwrap();
+    let result = read_pending(&[path], Some(cwd), &[]).unwrap();
     assert!(result.contains("then I ran"), "prose should be included");
     assert!(
         result.contains("cargo test --lib"),
@@ -544,7 +544,7 @@ fn collect_pending_merges_session_and_local() {
 
     // Read merges both files into one markdown document.
     let cwd = Utf8Path::new("/project");
-    let content = read_pending(&files, cwd, &[]).unwrap();
+    let content = read_pending(&files, Some(cwd), &[]).unwrap();
     assert!(
         content.contains("local narration"),
         "_local narration should be included"

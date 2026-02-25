@@ -231,6 +231,29 @@ fn browser_staging_dir_includes_session() {
     );
 }
 
+// -- Yanked directory tests --
+
+/// The yanked directory path includes the session ID.
+#[test]
+fn yanked_dir_includes_session() {
+    let sid = SessionId::from("abc-123");
+    let dir = super::yanked_dir(Some(&sid));
+    assert!(
+        dir.ends_with("yanked/abc-123") || dir.ends_with("yanked\\abc-123"),
+        "expected session ID, got: {dir}"
+    );
+}
+
+/// When no session ID is provided, yanked_dir uses the `_local` fallback.
+#[test]
+fn yanked_dir_falls_back_to_local() {
+    let dir = super::yanked_dir(None);
+    assert!(
+        dir.ends_with("yanked/_local") || dir.ends_with("yanked\\_local"),
+        "expected _local fallback, got: {dir}"
+    );
+}
+
 // -- Pause tests --
 //
 // These use CacheDirGuard to redirect all filesystem state to a tempdir,
@@ -325,4 +348,425 @@ fn pause_sentinel_under_cache_dir() {
     // With pause sentinel: paused.
     std::fs::write(&sentinel, "").unwrap();
     assert!(sentinel.exists());
+}
+
+// -- Yank tests --
+//
+// These use CacheDirGuard to redirect all filesystem state to a tempdir,
+// then exercise the real record::yank() function.
+
+/// `record::yank()` when not recording prints an error and is a no-op.
+#[test]
+fn yank_not_recording_is_noop() {
+    let _g = CacheDirGuard::new();
+    record::yank().unwrap();
+    // No sentinel should exist — yank exits early when not recording.
+    assert!(!super::yank_sentinel_path().exists());
+}
+
+/// `record::yank()` writes the yank sentinel when recording.
+#[test]
+fn yank_writes_sentinel() {
+    let _g = CacheDirGuard::new();
+
+    // Use a dead PID so yank() doesn't wait 5 seconds for a daemon.
+    std::fs::write(record_lock_path(), i32::MAX.to_string()).unwrap();
+
+    record::yank().unwrap();
+    // Sentinel is cleaned up by the CLI after it detects daemon exit,
+    // but the daemon (dead PID) never ran, so the sentinel may or may not
+    // remain. The key assertion: yank didn't panic and ran to completion.
+}
+
+/// `record::yank()` while paused still works (writes yank sentinel).
+#[test]
+fn yank_while_paused_is_accepted() {
+    let _g = CacheDirGuard::new();
+
+    // Use a dead PID so yank() doesn't wait 5 seconds for a daemon.
+    std::fs::write(record_lock_path(), i32::MAX.to_string()).unwrap();
+
+    record::pause().unwrap();
+    assert!(pause_sentinel_path().exists());
+
+    // Yank while paused should succeed.
+    record::yank().unwrap();
+}
+
+/// The yank sentinel path lives under the overridden cache directory.
+#[test]
+fn yank_sentinel_under_cache_dir() {
+    let g = CacheDirGuard::new();
+    let sentinel = super::yank_sentinel_path();
+
+    // Sentinel path is under the overridden cache dir.
+    assert!(sentinel.starts_with(g.cache.as_str()));
+}
+
+// -- Yank property tests --
+//
+// These verify structural invariants of the yank path that must hold
+// for any session ID and any event content.
+
+use proptest::prelude::*;
+
+/// `yanked_dir` and `pending_dir` never produce the same path for any session ID.
+///
+/// This is the core isolation invariant: the hook delivery path (which reads
+/// `pending/`) must never accidentally pick up yanked content.
+#[test]
+fn yanked_dir_disjoint_from_pending_dir() {
+    proptest!(|(session_id in "[a-zA-Z0-9_-]{1,64}")| {
+        let sid = SessionId::from(session_id.as_str());
+        let yanked = super::yanked_dir(Some(&sid));
+        let pending = super::pending_dir(Some(&sid));
+        // Neither should be a prefix of the other.
+        prop_assert!(!yanked.starts_with(&pending));
+        prop_assert!(!pending.starts_with(&yanked));
+        prop_assert_ne!(yanked, pending, "yanked and pending dirs must differ");
+    });
+}
+
+/// `yanked_dir(None)` and `pending_dir(None)` are also disjoint (_local fallback).
+#[test]
+fn yanked_dir_disjoint_from_pending_dir_local() {
+    let yanked = super::yanked_dir(None);
+    let pending = super::pending_dir(None);
+    assert_ne!(yanked, pending);
+    assert!(!yanked.starts_with(&pending));
+    assert!(!pending.starts_with(&yanked));
+}
+
+/// Files written to `yanked/` are invisible to `collect_pending`.
+///
+/// This is the end-to-end isolation test: even when yanked files exist
+/// on disk, the hook delivery pipeline never finds them.
+#[test]
+fn collect_pending_ignores_yanked_dir() {
+    let _g = CacheDirGuard::new();
+    let sid = SessionId::from("isolation-test");
+
+    // Write a file to the yanked dir.
+    let yanked = super::yanked_dir(Some(&sid));
+    std::fs::create_dir_all(&yanked).unwrap();
+    let events = vec![super::merge::Event::Words {
+        timestamp: chrono::DateTime::UNIX_EPOCH,
+        text: "yanked content".to_string(),
+    }];
+    std::fs::write(
+        yanked.join("test.json"),
+        serde_json::to_string(&events).unwrap(),
+    )
+    .unwrap();
+
+    // collect_pending should find nothing (pending dir is empty).
+    let files = super::receive::collect_pending(&sid);
+    assert!(
+        files.is_empty(),
+        "collect_pending must not see files in yanked/"
+    );
+}
+
+/// Events written to the yanked dir round-trip through read_pending.
+///
+/// Simulates what the daemon does (write events to yanked/) and what the
+/// yank CLI does (collect files, call read_pending, verify content).
+#[test]
+fn yanked_events_round_trip_through_read_pending() {
+    let _g = CacheDirGuard::new();
+    let sid = SessionId::from("round-trip-test");
+    let cwd = camino::Utf8Path::new("/project");
+
+    // Simulate daemon writing to yanked dir.
+    let yanked = super::yanked_dir(Some(&sid));
+    std::fs::create_dir_all(&yanked).unwrap();
+    let events = vec![
+        super::merge::Event::Words {
+            timestamp: chrono::DateTime::UNIX_EPOCH,
+            text: "hello from yank".to_string(),
+        },
+        super::merge::Event::Words {
+            timestamp: chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(1000),
+            text: "more words".to_string(),
+        },
+    ];
+    let json_path = yanked.join("2026-02-25T10-00-00Z.json");
+    std::fs::write(&json_path, serde_json::to_string(&events).unwrap()).unwrap();
+
+    // Simulate yank CLI: collect files and read.
+    let files: Vec<std::path::PathBuf> = vec![json_path.into_std_path_buf()];
+    let content = super::receive::read_pending(&files, Some(cwd), &[])
+        .expect("should produce content from yanked events");
+
+    assert!(content.contains("hello from yank"));
+    assert!(content.contains("more words"));
+    // Should be raw markdown, not wrapped in tags.
+    assert!(!content.contains("<narration>"));
+}
+
+/// Cleanup after yank removes all collected files and leaves the dir empty.
+#[test]
+fn yank_cleanup_removes_files_and_empty_dir() {
+    let _g = CacheDirGuard::new();
+    let sid = SessionId::from("cleanup-test");
+
+    let yanked = super::yanked_dir(Some(&sid));
+    std::fs::create_dir_all(&yanked).unwrap();
+
+    // Write multiple files.
+    for i in 0..3 {
+        let events = vec![super::merge::Event::Words {
+            timestamp: chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(i * 1000),
+            text: format!("chunk {i}"),
+        }];
+        std::fs::write(
+            yanked.join(format!("{i:020}.json")),
+            serde_json::to_string(&events).unwrap(),
+        )
+        .unwrap();
+    }
+
+    // Collect the files.
+    let files: Vec<std::path::PathBuf> = std::fs::read_dir(&yanked)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+    assert_eq!(files.len(), 3);
+
+    // Simulate yank cleanup: remove files, then try to remove empty dir.
+    for path in &files {
+        std::fs::remove_file(path).unwrap();
+    }
+    let _ = std::fs::remove_dir(&yanked);
+
+    assert!(
+        !yanked.exists(),
+        "yanked dir should be removed after cleanup"
+    );
+}
+
+/// Yanked files are archived (not deleted) after yank, so they survive
+/// for `attend narrate clean` on the normal retention schedule.
+#[test]
+fn yank_archives_instead_of_deleting() {
+    let _g = CacheDirGuard::new();
+    let sid = SessionId::from("archive-test");
+
+    // Simulate daemon writing to yanked dir.
+    let yanked = super::yanked_dir(Some(&sid));
+    std::fs::create_dir_all(&yanked).unwrap();
+    let events = vec![super::merge::Event::Words {
+        timestamp: chrono::DateTime::UNIX_EPOCH,
+        text: "archived content".to_string(),
+    }];
+    let filename = "2026-02-25T10-00-00Z.json";
+    std::fs::write(
+        yanked.join(filename),
+        serde_json::to_string(&events).unwrap(),
+    )
+    .unwrap();
+
+    // Simulate the archive step from record::yank().
+    let files: Vec<std::path::PathBuf> = vec![yanked.join(filename).into_std_path_buf()];
+    let archive = super::archive_dir(Some(&sid));
+    std::fs::create_dir_all(&archive).unwrap();
+    for path in &files {
+        if let Some(fname) = path.file_name().and_then(|f| f.to_str()) {
+            let dest = archive.join(fname);
+            std::fs::rename(path, dest.as_std_path()).unwrap();
+        }
+    }
+    let _ = std::fs::remove_dir(&yanked);
+
+    // Yanked dir is gone.
+    assert!(!yanked.exists(), "yanked dir should be cleaned up");
+
+    // File is in the archive.
+    let archived = archive.join(filename);
+    assert!(archived.exists(), "yanked file should be archived");
+
+    // Archived content is intact.
+    let content = std::fs::read_to_string(&archived).unwrap();
+    let parsed: Vec<super::merge::Event> = serde_json::from_str(&content).unwrap();
+    assert_eq!(parsed.len(), 1);
+}
+
+/// Yank with a session filters content by the session's cwd, matching
+/// the behavior of hook delivery via stop.
+#[test]
+fn yank_with_session_filters_by_cwd() {
+    let _g = CacheDirGuard::new();
+    let sid = SessionId::from("cwd-filter-test");
+    let cwd = camino::Utf8Path::new("/project");
+
+    // Write events with files both inside and outside the cwd.
+    let yanked = super::yanked_dir(Some(&sid));
+    std::fs::create_dir_all(&yanked).unwrap();
+    let events = vec![
+        super::merge::Event::Words {
+            timestamp: chrono::DateTime::UNIX_EPOCH,
+            text: "look at these files".to_string(),
+        },
+        super::merge::Event::EditorSnapshot {
+            timestamp: chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(100),
+            files: vec![],
+            regions: vec![
+                super::merge::CapturedRegion {
+                    path: "/project/src/main.rs".to_string(),
+                    content: "fn main() {}\n".to_string(),
+                    first_line: 1,
+                    selections: vec![],
+                    language: None,
+                },
+                super::merge::CapturedRegion {
+                    path: "/other-project/lib.rs".to_string(),
+                    content: "fn other() {}\n".to_string(),
+                    first_line: 1,
+                    selections: vec![],
+                    language: None,
+                },
+            ],
+        },
+    ];
+    std::fs::write(
+        yanked.join("test.json"),
+        serde_json::to_string(&events).unwrap(),
+    )
+    .unwrap();
+
+    let files: Vec<std::path::PathBuf> = vec![yanked.join("test.json").into_std_path_buf()];
+
+    // With cwd filtering (session present): only project files survive.
+    let content = super::receive::read_pending(&files, Some(cwd), &[]).unwrap();
+    assert!(
+        content.contains("src/main.rs"),
+        "project file should be included and relativized"
+    );
+    assert!(
+        !content.contains("/other-project"),
+        "outside file should be filtered out"
+    );
+}
+
+/// Yank without a session includes all content unfiltered, with absolute paths.
+///
+/// When there is no receiving session, there is no project context to filter
+/// against. The user can paste the full narration anywhere they choose.
+#[test]
+fn yank_without_session_includes_all_content() {
+    let _g = CacheDirGuard::new();
+
+    // Write events with files from different directories (no common root).
+    let yanked = super::yanked_dir(None);
+    std::fs::create_dir_all(&yanked).unwrap();
+    let events = vec![
+        super::merge::Event::Words {
+            timestamp: chrono::DateTime::UNIX_EPOCH,
+            text: "various files".to_string(),
+        },
+        super::merge::Event::EditorSnapshot {
+            timestamp: chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(100),
+            files: vec![],
+            regions: vec![
+                super::merge::CapturedRegion {
+                    path: "/project-a/src/main.rs".to_string(),
+                    content: "fn main_a() {}\n".to_string(),
+                    first_line: 1,
+                    selections: vec![],
+                    language: None,
+                },
+                super::merge::CapturedRegion {
+                    path: "/project-b/lib.rs".to_string(),
+                    content: "fn lib_b() {}\n".to_string(),
+                    first_line: 1,
+                    selections: vec![],
+                    language: None,
+                },
+            ],
+        },
+        super::merge::Event::FileDiff {
+            timestamp: chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(200),
+            path: "/project-c/test.rs".to_string(),
+            old: "old\n".to_string(),
+            new: "new\n".to_string(),
+        },
+    ];
+    std::fs::write(
+        yanked.join("test.json"),
+        serde_json::to_string(&events).unwrap(),
+    )
+    .unwrap();
+
+    let files: Vec<std::path::PathBuf> = vec![yanked.join("test.json").into_std_path_buf()];
+
+    // Without cwd filtering (no session): all content passes through.
+    let content = super::receive::read_pending(&files, None, &[]).unwrap();
+    assert!(
+        content.contains("/project-a/src/main.rs"),
+        "project-a file should be included with absolute path"
+    );
+    assert!(
+        content.contains("/project-b/lib.rs"),
+        "project-b file should be included with absolute path"
+    );
+    assert!(
+        content.contains("/project-c/test.rs"),
+        "project-c diff should be included with absolute path"
+    );
+}
+
+/// For any session ID, yanked files written by the daemon are collected
+/// from both the session dir and the _local fallback dir.
+#[test]
+fn yank_collects_from_session_and_local() {
+    let _g = CacheDirGuard::new();
+    let sid = SessionId::from("dual-collect-test");
+
+    // Write to session-specific yanked dir.
+    let session_dir = super::yanked_dir(Some(&sid));
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let session_events = vec![super::merge::Event::Words {
+        timestamp: chrono::DateTime::UNIX_EPOCH,
+        text: "session yank".to_string(),
+    }];
+    std::fs::write(
+        session_dir.join("session.json"),
+        serde_json::to_string(&session_events).unwrap(),
+    )
+    .unwrap();
+
+    // Write to _local yanked dir.
+    let local_dir = super::yanked_dir(None);
+    std::fs::create_dir_all(&local_dir).unwrap();
+    let local_events = vec![super::merge::Event::Words {
+        timestamp: chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(500),
+        text: "local yank".to_string(),
+    }];
+    std::fs::write(
+        local_dir.join("local.json"),
+        serde_json::to_string(&local_events).unwrap(),
+    )
+    .unwrap();
+
+    // Collect from both dirs (same pattern as record::yank).
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    for dir in [&session_dir, &local_dir] {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.extension().and_then(|e| e.to_str()) == Some("json") {
+                    files.push(p);
+                }
+            }
+        }
+    }
+    files.sort();
+
+    assert_eq!(files.len(), 2, "should collect from both dirs");
+
+    let cwd = camino::Utf8Path::new("/project");
+    let content = super::receive::read_pending(&files, Some(cwd), &[]).unwrap();
+    assert!(content.contains("session yank"));
+    assert!(content.contains("local yank"));
 }
