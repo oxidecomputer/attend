@@ -8,16 +8,12 @@ use clap::CommandFactory;
 
 /// Fish hook file installed to `~/.config/fish/conf.d/attend.fish`.
 fn hook_path() -> Option<Utf8PathBuf> {
-    let config = dirs::config_dir()?;
-    let config = Utf8PathBuf::try_from(config).ok()?;
-    Some(config.join("fish/conf.d/attend.fish"))
+    Some(super::xdg_config_home()?.join("fish/conf.d/attend.fish"))
 }
 
 /// Fish completions file installed to `~/.config/fish/completions/attend.fish`.
 fn completions_path() -> Option<Utf8PathBuf> {
-    let config = dirs::config_dir()?;
-    let config = Utf8PathBuf::try_from(config).ok()?;
-    Some(config.join("fish/completions/attend.fish"))
+    Some(super::xdg_config_home()?.join("fish/completions/attend.fish"))
 }
 
 /// Resolve the absolute path to the attend binary for the hook script.

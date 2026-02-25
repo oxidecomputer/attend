@@ -8,23 +8,17 @@ use clap::CommandFactory;
 
 /// Zsh hook file installed to `~/.config/attend/hooks/attend.zsh`.
 fn hook_path() -> Option<Utf8PathBuf> {
-    let config = dirs::config_dir()?;
-    let config = Utf8PathBuf::try_from(config).ok()?;
-    Some(config.join("attend/hooks/attend.zsh"))
+    Some(super::xdg_config_home()?.join("attend/hooks/attend.zsh"))
 }
 
 /// Zsh completions file installed to `~/.config/attend/completions/_attend`.
 fn completions_path() -> Option<Utf8PathBuf> {
-    let config = dirs::config_dir()?;
-    let config = Utf8PathBuf::try_from(config).ok()?;
-    Some(config.join("attend/completions/_attend"))
+    Some(super::xdg_config_home()?.join("attend/completions/_attend"))
 }
 
 /// Completions directory (for fpath instructions).
 fn completions_dir() -> Option<Utf8PathBuf> {
-    let config = dirs::config_dir()?;
-    let config = Utf8PathBuf::try_from(config).ok()?;
-    Some(config.join("attend/completions"))
+    Some(super::xdg_config_home()?.join("attend/completions"))
 }
 
 /// Resolve the absolute path to the attend binary for the hook script.
