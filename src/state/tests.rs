@@ -759,6 +759,74 @@ fn selection_level_reordering() {
     );
 }
 
+/// Files that no longer exist on disk (e.g. deleted files still open as editor
+/// tabs) are silently skipped rather than causing an error.
+///
+/// Reproduces the real-world bug where a Zed tab pointing to a deleted file
+/// caused the UserPromptSubmit hook to fail with "cannot open" error.
+#[test]
+fn deleted_file_skipped() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = write_temp_file(dir.path(), "a.rs", TEST_CONTENT);
+    let b = write_temp_file(dir.path(), "b.rs", TEST_CONTENT);
+
+    // Point an editor at a path that doesn't exist on disk
+    let ghost = Utf8PathBuf::from(dir.path().join("deleted.rs").to_str().unwrap());
+
+    let editors = vec![
+        make_editor(&a, Some((0, 0))),
+        make_editor(&ghost, Some((0, 3))),
+        make_editor(&b, Some((3, 3))),
+    ];
+    let state = EditorState::build(editors, Some(to_utf8(dir.path())), &[]).unwrap();
+
+    // The deleted file should be silently skipped
+    assert_eq!(state.files.len(), 2);
+    assert_eq!(state.files[0].path, a);
+    assert_eq!(state.files[1].path, b);
+}
+
+/// A file deleted between build calls is gracefully removed from state.
+///
+/// Simulates the scenario where a file exists during the first invocation
+/// but is deleted before the second.
+#[test]
+fn file_deleted_between_invocations() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = write_temp_file(dir.path(), "a.rs", TEST_CONTENT);
+    let b = write_temp_file(dir.path(), "b.rs", TEST_CONTENT);
+
+    // First invocation: both files exist
+    let (state1, _) = simulate(
+        vec![make_editor(&a, Some((0, 0))), make_editor(&b, Some((0, 0)))],
+        dir.path(),
+        &EditorState::default(),
+    );
+    assert_eq!(state1.files.len(), 2);
+    let cached = round_trip(&state1);
+
+    // Delete b.rs from disk (but editor still has the tab open)
+    fs::remove_file(b.as_std_path()).unwrap();
+
+    // Second invocation: b.rs still reported by editor but doesn't exist
+    let state2 = EditorState::build(
+        vec![make_editor(&a, Some((0, 0))), make_editor(&b, Some((0, 0)))],
+        Some(to_utf8(dir.path())),
+        &[],
+    )
+    .unwrap();
+
+    // Only a.rs survives
+    assert_eq!(state2.files.len(), 1);
+    assert_eq!(state2.files[0].path, a);
+
+    // Reorder should work fine too
+    let mut state2 = state2;
+    state2.reorder_relative_to(&cached);
+    assert_eq!(state2.files.len(), 1);
+    assert_eq!(state2.files[0].path, a);
+}
+
 /// Editors outside cwd are filtered out. Changes only to outside-cwd editors
 /// produce a cache hit (`changed == false`).
 #[test]

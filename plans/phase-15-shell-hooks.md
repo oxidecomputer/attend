@@ -434,31 +434,49 @@ can proceed in parallel once 1 lands. 11 and 12 tie everything together.
 
 ---
 
-## Potential prerequisite: SQLite for attend state
+## Considered and deferred: SQLite for attend state
 
-The current persistence model is filesystem-as-database: `listening`,
-`record.lock`, `receive.lock`, `version.json`, `latest.json` (editor state
-cache), two staging directory trees (browser, shell), and the
-pending/archive narration directories. Adding shell staging means yet another
-directory tree with the same scan-parse-cleanup pattern.
+We evaluated replacing the filesystem persistence model (sentinel files,
+staging directories, pending/archive directories) with a single SQLite
+database. **Decision: defer.** The filesystem approach remains the right
+choice for now.
 
-A single SQLite database would consolidate all of this:
-- Atomic multi-row writes (no more crash-safety gymnastics with staging files)
-- Single file to manage instead of a directory tree per event source
+**What SQLite would offer:**
+- Atomic multi-row writes (no crash-safety gymnastics with staging files)
+- Single file instead of a directory tree per event source
 - Efficient querying (e.g., "events since timestamp X" without scanning files)
-- Natural home for session state, install metadata, and editor state cache
 - We already depend on `rusqlite` (for reading Zed's DB)
 
-**Tradeoff**: more upfront work, and the current filesystem approach is
-well-tested. But adding a third staging directory (shell) alongside browser
-is the point where the duplication starts to hurt. If we're going to do this,
-doing it before shell hooks land (or as part of the same phase) avoids
-building more infrastructure on the filesystem pattern only to migrate it
-later.
+**Why we're not doing it:**
 
-This could be scoped as phase 15a (SQLite migration) followed by 15b (shell
-hooks on the new foundation), or deferred if the filesystem approach remains
-acceptable.
+1. **Sentinel-file IPC is load-bearing.** Phases 14 (pause) and 18
+   (persistent daemon) depend on sentinel files (`pause`, `stop`, `flush`,
+   `yank`) for inter-process communication. The browser-bridge and shell-hook
+   CLIs check `record.lock` existence as a zero-cost fast path. SQLite
+   wouldn't replace this — we'd still need sentinels for IPC, so it would
+   only replace half the filesystem usage while adding its own complexity.
+
+2. **`StagingDir` solves the duplication concern.** The actual pain point
+   (duplicated collect/cleanup logic across browser and shell staging) is
+   addressed by extracting a shared `StagingDir` type (task 15.6). That's
+   ~20 lines of shared code, not a whole persistence layer.
+
+3. **Multi-process concurrency gets harder.** Currently, `browser-bridge` and
+   `shell-hook` are fire-and-forget: write a JSON file, exit. With SQLite,
+   they'd need database connections, WAL mode locking, and "database is
+   locked" contention handling. Strictly more failure modes than independent
+   file writes.
+
+4. **Filesystem is debuggable.** `ls` and `cat` give instant diagnostics.
+   SQLite requires tooling and the data format is opaque to casual inspection.
+
+5. **Reading vs owning rusqlite.** We depend on rusqlite as a *reader* of
+   Zed's database. Owning a SQLite database (schema design, migrations, WAL
+   configuration, vacuum policy) is a different category of commitment.
+
+**Revisit trigger:** If we add a fourth or fifth event source with its own
+staging directory, or if query patterns emerge that require scanning too many
+files, SQLite becomes a stronger case.
 
 ---
 
@@ -493,7 +511,8 @@ acceptable.
    identical. Extracting a shared `StagingDir` reduces duplication but adds
    abstraction. Worth doing if we anticipate more staging sources.
 
-   > Yes. We should also consider this potentially as an opportunity to
-   reconsider our persistence mechanism: would a SQLite database of our own
-   be more performant and easier to work with long term than our growing
-   collection of various kinds of cache files?
+   > Yes. We also evaluated a full SQLite migration as an alternative but
+   deferred it: the sentinel-file IPC pattern is load-bearing for phases 14
+   and 18, `StagingDir` addresses the duplication concern at much lower cost,
+   and multi-process SQLite access adds failure modes we don't need. See
+   "Considered and deferred" section above.

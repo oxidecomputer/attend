@@ -334,3 +334,104 @@ fn install_uses_bin_cmd() {
     let cmd = ss_hooks["command"].as_str().unwrap();
     assert!(cmd.starts_with("/usr/local/bin/attend"));
 }
+
+/// All hook keys we install, for exhaustive assertions.
+const ALL_HOOK_KEYS: &[&str] = &[
+    HOOK_KEY_SESSION_START,
+    HOOK_KEY_USER_PROMPT_SUBMIT,
+    HOOK_KEY_STOP,
+    HOOK_KEY_PRE_TOOL_USE,
+    HOOK_KEY_POST_TOOL_USE,
+    HOOK_KEY_SESSION_END,
+];
+
+/// Helper: count attend hook entries across all hook keys.
+fn count_attend_hooks(settings: &serde_json::Value) -> usize {
+    let hooks = settings["hooks"].as_object().unwrap();
+    ALL_HOOK_KEYS
+        .iter()
+        .map(|key| {
+            hooks
+                .get(*key)
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter(|e| is_our_hook(e)).count())
+                .unwrap_or(0)
+        })
+        .sum()
+}
+
+/// Installing many times produces exactly one attend entry per hook key.
+///
+/// Reproduces the real-world bug where repeated installs accumulated
+/// duplicate hook entries, causing hooks to fire N times per event.
+#[test]
+fn install_many_times_no_duplicates() {
+    let dir = tempfile::tempdir().unwrap();
+    let proj = project_path(&dir);
+
+    for _ in 0..6 {
+        install::install("attend", Some(proj.clone())).unwrap();
+    }
+
+    let settings = read_settings(dir.path());
+    let hooks = settings["hooks"].as_object().unwrap();
+
+    for key in ALL_HOOK_KEYS {
+        let arr = hooks[*key].as_array().unwrap();
+        let ours: Vec<_> = arr.iter().filter(|e| is_our_hook(e)).collect();
+        assert_eq!(
+            ours.len(),
+            1,
+            "{key} should have exactly one attend entry after 6 installs, got {}",
+            ours.len()
+        );
+    }
+
+    assert_eq!(
+        count_attend_hooks(&settings),
+        ALL_HOOK_KEYS.len(),
+        "total attend hooks should equal number of hook keys"
+    );
+}
+
+/// Uninstalling twice is idempotent: second uninstall is a no-op.
+#[test]
+fn uninstall_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    let proj = project_path(&dir);
+
+    install::install("attend", Some(proj.clone())).unwrap();
+    uninstall::uninstall(Some(proj.clone())).unwrap();
+
+    // Capture state after first uninstall
+    let after_first = fs::read_to_string(dir.path().join(".claude/settings.local.json")).unwrap();
+
+    // Second uninstall should not error and should not change the file
+    uninstall::uninstall(Some(proj)).unwrap();
+    let after_second = fs::read_to_string(dir.path().join(".claude/settings.local.json")).unwrap();
+
+    assert_eq!(
+        after_first, after_second,
+        "second uninstall should be a no-op"
+    );
+}
+
+/// Install after uninstall restores hooks cleanly (full round-trip cycle).
+#[test]
+fn install_uninstall_install_cycle() {
+    let dir = tempfile::tempdir().unwrap();
+    let proj = project_path(&dir);
+
+    install::install("attend", Some(proj.clone())).unwrap();
+    let after_first_install = read_settings(dir.path());
+
+    uninstall::uninstall(Some(proj.clone())).unwrap();
+    install::install("attend", Some(proj)).unwrap();
+    let after_reinstall = read_settings(dir.path());
+
+    // Hook structure should be identical after reinstall
+    assert_eq!(
+        after_first_install["hooks"], after_reinstall["hooks"],
+        "hooks should match after install-uninstall-install cycle"
+    );
+}

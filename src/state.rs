@@ -134,6 +134,15 @@ fn shared_cache_path() -> Option<Utf8PathBuf> {
     Some(cache_dir()?.join("latest.json"))
 }
 
+/// Check whether an anyhow error chain contains an `io::ErrorKind::NotFound`.
+fn is_not_found(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<io::Error>()
+            .is_some_and(|e| e.kind() == io::ErrorKind::NotFound)
+    })
+}
+
 /// Core types (Line, Col, Position, Selection) and byte-offset resolution.
 pub(crate) mod resolve;
 pub use resolve::{Col, Line, Position, Selection};
@@ -300,7 +309,14 @@ impl EditorState {
             let selections = if raw_sels.is_empty() {
                 Vec::new()
             } else {
-                Selection::resolve(path.as_std_path(), raw_sels)?
+                match Selection::resolve(path.as_std_path(), raw_sels) {
+                    Ok(sels) => sels,
+                    // Skip files that no longer exist on disk (e.g. deleted
+                    // files still open as editor tabs). This is normal editor
+                    // state, not an error.
+                    Err(e) if is_not_found(&e) => continue,
+                    Err(e) => return Err(e),
+                }
             };
             files.push(FileEntry {
                 path: path.to_path_buf(),
