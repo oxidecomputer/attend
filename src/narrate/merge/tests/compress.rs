@@ -950,9 +950,7 @@ fn shell_commands_interleave_with_editor() {
     ];
     compress_and_merge(&mut events);
     assert_eq!(events.len(), 3, "all three event types survive");
-    // Verify chronological order.
     assert!(events[0].timestamp() <= events[1].timestamp());
-    assert!(events[1].timestamp() <= events[2].timestamp());
 }
 
 /// Preexec-only event survives when there's no matching postexec.

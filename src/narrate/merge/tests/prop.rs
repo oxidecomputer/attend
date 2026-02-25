@@ -260,7 +260,6 @@ proptest! {
         let mut merged = events;
         compress_and_merge(&mut merged);
 
-        // Collect all region paths from output snapshots.
         let mut output_paths: Vec<String> = merged
             .iter()
             .filter_map(|e| match e {
@@ -274,11 +273,10 @@ proptest! {
         output_paths.sort();
         output_paths.dedup();
 
-        // Every selection path from input must appear in output.
         for path in &input_selection_paths {
             prop_assert!(
                 output_paths.contains(path),
-                "selection path {:?} lost during compression",
+                "post-word selection path {:?} lost during compression",
                 path
             );
         }

@@ -15,6 +15,7 @@ use camino::Utf8Path;
 
 use super::audio::{self, AudioChunk};
 use super::capture;
+use super::chime::Chime;
 use super::merge::{self, Event};
 use super::silence::SilenceDetector;
 use super::transcribe::{Engine, Word};
@@ -171,44 +172,31 @@ impl DaemonState {
 
     /// Check for stop sentinel or SIGTERM. If found, finalize and write narration.
     ///
+    /// When an agent session is active, writes to `pending/` for hook delivery.
+    /// When no session is active, writes to `yanked/` instead (same as yank)
+    /// since there is no agent to pick up pending content — the CLI will copy
+    /// it to the clipboard.
+    ///
     /// Returns `true` if the daemon should exit (stop was handled).
     fn check_stop(&mut self) -> anyhow::Result<bool> {
         if !self.stop_sentinel.exists() && !self.terminated.load(Ordering::Relaxed) {
             return Ok(false);
         }
 
-        // Intentionally ignored: chime failure non-fatal.
-        let _ = audio::play_chime(false);
-
-        // Grab any final chunks that arrived after the last ingest.
-        let capture = self
-            .audio_capture
-            .take()
-            .expect("audio capture already stopped");
-        let recording = capture.stop();
-        self.buffered_chunks.extend(recording.chunks);
-        // Best-effort cleanup.
-        let _ = fs::remove_file(&self.stop_sentinel);
-
-        let editor = self
-            .editor_capture
-            .take()
-            .expect("editor capture already stopped");
-        let (editor_snapshots, file_diffs, ext_selections) = editor.collect();
-        let browser_staging = self.collect_browser_staging();
-        let shell_staging = self.collect_shell_staging();
-        let had_content = self.transcribe_and_write(
-            editor_snapshots,
-            file_diffs,
-            ext_selections,
-            browser_staging,
-            shell_staging,
-        )?;
-        if !had_content {
-            // Intentionally ignored: chime failure non-fatal.
-            let _ = audio::play_empty_chime();
-        }
-        Ok(true)
+        let to_clipboard = self.session_id.is_none();
+        self.finalize_and_write(
+            if to_clipboard {
+                yanked_dir(self.session_id.as_ref())
+            } else {
+                pending_dir(self.session_id.as_ref())
+            },
+            if to_clipboard {
+                Chime::Yank
+            } else {
+                Chime::Stop
+            },
+            &self.stop_sentinel.clone(),
+        )
     }
 
     /// Check for yank sentinel. If found, finalize and write narration to
@@ -221,8 +209,23 @@ impl DaemonState {
             return Ok(false);
         }
 
-        // Same stop chime: yank is just stop with a different output destination.
-        let _ = audio::play_chime(false);
+        self.finalize_and_write(
+            yanked_dir(self.session_id.as_ref()),
+            Chime::Yank,
+            &self.yank_sentinel.clone(),
+        )
+    }
+
+    /// Shared finalization: play chime, collect all streams, transcribe,
+    /// and write to the given destination directory.
+    fn finalize_and_write(
+        &mut self,
+        dest_dir: camino::Utf8PathBuf,
+        chime: Chime,
+        sentinel: &camino::Utf8Path,
+    ) -> anyhow::Result<bool> {
+        // Intentionally ignored: chime failure non-fatal.
+        let _ = chime.play();
 
         // Grab any final chunks that arrived after the last ingest.
         let capture = self
@@ -232,7 +235,7 @@ impl DaemonState {
         let recording = capture.stop();
         self.buffered_chunks.extend(recording.chunks);
         // Best-effort cleanup.
-        let _ = fs::remove_file(&self.yank_sentinel);
+        let _ = fs::remove_file(sentinel);
 
         let editor = self
             .editor_capture
@@ -242,7 +245,7 @@ impl DaemonState {
         let browser_staging = self.collect_browser_staging();
         let shell_staging = self.collect_shell_staging();
         let had_content = self.transcribe_and_write_to(
-            yanked_dir(self.session_id.as_ref()),
+            dest_dir,
             editor_snapshots,
             file_diffs,
             ext_selections,
@@ -251,12 +254,15 @@ impl DaemonState {
         )?;
         if !had_content {
             // Intentionally ignored: chime failure non-fatal.
-            let _ = audio::play_empty_chime();
+            let _ = Chime::Empty.play();
         }
         Ok(true)
     }
 
     /// Check for flush sentinel. If found, write current narration and reset.
+    ///
+    /// When no agent session is active, writes to `yanked/` instead of
+    /// `pending/` (same as stop without a session).
     ///
     /// Returns `true` if a flush was handled (caller should `continue`).
     fn check_flush(&mut self) -> anyhow::Result<bool> {
@@ -264,8 +270,14 @@ impl DaemonState {
             return Ok(false);
         }
 
-        // Intentionally ignored: chime failure non-fatal.
-        let _ = audio::play_flush_chime();
+        let to_clipboard = self.session_id.is_none();
+
+        // Yank chime when going to clipboard, flush chime when going to agent.
+        let _ = if to_clipboard {
+            Chime::Yank.play()
+        } else {
+            Chime::Flush.play()
+        };
 
         let capture = self
             .audio_capture
@@ -282,7 +294,14 @@ impl DaemonState {
         let (editor_snapshots, file_diffs, ext_selections) = editor.drain();
         let browser_staging = self.collect_browser_staging();
         let shell_staging = self.collect_shell_staging();
-        let had_content = self.transcribe_and_write(
+
+        let dest = if to_clipboard {
+            yanked_dir(self.session_id.as_ref())
+        } else {
+            pending_dir(self.session_id.as_ref())
+        };
+        let had_content = self.transcribe_and_write_to(
+            dest,
             editor_snapshots,
             file_diffs,
             ext_selections,
@@ -291,7 +310,7 @@ impl DaemonState {
         )?;
         if !had_content {
             // Intentionally ignored: chime failure non-fatal.
-            let _ = audio::play_empty_chime();
+            let _ = Chime::Empty.play();
         }
 
         self.time_base_secs += elapsed;
@@ -310,41 +329,32 @@ impl DaemonState {
 
     /// Check for pause/resume transitions.
     ///
-    /// On pause (sentinel appears): flush all content, suspend capture.
-    /// On resume (sentinel disappears while paused): resume capture, reset timing.
+    /// On pause (sentinel appears): suspend capture without flushing.
+    /// Content stays buffered — audio in `buffered_chunks`, editor events
+    /// in capture thread buffers, staging files on disk. Everything is
+    /// written together at the next stop or flush.
+    ///
+    /// On resume (sentinel disappears while paused): resume capture.
+    /// Timing is not reset — wall-clock timestamps naturally span the gap.
     fn check_pause(&mut self) -> anyhow::Result<()> {
         let sentinel_exists = self.pause_sentinel.exists();
 
         if sentinel_exists && !self.paused {
             // Transition: recording -> paused.
-            tracing::info!("Pause detected, flushing and suspending capture.");
+            tracing::info!("Pause detected, suspending capture.");
 
             // Intentionally ignored: chime failure non-fatal.
-            let _ = audio::play_pause_chime();
+            let _ = Chime::Pause.play();
 
-            // Flush accumulated content (same as check_flush, but we don't
-            // reset period timing — that happens on resume).
+            // Drain remaining audio from the device buffer so it isn't lost
+            // during the pause. Chunks stay in self.buffered_chunks — they
+            // are NOT transcribed or written to pending.
             let capture = self
                 .audio_capture
                 .as_ref()
                 .expect("audio capture already stopped");
             let recording = capture.drain();
             self.buffered_chunks.extend(recording.chunks);
-
-            let editor = self
-                .editor_capture
-                .as_ref()
-                .expect("editor capture already stopped");
-            let (editor_snapshots, file_diffs, ext_selections) = editor.drain();
-            let browser_staging = self.collect_browser_staging();
-            let shell_staging = self.collect_shell_staging();
-            self.transcribe_and_write(
-                editor_snapshots,
-                file_diffs,
-                ext_selections,
-                browser_staging,
-                shell_staging,
-            )?;
 
             // Suspend all capture.
             if let Some(ref audio) = self.audio_capture {
@@ -366,7 +376,7 @@ impl DaemonState {
             tracing::info!("Resume detected, resuming capture.");
 
             // Intentionally ignored: chime failure non-fatal.
-            let _ = audio::play_resume_chime();
+            let _ = Chime::Resume.play();
 
             // Resume all capture.
             if let Some(ref audio) = self.audio_capture {
@@ -377,20 +387,13 @@ impl DaemonState {
                 editor.resume();
             }
 
-            // Adjust time_base_secs to account for the pause duration.
-            if let Some(pause_start) = self.pause_started_at.take() {
-                let pause_duration = chrono::Utc::now() - pause_start;
-                self.time_base_secs += pause_duration.num_milliseconds() as f64 / 1000.0;
+            self.pause_started_at = None;
+
+            // Reset the silence detector: there is an audio discontinuity
+            // at the pause/resume boundary, so prior detector state is stale.
+            if let Some(ref mut detector) = self.silence_detector {
+                detector.reset();
             }
-
-            // Reset period timing so post-resume audio timestamps are accurate.
-            let now = Instant::now();
-            self.period_start = now;
-            self.period_start_utc = chrono::Utc::now();
-            self.last_drain = now;
-
-            // Clear stale pre-transcribed context from before the pause.
-            self.pre_transcribed.clear();
 
             self.paused = false;
         }
@@ -453,29 +456,6 @@ impl DaemonState {
     /// Collect staged shell command events for this session.
     fn collect_shell_staging(&self) -> super::StagingResult {
         super::collect_shell_staging(self.session_id.as_ref(), self.period_start_utc)
-    }
-
-    /// Transcribe remaining audio, combine with pre-transcribed words, merge
-    /// with editor events, and write to the pending narration directory.
-    ///
-    /// Returns `true` if content was produced, `false` if nothing was captured.
-    fn transcribe_and_write(
-        &mut self,
-        editor_snapshots: Vec<Event>,
-        file_diffs: Vec<Event>,
-        ext_selections: Vec<Event>,
-        browser_staging: super::StagingResult,
-        shell_staging: super::StagingResult,
-    ) -> anyhow::Result<bool> {
-        let dir = pending_dir(self.session_id.as_ref());
-        self.transcribe_and_write_to(
-            dir,
-            editor_snapshots,
-            file_diffs,
-            ext_selections,
-            browser_staging,
-            shell_staging,
-        )
     }
 
     /// Transcribe remaining audio, combine with pre-transcribed words, merge
@@ -641,7 +621,13 @@ pub fn start() -> anyhow::Result<()> {
 }
 
 /// Signal the running daemon to flush (submit current narration, keep recording).
+///
+/// When no agent session is active, the daemon writes to `yanked/` and
+/// this function copies the content to the clipboard.
 fn flush() -> anyhow::Result<()> {
+    let session_id = resolve_session(None);
+    let to_clipboard = session_id.is_none();
+
     let sentinel = flush_sentinel_path();
     if let Some(parent) = sentinel.parent() {
         fs::create_dir_all(parent)?;
@@ -651,12 +637,19 @@ fn flush() -> anyhow::Result<()> {
     // Wait for the daemon to delete the sentinel (acknowledging the flush).
     for _ in 0..SENTINEL_WAIT_ITERATIONS {
         if !sentinel.exists() {
-            return Ok(());
+            break;
         }
         thread::sleep(Duration::from_millis(SENTINEL_POLL_MS));
     }
 
-    eprintln!("Flush signal sent; daemon may still be transcribing.");
+    if sentinel.exists() {
+        eprintln!("Flush signal sent; daemon may still be transcribing.");
+    }
+
+    if to_clipboard {
+        copy_yanked_to_clipboard(session_id.as_ref())?;
+    }
+
     Ok(())
 }
 
@@ -690,6 +683,10 @@ fn spawn_daemon() -> anyhow::Result<()> {
 
 /// Signal the recorder to stop by creating the stop sentinel.
 ///
+/// When no agent session is active, behaves like yank: the daemon writes
+/// to `yanked/` and this function copies the content to the clipboard,
+/// since there is no agent to pick up pending content.
+///
 /// If not recording (no lock), this is a no-op.
 pub fn stop() -> anyhow::Result<()> {
     if !record_lock_path().exists() {
@@ -697,21 +694,35 @@ pub fn stop() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // When no session is active, the daemon writes to yanked/ instead of
+    // pending/. Detect this before writing the sentinel so we know whether
+    // to do clipboard copy after the daemon exits.
+    let session_id = resolve_session(None);
+    let to_clipboard = session_id.is_none();
+
     let sentinel = stop_sentinel_path();
     if let Some(parent) = sentinel.parent() {
         fs::create_dir_all(parent)?;
     }
     fs::write(&sentinel, "")?;
 
-    // Wait briefly for the daemon to notice
+    // Wait briefly for the daemon to notice.
     for _ in 0..SENTINEL_WAIT_ITERATIONS {
         if !record_lock_path().exists() {
-            return Ok(());
+            break;
         }
         thread::sleep(Duration::from_millis(SENTINEL_POLL_MS));
     }
 
-    eprintln!("Stop signal sent; daemon may still be transcribing.");
+    if record_lock_path().exists() {
+        eprintln!("Stop signal sent; daemon may still be transcribing.");
+    }
+
+    // No agent listening: daemon wrote to yanked/. Copy to clipboard.
+    if to_clipboard {
+        copy_yanked_to_clipboard(session_id.as_ref())?;
+    }
+
     Ok(())
 }
 
@@ -769,14 +780,19 @@ pub fn yank() -> anyhow::Result<()> {
         eprintln!("Stop signal sent; daemon may still be transcribing.");
     }
 
-    // Read and render yanked content.
+    copy_yanked_to_clipboard(resolve_session(None).as_ref())
+}
+
+/// Read yanked narration files, copy to clipboard, archive, and clean up.
+///
+/// Shared by `yank()` and `stop()` (when no agent is listening).
+fn copy_yanked_to_clipboard(session_id: Option<&crate::state::SessionId>) -> anyhow::Result<()> {
     let cwd = camino::Utf8PathBuf::try_from(std::env::current_dir().unwrap_or_default())
         .unwrap_or_else(|_| camino::Utf8PathBuf::from("."));
     let config = crate::config::Config::load(&cwd);
-    let session_id = resolve_session(None);
 
     let mut files: Vec<std::path::PathBuf> = Vec::new();
-    if let Some(ref sid) = session_id {
+    if let Some(sid) = session_id {
         files.extend(collect_json_files(&super::yanked_dir(Some(sid))));
     }
     files.extend(collect_json_files(&super::yanked_dir(None)));
@@ -785,7 +801,7 @@ pub fn yank() -> anyhow::Result<()> {
     // Filter by cwd when there's a session (the narration is for a specific
     // project). Without a session, include all content unfiltered — the user
     // isn't targeting a particular project and can paste anywhere.
-    let cwd_filter = session_id.as_ref().map(|_| cwd.as_path());
+    let cwd_filter = session_id.map(|_| cwd.as_path());
     if let Some(content) = super::receive::read_pending(&files, cwd_filter, &config.include_dirs) {
         let mut clipboard = arboard::Clipboard::new()
             .map_err(|e| anyhow::anyhow!("cannot access clipboard: {e}"))?;
@@ -801,7 +817,7 @@ pub fn yank() -> anyhow::Result<()> {
     }
 
     // Archive yanked files (same retention/cleanup as pending narrations).
-    let archive = super::archive_dir(session_id.as_ref());
+    let archive = super::archive_dir(session_id);
     let _ = fs::create_dir_all(&archive);
     for path in &files {
         if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
@@ -810,7 +826,7 @@ pub fn yank() -> anyhow::Result<()> {
         }
     }
     // Best-effort: only succeeds if empty.
-    if let Some(ref sid) = session_id {
+    if let Some(sid) = session_id {
         let _ = fs::remove_dir(super::yanked_dir(Some(sid)));
     }
     let _ = fs::remove_dir(super::yanked_dir(None));
@@ -900,7 +916,7 @@ pub fn daemon() -> anyhow::Result<()> {
     signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&terminated))?;
 
     // Intentionally ignored: chime failure should not abort recording.
-    let _ = audio::play_chime(true);
+    let _ = Chime::Start.play();
 
     // Silence-based segmentation (0 disables).
     let silence_secs = config.silence_duration.unwrap_or(5.0);

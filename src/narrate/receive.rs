@@ -90,6 +90,22 @@ pub(crate) fn read_pending(
         return None;
     }
 
+    // Drop the leading editor snapshot: the UserPromptSubmit hook already
+    // delivers the full editor state at delivery time, so the initial
+    // snapshot (the state at recording start) is redundant. Done before
+    // render so subsequent snapshots (user actions during narration) are
+    // preserved.
+    if all_events
+        .first()
+        .is_some_and(|e| matches!(e, Event::EditorSnapshot { .. }))
+    {
+        all_events.remove(0);
+    }
+
+    if all_events.is_empty() {
+        return None;
+    }
+
     let markdown = render::render_markdown(&all_events, SnipConfig::default());
     let trimmed = markdown.trim();
     if trimmed.is_empty() {

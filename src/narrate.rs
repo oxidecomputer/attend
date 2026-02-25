@@ -7,6 +7,7 @@
 
 mod audio;
 mod capture;
+mod chime;
 mod clean;
 mod diff_capture;
 mod editor_capture;

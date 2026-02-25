@@ -98,25 +98,32 @@ fn read_pending_filters_by_cwd() {
 #[test]
 fn read_pending_includes_extra_dirs() {
     let dir = tempfile::tempdir().unwrap();
-    let events = vec![Event::EditorSnapshot {
-        timestamp: ts(0.0),
-        files: vec![],
-        regions: vec![CapturedRegion {
-            path: "/shared/utils.rs".to_string(),
-            content: "fn shared() {}\n".to_string(),
-            first_line: 1,
-            selections: vec![],
-            language: None,
-        }],
-    }];
+    let events = vec![
+        Event::Words {
+            timestamp: ts(0.0),
+            text: "look at shared".to_string(),
+        },
+        Event::EditorSnapshot {
+            timestamp: ts(1.0),
+            files: vec![],
+            regions: vec![CapturedRegion {
+                path: "/shared/utils.rs".to_string(),
+                content: "fn shared() {}\n".to_string(),
+                first_line: 1,
+                selections: vec![],
+                language: None,
+            }],
+        },
+    ];
     let path = dir.path().join("test.json");
     fs::write(&path, serde_json::to_string(&events).unwrap()).unwrap();
 
     let cwd = Utf8Path::new("/project");
-    // Without include_dirs, the file is filtered out
-    assert!(read_pending(std::slice::from_ref(&path), Some(cwd), &[]).is_none());
+    // Without include_dirs, the snapshot is filtered out (only words remain).
+    let result = read_pending(std::slice::from_ref(&path), Some(cwd), &[]).unwrap();
+    assert!(!result.contains("/shared/utils.rs"));
 
-    // With include_dirs, the file passes
+    // With include_dirs, the snapshot passes.
     let include = vec![Utf8PathBuf::from("/shared")];
     let result = read_pending(&[path], Some(cwd), &include).unwrap();
     assert!(result.contains("/shared/utils.rs"));
