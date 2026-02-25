@@ -101,6 +101,10 @@ impl DwellTracker {
     }
 }
 
+/// Sleep interval when paused: long enough to save CPU, short enough
+/// that resume is detected promptly.
+const PAUSED_POLL_MS: u64 = 500;
+
 /// Spawn the editor polling thread.
 ///
 /// Returns the join handle. The thread pushes `EditorSnapshot` events into
@@ -108,6 +112,7 @@ impl DwellTracker {
 /// file paths into `open_paths` for the diff capture thread to read.
 pub(super) fn spawn(
     stop: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
     cwd: Option<Utf8PathBuf>,
     events: Arc<Mutex<Vec<Event>>>,
     open_paths: Arc<Mutex<Vec<Utf8PathBuf>>>,
@@ -117,6 +122,11 @@ pub(super) fn spawn(
         let mut tracker = DwellTracker::new(Duration::from_millis(CURSOR_DWELL_MS));
 
         while !stop.load(Ordering::Relaxed) {
+            if paused.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_millis(PAUSED_POLL_MS));
+                continue;
+            }
+
             thread::sleep(Duration::from_millis(EDITOR_POLL_MS));
 
             let now = Instant::now();

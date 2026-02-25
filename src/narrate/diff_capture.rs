@@ -21,6 +21,9 @@ use super::merge::Event;
 /// How often to poll for file content changes (secs).
 const FILE_DIFF_POLL_SECS: u64 = 1;
 
+/// Sleep interval when paused (ms).
+const PAUSED_POLL_MS: u64 = 500;
+
 /// Spawn the file diff tracking thread.
 ///
 /// Reads the current set of open files from `open_paths` (published by
@@ -29,6 +32,7 @@ const FILE_DIFF_POLL_SECS: u64 = 1;
 /// `events` until `stop` is set.
 pub(super) fn spawn(
     stop: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
     open_paths: Arc<Mutex<Vec<Utf8PathBuf>>>,
     events: Arc<Mutex<Vec<Event>>>,
 ) -> thread::JoinHandle<()> {
@@ -52,6 +56,11 @@ pub(super) fn spawn(
         }
 
         while !stop.load(Ordering::Relaxed) {
+            if paused.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_millis(PAUSED_POLL_MS));
+                continue;
+            }
+
             thread::sleep(Duration::from_secs(FILE_DIFF_POLL_SECS));
 
             // Read the current file list from the editor capture thread.

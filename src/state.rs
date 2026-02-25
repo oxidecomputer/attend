@@ -62,6 +62,35 @@ pub(crate) fn set_cache_dir_override(dir: Option<Utf8PathBuf>) {
     CACHE_DIR_OVERRIDE.with(|cell| *cell.borrow_mut() = dir);
 }
 
+/// RAII guard that redirects `cache_dir()` to a temp directory for the
+/// duration of a test. Clears the override on drop, even if the test panics.
+#[cfg(test)]
+pub(crate) struct CacheDirGuard {
+    /// Holds the tempdir alive; dropped (and cleaned up) with the guard.
+    _tmp: tempfile::TempDir,
+    /// Exposed so tests can construct paths relative to the override.
+    pub cache: Utf8PathBuf,
+}
+
+#[cfg(test)]
+impl CacheDirGuard {
+    /// Create a new temp directory and install it as the cache override.
+    pub fn new() -> Self {
+        let tmp = tempfile::tempdir().expect("failed to create temp dir");
+        let cache = Utf8PathBuf::try_from(tmp.path().to_path_buf()).expect("non-UTF-8 temp dir");
+        set_cache_dir_override(Some(cache.clone()));
+        std::fs::create_dir_all(&cache).expect("failed to create cache dir");
+        Self { _tmp: tmp, cache }
+    }
+}
+
+#[cfg(test)]
+impl Drop for CacheDirGuard {
+    fn drop(&mut self) {
+        set_cache_dir_override(None);
+    }
+}
+
 /// Return the platform cache directory for attend.
 pub fn cache_dir() -> Option<Utf8PathBuf> {
     #[cfg(test)]

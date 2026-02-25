@@ -230,3 +230,99 @@ fn browser_staging_dir_includes_session() {
         "expected session ID, got: {dir}"
     );
 }
+
+// -- Pause tests --
+//
+// These use CacheDirGuard to redirect all filesystem state to a tempdir,
+// then exercise the real record::pause() function.
+
+use crate::state::CacheDirGuard;
+
+/// `record::pause()` when not recording prints an error and is a no-op.
+#[test]
+fn pause_not_recording_is_noop() {
+    let _g = CacheDirGuard::new();
+    record::pause().unwrap();
+    assert!(!pause_sentinel_path().exists());
+}
+
+/// `record::pause()` creates the sentinel when recording and none exists,
+/// and removes it on the second call (toggle behavior).
+#[test]
+fn pause_toggle_round_trip() {
+    let _g = CacheDirGuard::new();
+
+    // Simulate a running daemon by writing a record lock.
+    std::fs::write(record_lock_path(), std::process::id().to_string()).unwrap();
+
+    // First call: creates the sentinel (pause).
+    record::pause().unwrap();
+    assert!(
+        pause_sentinel_path().exists(),
+        "sentinel should exist after first pause"
+    );
+
+    // Second call: removes the sentinel (resume).
+    record::pause().unwrap();
+    assert!(
+        !pause_sentinel_path().exists(),
+        "sentinel should not exist after second pause (resume)"
+    );
+}
+
+/// Multiple pause/resume cycles through `record::pause()` always
+/// converge to the expected state.
+#[test]
+fn pause_multiple_cycles() {
+    let _g = CacheDirGuard::new();
+    std::fs::write(record_lock_path(), std::process::id().to_string()).unwrap();
+
+    for i in 0..5 {
+        record::pause().unwrap();
+        assert!(
+            pause_sentinel_path().exists(),
+            "cycle {i}: sentinel should exist after pause"
+        );
+        record::pause().unwrap();
+        assert!(
+            !pause_sentinel_path().exists(),
+            "cycle {i}: sentinel should not exist after resume"
+        );
+    }
+}
+
+/// `record::stop()` while paused still works (writes stop sentinel).
+#[test]
+fn stop_while_paused_is_accepted() {
+    let _g = CacheDirGuard::new();
+
+    // Use a dead PID so stop() doesn't wait 5 seconds for a daemon.
+    std::fs::write(record_lock_path(), i32::MAX.to_string()).unwrap();
+
+    record::pause().unwrap();
+    assert!(pause_sentinel_path().exists());
+
+    // Stop writes the stop sentinel even while paused.
+    record::stop().unwrap();
+}
+
+/// The pause sentinel path lives under the overridden cache directory,
+/// and its presence/absence tracks pause state.
+#[test]
+fn pause_sentinel_under_cache_dir() {
+    let g = CacheDirGuard::new();
+    let sentinel = pause_sentinel_path();
+
+    // Sentinel path is under the overridden cache dir.
+    assert!(sentinel.starts_with(g.cache.as_str()));
+
+    // Write record lock with our PID (alive process).
+    std::fs::write(record_lock_path(), std::process::id().to_string()).unwrap();
+
+    // Without pause sentinel: not paused.
+    assert!(!sentinel.exists());
+
+    // With pause sentinel: paused.
+    std::fs::write(&sentinel, "").unwrap();
+    assert!(sentinel.exists());
+}

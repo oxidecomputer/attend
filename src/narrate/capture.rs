@@ -19,6 +19,7 @@ use super::merge::Event;
 /// Handle for the background editor/diff/ext polling threads.
 pub(crate) struct CaptureHandle {
     stop_flag: Arc<AtomicBool>,
+    paused_flag: Arc<AtomicBool>,
     editor_events: Arc<Mutex<Vec<Event>>>,
     diff_events: Arc<Mutex<Vec<Event>>>,
     ext_events: Arc<Mutex<Vec<Event>>>,
@@ -28,6 +29,16 @@ pub(crate) struct CaptureHandle {
 }
 
 impl CaptureHandle {
+    /// Pause all capture threads (skip polling, sleep at longer intervals).
+    pub fn pause(&self) {
+        self.paused_flag.store(true, Ordering::Relaxed);
+    }
+
+    /// Resume all capture threads.
+    pub fn resume(&self) {
+        self.paused_flag.store(false, Ordering::Relaxed);
+    }
+
     /// Drain accumulated events without stopping threads.
     pub fn drain(&self) -> (Vec<Event>, Vec<Event>, Vec<Event>) {
         let editor = std::mem::take(&mut *self.editor_events.lock().unwrap());
@@ -68,6 +79,7 @@ pub(crate) fn start(
     ext_ignore_apps: Vec<String>,
 ) -> anyhow::Result<CaptureHandle> {
     let stop_flag = Arc::new(AtomicBool::new(false));
+    let paused_flag = Arc::new(AtomicBool::new(false));
 
     let editor_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
     let diff_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
@@ -78,6 +90,7 @@ pub(crate) fn start(
 
     let editor_thread = super::editor_capture::spawn(
         Arc::clone(&stop_flag),
+        Arc::clone(&paused_flag),
         cwd,
         Arc::clone(&editor_events),
         Arc::clone(&open_paths),
@@ -85,18 +98,21 @@ pub(crate) fn start(
 
     let diff_thread = super::diff_capture::spawn(
         Arc::clone(&stop_flag),
+        Arc::clone(&paused_flag),
         Arc::clone(&open_paths),
         Arc::clone(&diff_events),
     );
 
     let ext_thread = super::ext_capture::spawn(
         Arc::clone(&stop_flag),
+        Arc::clone(&paused_flag),
         Arc::clone(&ext_events),
         ext_ignore_apps,
     );
 
     Ok(CaptureHandle {
         stop_flag,
+        paused_flag,
         editor_events,
         diff_events,
         ext_events,

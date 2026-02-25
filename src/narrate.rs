@@ -65,6 +65,14 @@ pub(crate) fn flush_sentinel_path() -> Utf8PathBuf {
     cache_dir().join("flush")
 }
 
+/// Path to the pause sentinel file.
+///
+/// Exists = paused, absent = not paused. The CLI toggles this file;
+/// the daemon checks each loop iteration.
+pub(crate) fn pause_sentinel_path() -> Utf8PathBuf {
+    cache_dir().join("pause")
+}
+
 /// Path to the receive lock file.
 pub(crate) fn receive_lock_path() -> Utf8PathBuf {
     cache_dir().join("receive.lock")

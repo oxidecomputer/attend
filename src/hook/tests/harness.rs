@@ -2,7 +2,6 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use camino::Utf8PathBuf;
-use tempfile::TempDir;
 
 use super::super::*;
 use crate::agent::Agent;
@@ -94,37 +93,41 @@ impl Agent for MockAgent {
 
 /// Test harness that redirects all state I/O to a temp directory.
 ///
-/// On creation, sets the thread-local cache_dir override. On drop,
-/// clears it. Each test gets an isolated filesystem namespace.
+/// Wraps [`state::CacheDirGuard`] and adds hook-specific helpers
+/// (activate, write_pending, fire_hook, etc.).
 pub(super) struct TestHarness {
-    _tmp: TempDir,
-    cache: Utf8PathBuf,
+    guard: state::CacheDirGuard,
 }
 
 impl TestHarness {
     pub(super) fn new() -> Self {
-        let tmp = TempDir::new().expect("failed to create temp dir");
-        let cache = Utf8PathBuf::try_from(tmp.path().to_path_buf()).expect("non-UTF-8 temp dir");
-        state::set_cache_dir_override(Some(cache.clone()));
-        std::fs::create_dir_all(&cache).expect("failed to create cache dir");
-        Self { _tmp: tmp, cache }
+        Self {
+            guard: state::CacheDirGuard::new(),
+        }
+    }
+
+    fn cache(&self) -> &Utf8PathBuf {
+        &self.guard.cache
     }
 
     /// Simulate `/attend` activation: write the listening file and the
     /// activated marker, just like `user_prompt` does for `/attend`.
     pub(super) fn activate(&self, session_id: &SessionId) {
         // Write listening file
-        let listening = self.cache.join("listening");
+        let listening = self.cache().join("listening");
         std::fs::write(&listening, session_id.as_str()).unwrap();
         // Write activated marker
         let marker = self
-            .cache
+            .cache()
             .join("sessions/activated")
             .join(session_id.as_str());
         std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
         std::fs::write(&marker, "").unwrap();
         // Clear any stale moved marker (like user_prompt does)
-        let moved = self.cache.join("sessions/moved").join(session_id.as_str());
+        let moved = self
+            .cache()
+            .join("sessions/moved")
+            .join(session_id.as_str());
         let _ = std::fs::remove_file(&moved);
     }
 
@@ -134,7 +137,7 @@ impl TestHarness {
     /// to render. Uses an atomic counter for unique, ordered filenames
     /// (safe for rapid proptest sequences without sleeping).
     pub(super) fn write_pending(&self, session_id: &SessionId, text: &str) {
-        let dir = self.cache.join("pending").join(session_id.as_str());
+        let dir = self.cache().join("pending").join(session_id.as_str());
         std::fs::create_dir_all(&dir).unwrap();
         let seq = PENDING_SEQ.fetch_add(1, Ordering::Relaxed);
         let filename = format!("{seq:020}.json");
@@ -148,7 +151,7 @@ impl TestHarness {
 
     /// Simulate a running receiver by writing a lock file with our PID.
     pub(super) fn fake_receiver(&self) -> ReceiverGuard {
-        let lock_path = self.cache.join("receive.lock");
+        let lock_path = self.cache().join("receive.lock");
         std::fs::write(&lock_path, std::process::id().to_string()).unwrap();
         ReceiverGuard { lock_path }
     }
@@ -179,7 +182,7 @@ impl TestHarness {
 
         let input = HookInput {
             session_id: Some(session_id.clone()),
-            cwd: Some(self.cache.clone()),
+            cwd: Some(self.cache().clone()),
             kind,
         };
 
@@ -209,12 +212,6 @@ impl TestHarness {
                 panic!("expected narration containing {expected_substring:?}, got decision: {d:?}")
             }
         }
-    }
-}
-
-impl Drop for TestHarness {
-    fn drop(&mut self) {
-        state::set_cache_dir_override(None);
     }
 }
 

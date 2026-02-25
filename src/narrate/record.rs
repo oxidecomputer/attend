@@ -19,8 +19,8 @@ use super::merge::{self, Event};
 use super::silence::SilenceDetector;
 use super::transcribe::{Engine, Word};
 use super::{
-    cache_dir, flush_sentinel_path, pending_dir, record_lock_path, resolve_session,
-    stop_sentinel_path,
+    cache_dir, flush_sentinel_path, pause_sentinel_path, pending_dir, record_lock_path,
+    resolve_session, stop_sentinel_path,
 };
 use crate::config::Config;
 use crate::state::SessionId;
@@ -125,6 +125,11 @@ struct DaemonState {
     session_id: Option<SessionId>,
     stop_sentinel: camino::Utf8PathBuf,
     flush_sentinel: camino::Utf8PathBuf,
+    pause_sentinel: camino::Utf8PathBuf,
+    /// Whether the daemon is currently paused.
+    paused: bool,
+    /// When the current pause started (for time_base_secs adjustment on resume).
+    pause_started_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl DaemonState {
@@ -191,13 +196,17 @@ impl DaemonState {
         let (editor_snapshots, file_diffs, ext_selections) = editor.collect();
         let browser_staging = self.collect_browser_staging();
         let shell_staging = self.collect_shell_staging();
-        self.transcribe_and_write(
+        let had_content = self.transcribe_and_write(
             editor_snapshots,
             file_diffs,
             ext_selections,
             browser_staging,
             shell_staging,
         )?;
+        if !had_content {
+            // Intentionally ignored: chime failure non-fatal.
+            let _ = audio::play_empty_chime();
+        }
         Ok(true)
     }
 
@@ -227,13 +236,17 @@ impl DaemonState {
         let (editor_snapshots, file_diffs, ext_selections) = editor.drain();
         let browser_staging = self.collect_browser_staging();
         let shell_staging = self.collect_shell_staging();
-        self.transcribe_and_write(
+        let had_content = self.transcribe_and_write(
             editor_snapshots,
             file_diffs,
             ext_selections,
             browser_staging,
             shell_staging,
         )?;
+        if !had_content {
+            // Intentionally ignored: chime failure non-fatal.
+            let _ = audio::play_empty_chime();
+        }
 
         self.time_base_secs += elapsed;
         self.last_drain = Instant::now();
@@ -247,6 +260,96 @@ impl DaemonState {
         // Acknowledge flush by deleting sentinel (best-effort).
         let _ = fs::remove_file(&self.flush_sentinel);
         Ok(true)
+    }
+
+    /// Check for pause/resume transitions.
+    ///
+    /// On pause (sentinel appears): flush all content, suspend capture.
+    /// On resume (sentinel disappears while paused): resume capture, reset timing.
+    fn check_pause(&mut self) -> anyhow::Result<()> {
+        let sentinel_exists = self.pause_sentinel.exists();
+
+        if sentinel_exists && !self.paused {
+            // Transition: recording -> paused.
+            tracing::info!("Pause detected, flushing and suspending capture.");
+
+            // Intentionally ignored: chime failure non-fatal.
+            let _ = audio::play_pause_chime();
+
+            // Flush accumulated content (same as check_flush, but we don't
+            // reset period timing — that happens on resume).
+            let capture = self
+                .audio_capture
+                .as_ref()
+                .expect("audio capture already stopped");
+            let recording = capture.drain();
+            self.buffered_chunks.extend(recording.chunks);
+
+            let editor = self
+                .editor_capture
+                .as_ref()
+                .expect("editor capture already stopped");
+            let (editor_snapshots, file_diffs, ext_selections) = editor.drain();
+            let browser_staging = self.collect_browser_staging();
+            let shell_staging = self.collect_shell_staging();
+            self.transcribe_and_write(
+                editor_snapshots,
+                file_diffs,
+                ext_selections,
+                browser_staging,
+                shell_staging,
+            )?;
+
+            // Suspend all capture.
+            if let Some(ref audio) = self.audio_capture {
+                // Intentionally ignored: pause failure non-fatal.
+                let _ = audio.pause();
+            }
+            if let Some(ref editor) = self.editor_capture {
+                editor.pause();
+            }
+
+            if let Some(ref mut detector) = self.silence_detector {
+                detector.reset();
+            }
+
+            self.paused = true;
+            self.pause_started_at = Some(chrono::Utc::now());
+        } else if !sentinel_exists && self.paused {
+            // Transition: paused -> recording.
+            tracing::info!("Resume detected, resuming capture.");
+
+            // Intentionally ignored: chime failure non-fatal.
+            let _ = audio::play_resume_chime();
+
+            // Resume all capture.
+            if let Some(ref audio) = self.audio_capture {
+                // Intentionally ignored: resume failure non-fatal.
+                let _ = audio.resume();
+            }
+            if let Some(ref editor) = self.editor_capture {
+                editor.resume();
+            }
+
+            // Adjust time_base_secs to account for the pause duration.
+            if let Some(pause_start) = self.pause_started_at.take() {
+                let pause_duration = chrono::Utc::now() - pause_start;
+                self.time_base_secs += pause_duration.num_milliseconds() as f64 / 1000.0;
+            }
+
+            // Reset period timing so post-resume audio timestamps are accurate.
+            let now = Instant::now();
+            self.period_start = now;
+            self.period_start_utc = chrono::Utc::now();
+            self.last_drain = now;
+
+            // Clear stale pre-transcribed context from before the pause.
+            self.pre_transcribed.clear();
+
+            self.paused = false;
+        }
+
+        Ok(())
     }
 
     /// Transcribe a completed speech segment on the fly.
@@ -308,6 +411,8 @@ impl DaemonState {
 
     /// Transcribe remaining audio, combine with pre-transcribed words, merge
     /// with editor events, and write the pending narration file.
+    ///
+    /// Returns `true` if content was produced, `false` if nothing was captured.
     fn transcribe_and_write(
         &mut self,
         editor_snapshots: Vec<Event>,
@@ -315,7 +420,7 @@ impl DaemonState {
         ext_selections: Vec<Event>,
         browser_staging: super::StagingResult,
         shell_staging: super::StagingResult,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let remaining_chunks = std::mem::take(&mut self.buffered_chunks);
         let mut all_words = std::mem::take(&mut self.pre_transcribed);
 
@@ -359,7 +464,7 @@ impl DaemonState {
             && shell_staging.events.is_empty()
         {
             tracing::debug!("No content captured, discarding.");
-            return Ok(());
+            return Ok(false);
         }
 
         let mut events: Vec<Event> = Vec::new();
@@ -387,7 +492,7 @@ impl DaemonState {
 
         if events.is_empty() {
             tracing::debug!("No content captured after merge, discarding.");
-            return Ok(());
+            return Ok(false);
         }
 
         let json = serde_json::to_string(&events)?;
@@ -403,7 +508,7 @@ impl DaemonState {
         browser_cleanup.cleanup();
         shell_cleanup.cleanup();
 
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -541,6 +646,31 @@ pub fn stop() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Toggle pause state by writing or removing the pause sentinel.
+///
+/// If the daemon is recording, writes the sentinel to pause or removes it
+/// to resume. If not recording, prints a message and exits.
+pub fn pause() -> anyhow::Result<()> {
+    if !record_lock_path().exists() {
+        eprintln!("Not recording. Run `attend narrate toggle` or `attend narrate start` to begin.");
+        return Ok(());
+    }
+
+    let sentinel = pause_sentinel_path();
+    if sentinel.exists() {
+        // Resume: remove the sentinel.
+        fs::remove_file(&sentinel)?;
+    } else {
+        // Pause: create the sentinel.
+        if let Some(parent) = sentinel.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&sentinel, "")?;
+    }
+
+    Ok(())
+}
+
 /// The actual recording daemon entry point.
 ///
 /// Acquires the record lock, captures audio + editor state + file diffs,
@@ -584,6 +714,7 @@ pub fn daemon() -> anyhow::Result<()> {
     // Best-effort cleanup: sentinels may not exist.
     let _ = fs::remove_file(stop_sentinel_path());
     let _ = fs::remove_file(flush_sentinel_path());
+    let _ = fs::remove_file(pause_sentinel_path());
 
     // Start audio capture immediately — audio accumulates in the background
     // while the model loads and the chime plays.
@@ -636,16 +767,22 @@ pub fn daemon() -> anyhow::Result<()> {
         session_id,
         stop_sentinel: stop_sentinel_path(),
         flush_sentinel: flush_sentinel_path(),
+        pause_sentinel: pause_sentinel_path(),
+        paused: false,
+        pause_started_at: None,
     };
 
     loop {
-        state.ingest_chunks()?;
+        if !state.paused {
+            state.ingest_chunks()?;
+        }
         if state.check_stop()? {
             break;
         }
         if state.check_flush()? {
             continue;
         }
+        state.check_pause()?;
         thread::sleep(Duration::from_millis(DAEMON_LOOP_POLL_MS));
     }
 

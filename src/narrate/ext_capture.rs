@@ -22,6 +22,9 @@ use super::merge::Event;
 /// How often to poll for external selection changes (ms).
 const EXT_POLL_MS: u64 = 200;
 
+/// Sleep interval when paused (ms).
+const PAUSED_POLL_MS: u64 = 500;
+
 /// Minimum dwell time before emitting an external selection (ms).
 /// A snapshot of the currently selected text in the focused application.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,6 +117,7 @@ impl ExtDwellTracker {
 /// `ExternalSelection` events into `events` until `stop` is set.
 pub(super) fn spawn(
     stop: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
     events: Arc<Mutex<Vec<Event>>>,
     ignore_apps: Vec<String>,
 ) -> Option<thread::JoinHandle<()>> {
@@ -131,6 +135,11 @@ pub(super) fn spawn(
         let mut tracker = ExtDwellTracker::new();
 
         while !stop.load(Ordering::Relaxed) {
+            if paused.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_millis(PAUSED_POLL_MS));
+                continue;
+            }
+
             thread::sleep(Duration::from_millis(EXT_POLL_MS));
 
             let now = Instant::now();

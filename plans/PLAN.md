@@ -30,9 +30,9 @@ be performed as specified, please do it.
 | 12a | [External Context Sources (Part A)](./phase-12-context-sources.md) | Done | Phase 10 |
 | 12b | [Firefox Native Messaging (Part B)](./phase-12-context-sources.md) | Done | Phase 12a |
 | 13 | [No-Session Support](./phase-13-no-session.md) | Done (0bea28a) | Phase 12b |
-| 14 | [Pause](./phase-14-pause.md) | Not started | Phase 6 |
+| 14 | [Pause](./phase-14-pause.md) | In progress | Phase 6 |
 | 15 | [Shell Hook Integration](./phase-15-shell-hooks.md) | Done (4bfd7aa) | Phases 6, 10, 12b, 13 |
-| 16 | [Yank-to-Clipboard](./phase-16-yank.md) | Not started | Phase 13 |
+| 16 | [Yank-to-Clipboard](./phase-16-yank.md) | Not started | Phases 13, 14 |
 | 17 | [Loopback Audio Capture](./phase-17-loopback-capture.md) | Not started | Phases 6, 10 |
 | 18 | [Persistent Daemon](./phase-18-persistent-daemon.md) | Not started | Phase 14 |
 

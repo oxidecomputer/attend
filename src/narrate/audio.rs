@@ -23,11 +23,27 @@ const CHIME_NOTE_C5_HZ: f32 = 523.25;
 /// Start chime note 2: E5.
 const CHIME_NOTE_E5_HZ: f32 = 659.25;
 
+/// Pause chime note: D5.
+const CHIME_NOTE_D5_HZ: f32 = 587.33;
+
+/// Resume chime second note: E5 (same as CHIME_NOTE_E5_HZ but named
+/// for clarity in the resume chime context).
+const RESUME_CHIME_NOTE_2_HZ: f32 = 659.25;
+
+/// Empty chime note: A4.
+const CHIME_NOTE_A4_HZ: f32 = 440.0;
+
 /// Duration of each note in start/stop chime (seconds).
 const CHIME_NOTE_DURATION_SECS: f32 = 0.1;
 
+/// Duration of pause/resume/empty chime notes (seconds).
+const SHORT_CHIME_DURATION_SECS: f32 = 0.08;
+
 /// Chime playback amplitude (0.0 to 1.0).
 const CHIME_AMPLITUDE: f32 = 0.3;
+
+/// Low amplitude for subtle chimes (pause, empty).
+const CHIME_LOW_AMPLITUDE: f32 = 0.2;
 
 /// Extra padding after chime playback to ensure it completes (seconds).
 const CHIME_PLAYBACK_PADDING_SECS: f32 = 0.05;
@@ -175,6 +191,23 @@ impl CaptureHandle {
         Recording { chunks }
     }
 
+    /// Pause the audio stream.
+    ///
+    /// Stops the cpal callback, saving CPU/power and on macOS turning off the
+    /// mic indicator dot. Chunks already in the buffer are preserved.
+    pub fn pause(&self) -> anyhow::Result<()> {
+        use cpal::traits::StreamTrait;
+        self.stream.pause()?;
+        Ok(())
+    }
+
+    /// Resume the audio stream after a pause.
+    pub fn resume(&self) -> anyhow::Result<()> {
+        use cpal::traits::StreamTrait;
+        self.stream.play()?;
+        Ok(())
+    }
+
     /// Stop recording and return the accumulated audio data.
     pub fn stop(self) -> Recording {
         drop(self.stream);
@@ -275,6 +308,54 @@ pub fn play_flush_chime() -> anyhow::Result<()> {
     play_buffer(&samples, sample_rate)
 }
 
+/// Play a soft single-note pause chime (D5, ~80ms, low amplitude).
+///
+/// Signals that capture is suspended.
+pub fn play_pause_chime() -> anyhow::Result<()> {
+    let sample_rate = output_sample_rate()?;
+    let samples = render_note_with_amplitude(
+        CHIME_NOTE_D5_HZ as f64,
+        SHORT_CHIME_DURATION_SECS,
+        sample_rate,
+        CHIME_LOW_AMPLITUDE,
+    );
+    play_buffer(&samples, sample_rate)
+}
+
+/// Play a rising two-note resume chime (D5->E5, ~80ms each).
+///
+/// Signals that capture has resumed.
+pub fn play_resume_chime() -> anyhow::Result<()> {
+    let sample_rate = output_sample_rate()?;
+    let mut samples = render_note_with_amplitude(
+        CHIME_NOTE_D5_HZ as f64,
+        SHORT_CHIME_DURATION_SECS,
+        sample_rate,
+        CHIME_LOW_AMPLITUDE,
+    );
+    samples.extend(render_note_with_amplitude(
+        RESUME_CHIME_NOTE_2_HZ as f64,
+        SHORT_CHIME_DURATION_SECS,
+        sample_rate,
+        CHIME_LOW_AMPLITUDE,
+    ));
+    play_buffer(&samples, sample_rate)
+}
+
+/// Play a low single-note empty chime (A4, ~80ms, low amplitude).
+///
+/// Alerts the user that stop/flush/yank produced no content.
+pub fn play_empty_chime() -> anyhow::Result<()> {
+    let sample_rate = output_sample_rate()?;
+    let samples = render_note_with_amplitude(
+        CHIME_NOTE_A4_HZ as f64,
+        SHORT_CHIME_DURATION_SECS,
+        sample_rate,
+        CHIME_LOW_AMPLITUDE,
+    );
+    play_buffer(&samples, sample_rate)
+}
+
 /// Play a short synthesized chime for auditory feedback.
 ///
 /// `ascending`: true for start chime (low->high), false for stop (high->low).
@@ -303,6 +384,17 @@ pub fn play_chime(ascending: bool) -> anyhow::Result<()> {
 /// ramps smoothly from silence to peak and back (sin-shaped), avoiding
 /// clicks at note boundaries.
 fn render_note(freq: f64, duration_secs: f32, sample_rate: f64) -> Vec<f32> {
+    render_note_with_amplitude(freq, duration_secs, sample_rate, CHIME_AMPLITUDE)
+}
+
+/// Render a single note with a sine-shaped amplitude envelope at the
+/// specified amplitude.
+fn render_note_with_amplitude(
+    freq: f64,
+    duration_secs: f32,
+    sample_rate: f64,
+    amplitude: f32,
+) -> Vec<f32> {
     use fundsp::prelude::*;
 
     let num_samples = (sample_rate * duration_secs as f64) as usize;
@@ -314,7 +406,7 @@ fn render_note(freq: f64, duration_secs: f32, sample_rate: f64) -> Vec<f32> {
         .map(|i| {
             let pos = i as f64 / num_samples as f64;
             let envelope = (pos * std::f64::consts::PI).sin();
-            osc.get_mono() as f32 * envelope as f32 * CHIME_AMPLITUDE
+            osc.get_mono() as f32 * envelope as f32 * amplitude
         })
         .collect()
 }

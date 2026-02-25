@@ -5,7 +5,7 @@ use std::fs;
 use camino::Utf8PathBuf;
 
 use super::transcribe::Engine;
-use super::{pending_dir, process_alive, receive_lock_path, record_lock_path};
+use super::{pause_sentinel_path, pending_dir, process_alive, receive_lock_path, record_lock_path};
 use crate::config::Config;
 
 /// Show recording and system status.
@@ -21,10 +21,16 @@ pub(crate) fn status() -> anyhow::Result<()> {
             && let Ok(pid) = content.trim().parse::<i32>()
         {
             if process_alive(pid) {
-                "recording"
+                if pause_sentinel_path().exists() {
+                    "paused"
+                } else {
+                    "recording"
+                }
             } else {
                 "stale lock (daemon not running): run `attend narrate toggle` to clean up"
             }
+        } else if pause_sentinel_path().exists() {
+            "paused"
         } else {
             "recording"
         }

@@ -14,8 +14,10 @@ use super::{Editor, QueryResult};
 const NARRATION_KEYS: &[&str] = &[
     "cmd-:",   // start (macOS)
     "cmd-;",   // toggle (macOS)
+    "cmd-{",   // pause (macOS)
     "super-:", // start (Linux)
     "super-;", // toggle (Linux)
+    "super-{", // pause (Linux)
 ];
 
 /// Platform-appropriate modifier for Zed keybindings.
@@ -30,7 +32,11 @@ fn platform_modifier() -> &'static str {
 }
 
 /// Narration task labels.
-const NARRATION_TASK_LABELS: &[&str] = &["attend: toggle narration", "attend: start narration"];
+const NARRATION_TASK_LABELS: &[&str] = &[
+    "attend: toggle narration",
+    "attend: start narration",
+    "attend: pause narration",
+];
 
 /// Zed config directory (`~/.config/zed`).
 ///
@@ -58,8 +64,10 @@ impl Editor for Zed {
         let m = platform_modifier();
         tasks::install_task(bin_cmd, "attend: toggle narration", &["narrate", "toggle"])?;
         tasks::install_task(bin_cmd, "attend: start narration", &["narrate", "start"])?;
+        tasks::install_task(bin_cmd, "attend: pause narration", &["narrate", "pause"])?;
         keybindings::install_keybinding(&format!("{m}-;"), "attend: toggle narration")?;
         keybindings::install_keybinding(&format!("{m}-:"), "attend: start narration")?;
+        keybindings::install_keybinding(&format!("{m}-{{"), "attend: pause narration")?;
         println!("Installed Zed narration tasks and keybindings.");
         Ok(())
     }
