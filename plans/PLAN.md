@@ -31,7 +31,7 @@ be performed as specified, please do it.
 | 12b | [Firefox Native Messaging (Part B)](./phase-12-context-sources.md) | Done | Phase 12a |
 | 13 | [No-Session Support](./phase-13-no-session.md) | Done (0bea28a) | Phase 12b |
 | 14 | [Pause](./phase-14-pause.md) | Not started | Phase 6 |
-| 15 | [Shell Hook Integration](./phase-15-shell-hooks.md) | Not started | Phases 6, 10, 12b, 13 |
+| 15 | [Shell Hook Integration](./phase-15-shell-hooks.md) | Done (4bfd7aa) | Phases 6, 10, 12b, 13 |
 | 16 | [Yank-to-Clipboard](./phase-16-yank.md) | Not started | Phase 13 |
 | 17 | [Loopback Audio Capture](./phase-17-loopback-capture.md) | Not started | Phases 6, 10 |
 | 18 | [Persistent Daemon](./phase-18-persistent-daemon.md) | Not started | Phase 14 |
@@ -167,18 +167,18 @@ be performed as specified, please do it.
 - [ ] 14.10 Tests: pause/resume sentinel, full suspend, empty chime
 
 ### Phase 15: Shell Hook Integration
-- [ ] 15.1 `Event::ShellCommand` variant + serde
-- [ ] 15.2 `Shell` trait, module layout, fish + zsh stubs
-- [ ] 15.3 `attend shell-hook` CLI subcommand (staging)
-- [ ] 15.4 Fish hook + completion installation
-- [ ] 15.5 Zsh hook + completion installation
-- [ ] 15.6 `shell_staging_dir` + `collect_shell_staging` (or generalized `StagingDir`)
-- [ ] 15.7 Wire shell staging into recording daemon (`transcribe_and_write`)
-- [ ] 15.8 `render.rs`: render ShellCommand events
-- [ ] 15.9 `merge.rs`: preexec/postexec dedup within runs
-- [ ] 15.10 `receive.rs`: pass ShellCommand through filter unchanged
-- [ ] 15.11 CLI `--shell` wiring (install/uninstall/status)
-- [ ] 15.12 Tests: staging, merge/compress/prop, render, install round-trip
+- [x] 15.1 `Event::ShellCommand` variant + serde (with cwd field for filtering)
+- [x] 15.2 `Shell` trait, module layout, fish + zsh implementations
+- [x] 15.3 `attend shell-hook` CLI subcommand (preexec/postexec staging)
+- [x] 15.4 Fish hook + completion installation (conf.d auto-source)
+- [x] 15.5 Zsh hook + completion installation (add-zsh-hook preexec/precmd)
+- [x] 15.6 Generalized `StagingResult`/`StagingCleanup` + `collect_shell_staging`
+- [x] 15.7 Wire shell staging into recording daemon (`transcribe_and_write`)
+- [x] 15.8 `render.rs`: fenced code block with shell tag, cwd comment, exit/duration
+- [x] 15.9 `merge.rs`: preexec/postexec dedup (retain-all for idempotency)
+- [x] 15.10 `receive.rs`: cwd-based filtering + relativization
+- [x] 15.11 CLI `--shell` wiring (install/uninstall/status/auto-upgrade)
+- [x] 15.12 Tests: 21 new tests (compress, prop, render, receive filter)
 
 ### Phase 16: Yank-to-Clipboard
 - [ ] 16.1 `yanked_dir()` + yank sentinel path
