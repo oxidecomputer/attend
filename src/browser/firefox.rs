@@ -59,7 +59,6 @@ impl super::Browser for Firefox {
         }
 
         println!("Installed native messaging host manifest for Firefox.");
-        println!();
 
         if let Some(xpi) = xpi_bytes() {
             // Write the signed .xpi to a persistent location and open it.
@@ -76,8 +75,6 @@ impl super::Browser for Firefox {
                 println!("Could not open automatically. Install manually by opening:");
                 println!("  {}", xpi_path.display());
             }
-            println!();
-            println!("After installing, the extension persists across Firefox restarts.");
         } else {
             println!("Next, install the attend browser extension in Firefox:");
             println!();

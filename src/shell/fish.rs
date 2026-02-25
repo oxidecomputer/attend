@@ -68,7 +68,6 @@ end
         crate::util::atomic_write_str(&path, &script)?;
 
         println!("Installed fish hooks to {path}");
-        println!("  (conf.d files are sourced automatically: no manual config needed)");
 
         Ok(())
     }
