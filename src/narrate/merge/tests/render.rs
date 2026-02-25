@@ -477,6 +477,141 @@ fn language_tag_in_fence() {
     );
 }
 
+// ── ShellCommand rendering ─────────────────────────────────────────────────
+
+/// Postexec with non-zero exit renders exit status and duration.
+#[test]
+fn shell_command_postexec_failure() {
+    let mut events = vec![Event::ShellCommand {
+        timestamp: ts(1.0),
+        shell: "fish".to_string(),
+        command: "cargo test".to_string(),
+        cwd: ".".to_string(),
+        exit_status: Some(1),
+        duration_secs: Some(3.2),
+    }];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    assert!(md.contains("```fish\n"), "should have fish language tag");
+    assert!(md.contains("cargo test"), "should have command text");
+    assert!(
+        md.contains("# exit 1, 3.2s"),
+        "should have exit+duration comment: {md:?}"
+    );
+    assert!(md.contains("```\n"), "should have closing fence");
+}
+
+/// Postexec with exit 0 and short duration omits the comment.
+#[test]
+fn shell_command_postexec_fast_success() {
+    let mut events = vec![Event::ShellCommand {
+        timestamp: ts(1.0),
+        shell: "fish".to_string(),
+        command: "cargo fmt".to_string(),
+        cwd: ".".to_string(),
+        exit_status: Some(0),
+        duration_secs: Some(0.3),
+    }];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    assert!(md.contains("cargo fmt\n```"), "no trailing comment: {md:?}");
+    assert!(!md.contains("# exit"), "no exit comment for fast success");
+}
+
+/// Postexec with exit 0 but long duration shows duration.
+#[test]
+fn shell_command_postexec_slow_success() {
+    let mut events = vec![Event::ShellCommand {
+        timestamp: ts(1.0),
+        shell: "fish".to_string(),
+        command: "cargo build".to_string(),
+        cwd: ".".to_string(),
+        exit_status: Some(0),
+        duration_secs: Some(45.0),
+    }];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    assert!(
+        md.contains("# exit 0, 45.0s"),
+        "should show duration for slow success: {md:?}"
+    );
+}
+
+/// Preexec (no exit status) renders without comment.
+#[test]
+fn shell_command_preexec() {
+    let mut events = vec![Event::ShellCommand {
+        timestamp: ts(1.0),
+        shell: "zsh".to_string(),
+        command: "cargo test".to_string(),
+        cwd: ".".to_string(),
+        exit_status: None,
+        duration_secs: None,
+    }];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    assert!(md.contains("```zsh\n"), "should have zsh language tag");
+    assert!(md.contains("cargo test\n```"), "no trailing comment");
+}
+
+/// Shell command with non-project cwd shows directory comment.
+#[test]
+fn shell_command_with_cwd() {
+    let mut events = vec![Event::ShellCommand {
+        timestamp: ts(1.0),
+        shell: "fish".to_string(),
+        command: "ls".to_string(),
+        cwd: "subdir/nested".to_string(),
+        exit_status: Some(0),
+        duration_secs: Some(0.1),
+    }];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    assert!(
+        md.contains("# in subdir/nested\n"),
+        "should show cwd comment: {md:?}"
+    );
+}
+
+/// Shell command at project root (cwd = ".") omits directory comment.
+#[test]
+fn shell_command_project_root_no_cwd() {
+    let mut events = vec![Event::ShellCommand {
+        timestamp: ts(1.0),
+        shell: "fish".to_string(),
+        command: "cargo test".to_string(),
+        cwd: ".".to_string(),
+        exit_status: Some(0),
+        duration_secs: Some(0.1),
+    }];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    assert!(!md.contains("# in"), "no cwd comment at project root");
+}
+
+/// Shell command interleaved with speech renders in chronological order.
+#[test]
+fn shell_command_interleaved_with_speech() {
+    let mut events = vec![
+        Event::Words {
+            timestamp: ts(0.0),
+            text: "let me run the tests".to_string(),
+        },
+        Event::ShellCommand {
+            timestamp: ts(1.0),
+            shell: "fish".to_string(),
+            command: "cargo test".to_string(),
+            cwd: ".".to_string(),
+            exit_status: Some(1),
+            duration_secs: Some(3.2),
+        },
+        Event::Words {
+            timestamp: ts(5.0),
+            text: "they failed".to_string(),
+        },
+    ];
+    let md = format_markdown(&mut events, SnipConfig::default());
+    let test_pos = md.find("cargo test").unwrap();
+    let let_pos = md.find("let me run").unwrap();
+    let fail_pos = md.find("they failed").unwrap();
+    assert!(let_pos < test_pos, "speech before command");
+    assert!(test_pos < fail_pos, "command before subsequent speech");
+}
+
 /// Bare fence when `language` is None.
 #[test]
 fn bare_fence_when_no_language() {

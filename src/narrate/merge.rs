@@ -119,6 +119,22 @@ pub enum Event {
         /// The selected content, converted from HTML to markdown by the bridge.
         text: String,
     },
+    /// A command executed in the user's shell.
+    /// Delivered via the `attend shell-hook` CLI subcommand.
+    ShellCommand {
+        /// UTC wall-clock time when the command started.
+        timestamp: chrono::DateTime<chrono::Utc>,
+        /// The shell (e.g. "fish", "zsh").
+        shell: String,
+        /// The command as typed by the user.
+        command: String,
+        /// Working directory when the command was executed.
+        cwd: String,
+        /// Exit status (None for preexec-only, before the command completes).
+        exit_status: Option<i32>,
+        /// Wall-clock duration in seconds (None for preexec-only).
+        duration_secs: Option<f64>,
+    },
 }
 
 impl Event {
@@ -129,7 +145,8 @@ impl Event {
             | Event::EditorSnapshot { timestamp, .. }
             | Event::FileDiff { timestamp, .. }
             | Event::ExternalSelection { timestamp, .. }
-            | Event::BrowserSelection { timestamp, .. } => *timestamp,
+            | Event::BrowserSelection { timestamp, .. }
+            | Event::ShellCommand { timestamp, .. } => *timestamp,
         }
     }
 }
@@ -322,6 +339,30 @@ fn collapse_ext_selections(selections: Vec<Event>) -> Vec<Event> {
                     result.push(event);
                 }
             }
+            Event::ShellCommand {
+                command,
+                exit_status,
+                ..
+            } => {
+                // Preexec/postexec dedup: if earlier preexec(s) (exit_status=None)
+                // for the same command text exist, remove them all and push the
+                // postexec (which has richer data: exit status + duration).
+                if exit_status.is_some() {
+                    result.retain(|e| {
+                        !matches!(
+                            e,
+                            Event::ShellCommand {
+                                command: c,
+                                exit_status: None,
+                                ..
+                            } if c == command
+                        )
+                    });
+                    result.push(event);
+                } else {
+                    result.push(event);
+                }
+            }
             _ => {
                 result.push(event);
             }
@@ -424,6 +465,9 @@ fn process_run(mut run: Vec<Event>) -> Vec<Event> {
                 diffs.push((timestamp, path, old, new));
             }
             Event::ExternalSelection { .. } | Event::BrowserSelection { .. } => {
+                ext_selections.push(event);
+            }
+            Event::ShellCommand { .. } => {
                 ext_selections.push(event);
             }
             Event::Words { .. } => unreachable!("run should not contain Words"),

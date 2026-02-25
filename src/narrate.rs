@@ -19,7 +19,7 @@ mod silence;
 mod status;
 pub(crate) mod transcribe;
 
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::state::SessionId;
 
@@ -103,19 +103,30 @@ pub(crate) fn browser_staging_dir(session_id: Option<&SessionId>) -> Utf8PathBuf
         .join(dir_key(session_id))
 }
 
-/// Collected browser staging events, with file paths for deferred cleanup.
+/// Directory where the shell hook stages command events.
+///
+/// Events in this directory are not delivered directly to the agent.
+/// Instead, the recording daemon collects them during flush/stop and
+/// includes them in the narration output.
+pub(crate) fn shell_staging_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
+    cache_dir().join("shell-staging").join(dir_key(session_id))
+}
+
+// ── Generalized staging infrastructure ──────────────────────────────────────
+
+/// Collected staging events, with file paths for deferred cleanup.
 #[derive(Default)]
-pub(crate) struct BrowserStaging {
+pub(crate) struct StagingResult {
     pub events: Vec<merge::Event>,
     files: Vec<std::path::PathBuf>,
 }
 
 /// Deferred cleanup handle: holds file paths for removal after write.
-pub(crate) struct BrowserCleanup {
+pub(crate) struct StagingCleanup {
     files: Vec<std::path::PathBuf>,
 }
 
-impl BrowserCleanup {
+impl StagingCleanup {
     /// Remove the staging files (call after narration is safely on disk).
     pub fn cleanup(self) {
         for path in &self.files {
@@ -124,27 +135,26 @@ impl BrowserCleanup {
     }
 }
 
-impl BrowserStaging {
+impl StagingResult {
     /// Split into events (for merging) and a cleanup handle (for deferred removal).
-    pub fn take(self) -> (Vec<merge::Event>, BrowserCleanup) {
-        (self.events, BrowserCleanup { files: self.files })
+    pub fn take(self) -> (Vec<merge::Event>, StagingCleanup) {
+        (self.events, StagingCleanup { files: self.files })
     }
 }
 
-/// Collect staged browser selection events.
+/// Collect staged events from a directory.
 ///
 /// File timestamps (from the filename) are assigned as UTC timestamps
 /// on the events, so they sort correctly with all other event types.
 ///
-/// Files are **not** removed until [`BrowserCleanup::cleanup`] is called,
+/// Files are **not** removed until [`StagingCleanup::cleanup`] is called,
 /// so a crash between collection and narration write does not lose events.
-pub(crate) fn collect_browser_staging(
-    session_id: Option<&SessionId>,
+fn collect_staging(
+    dir: &Utf8Path,
     period_start_utc: chrono::DateTime<chrono::Utc>,
-) -> BrowserStaging {
-    let dir = browser_staging_dir(session_id);
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return BrowserStaging::default();
+) -> StagingResult {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return StagingResult::default();
     };
 
     let mut files: Vec<std::path::PathBuf> = entries
@@ -177,16 +187,34 @@ pub(crate) fn collect_browser_staging(
             && let Ok(file_events) = serde_json::from_str::<Vec<merge::Event>>(&content)
         {
             for mut event in file_events {
-                // Assign the file's UTC timestamp.
-                if let merge::Event::BrowserSelection { timestamp: ts, .. } = &mut event {
-                    *ts = timestamp;
+                // Assign the file's UTC timestamp to all event types.
+                match &mut event {
+                    merge::Event::BrowserSelection { timestamp: ts, .. }
+                    | merge::Event::ShellCommand { timestamp: ts, .. } => *ts = timestamp,
+                    _ => {}
                 }
                 events.push(event);
             }
         }
     }
 
-    BrowserStaging { events, files }
+    StagingResult { events, files }
+}
+
+/// Collect staged browser selection events for a session.
+pub(crate) fn collect_browser_staging(
+    session_id: Option<&SessionId>,
+    period_start_utc: chrono::DateTime<chrono::Utc>,
+) -> StagingResult {
+    collect_staging(browser_staging_dir(session_id).as_ref(), period_start_utc)
+}
+
+/// Collect staged shell command events for a session.
+pub(crate) fn collect_shell_staging(
+    session_id: Option<&SessionId>,
+    period_start_utc: chrono::DateTime<chrono::Utc>,
+) -> StagingResult {
+    collect_staging(shell_staging_dir(session_id).as_ref(), period_start_utc)
 }
 
 /// Resolve the session ID from flag, listening file, or None.

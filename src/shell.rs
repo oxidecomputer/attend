@@ -1,0 +1,37 @@
+mod fish;
+mod zsh;
+
+/// A shell integration that can install/uninstall hooks and completions.
+pub trait Shell: Sync {
+    /// CLI name (e.g., "fish", "zsh").
+    fn name(&self) -> &'static str;
+
+    /// Install shell hooks for narration capture.
+    ///
+    /// Writes hook files and prints the user's required config change
+    /// (e.g., the `source` line for their rc file).
+    fn install_hooks(&self, bin_cmd: &str) -> anyhow::Result<()>;
+
+    /// Remove shell hooks.
+    fn uninstall_hooks(&self) -> anyhow::Result<()>;
+
+    /// Install shell completions.
+    fn install_completions(&self, bin_cmd: &str) -> anyhow::Result<()>;
+
+    /// Remove shell completions.
+    fn uninstall_completions(&self) -> anyhow::Result<()>;
+
+    /// Check the health of the shell integration.
+    /// Returns a list of diagnostic warnings (empty = healthy).
+    fn check(&self) -> anyhow::Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+}
+
+/// All registered shell backends.
+pub const SHELLS: &[&dyn Shell] = &[&fish::Fish, &zsh::Zsh];
+
+/// Look up a shell by CLI name.
+pub fn shell_by_name(name: &str) -> Option<&'static dyn Shell> {
+    SHELLS.iter().find(|s| s.name() == name).copied()
+}

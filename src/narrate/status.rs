@@ -87,6 +87,20 @@ pub(crate) fn status() -> anyhow::Result<()> {
         }
     }
 
+    // Shell integration health
+    if let Some(meta) = crate::state::installed_meta() {
+        for name in &meta.shells {
+            if let Some(sh) = crate::shell::shell_by_name(name) {
+                let warnings = sh.check()?;
+                if warnings.is_empty() {
+                    println!("Shell:      {name} (ok)");
+                } else {
+                    println!("Shell:      {name} ({})", warnings.join("; "));
+                }
+            }
+        }
+    }
+
     // Pending narration count (session + _local)
     let count_json = |dir: camino::Utf8PathBuf| -> usize {
         fs::read_dir(&dir)

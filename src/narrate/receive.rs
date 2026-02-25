@@ -104,6 +104,8 @@ fn filter_events(events: &mut Vec<Event>, cwd: &Utf8Path, include_dirs: &[Utf8Pa
         Event::FileDiff { path, .. } => path_included(path, cwd, include_dirs),
         // External/browser selections are not path-based: pass through unconditionally.
         Event::ExternalSelection { .. } | Event::BrowserSelection { .. } => true,
+        // Shell commands are filtered by the shell's working directory.
+        Event::ShellCommand { cwd: cmd_cwd, .. } => path_included(cmd_cwd, cwd, include_dirs),
     });
 }
 
@@ -127,6 +129,9 @@ fn relativize_events(events: &mut [Event], cwd: &Utf8Path) {
             }
             Event::FileDiff { path, .. } => {
                 *path = relativize_str(path, cwd);
+            }
+            Event::ShellCommand { cwd: cmd_cwd, .. } => {
+                *cmd_cwd = relativize_str(cmd_cwd, cwd);
             }
             // External/browser selections have no file paths to relativize.
             Event::Words { .. }

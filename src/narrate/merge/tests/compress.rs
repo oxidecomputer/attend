@@ -836,3 +836,138 @@ fn browser_and_external_far_apart_both_kept() {
     compress_and_merge(&mut events);
     assert_eq!(events.len(), 2, "too far apart, both survive");
 }
+
+// ── ShellCommand compression ──────────────────────────────────────────────
+
+/// Helper: shell command event (postexec).
+fn shell_cmd(t: f64, cmd: &str, exit_status: i32, duration: f64) -> Event {
+    Event::ShellCommand {
+        timestamp: ts(t),
+        shell: "fish".to_string(),
+        command: cmd.to_string(),
+        cwd: "/home/user/project".to_string(),
+        exit_status: Some(exit_status),
+        duration_secs: Some(duration),
+    }
+}
+
+/// Helper: shell command event (preexec, command started but not finished).
+fn shell_preexec(t: f64, cmd: &str) -> Event {
+    Event::ShellCommand {
+        timestamp: ts(t),
+        shell: "fish".to_string(),
+        command: cmd.to_string(),
+        cwd: "/home/user/project".to_string(),
+        exit_status: None,
+        duration_secs: None,
+    }
+}
+
+/// A single shell command survives compression unchanged.
+#[test]
+fn single_shell_command_survives() {
+    let mut events = vec![shell_cmd(1.0, "cargo test", 0, 3.2)];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], Event::ShellCommand { .. }));
+}
+
+/// Shell commands with different texts in the same run all survive.
+#[test]
+fn different_shell_commands_kept() {
+    let mut events = vec![
+        shell_cmd(1.0, "cargo fmt", 0, 0.5),
+        shell_cmd(2.0, "cargo test", 1, 5.0),
+        shell_cmd(3.0, "cargo clippy", 0, 2.0),
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 3, "distinct commands all survive");
+}
+
+/// Preexec/postexec for the same command in the same run: keep only postexec.
+#[test]
+fn preexec_postexec_dedup_same_run() {
+    let mut events = vec![
+        shell_preexec(1.0, "cargo test"),
+        shell_cmd(2.0, "cargo test", 1, 3.2),
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 1, "preexec replaced by postexec");
+    if let Event::ShellCommand {
+        exit_status,
+        duration_secs,
+        ..
+    } = &events[0]
+    {
+        assert_eq!(*exit_status, Some(1), "postexec has exit status");
+        assert!(duration_secs.is_some(), "postexec has duration");
+    } else {
+        panic!("expected ShellCommand");
+    }
+}
+
+/// Preexec/postexec for different commands both survive.
+#[test]
+fn preexec_different_command_kept() {
+    let mut events = vec![
+        shell_preexec(1.0, "cargo test"),
+        shell_cmd(2.0, "cargo fmt", 0, 0.5),
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 2, "different commands both survive");
+}
+
+/// Preexec and postexec separated by words both survive.
+#[test]
+fn preexec_postexec_across_word_boundary() {
+    let mut events = vec![
+        shell_preexec(1.0, "cargo test"),
+        Event::Words {
+            timestamp: ts(2.0),
+            text: "running tests now".to_string(),
+        },
+        shell_cmd(3.0, "cargo test", 1, 3.2),
+    ];
+    compress_and_merge(&mut events);
+    let cmd_count = events
+        .iter()
+        .filter(|e| matches!(e, Event::ShellCommand { .. }))
+        .count();
+    assert_eq!(cmd_count, 2, "word boundary prevents dedup");
+}
+
+/// Shell commands interleave correctly with other event types.
+#[test]
+fn shell_commands_interleave_with_editor() {
+    let mut events = vec![
+        selection_snap_with(1.0, "src/main.rs", "fn main()\n"),
+        shell_cmd(2.0, "cargo test", 0, 1.0),
+        Event::Words {
+            timestamp: ts(3.0),
+            text: "tests pass".to_string(),
+        },
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 3, "all three event types survive");
+    // Verify chronological order.
+    assert!(events[0].timestamp() <= events[1].timestamp());
+    assert!(events[1].timestamp() <= events[2].timestamp());
+}
+
+/// Preexec-only event survives when there's no matching postexec.
+#[test]
+fn preexec_only_survives() {
+    let mut events = vec![
+        shell_preexec(1.0, "cargo test"),
+        Event::Words {
+            timestamp: ts(5.0),
+            text: "still running".to_string(),
+        },
+    ];
+    compress_and_merge(&mut events);
+    let cmd_count = events
+        .iter()
+        .filter(|e| matches!(e, Event::ShellCommand { .. }))
+        .count();
+    assert_eq!(cmd_count, 1, "preexec survives without postexec");
+}

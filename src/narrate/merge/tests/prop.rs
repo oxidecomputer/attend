@@ -133,6 +133,29 @@ fn arb_browser_selection() -> impl Strategy<Value = Event> {
         })
 }
 
+fn arb_shell_command() -> impl Strategy<Value = Event> {
+    (
+        0.0..100.0f64,
+        prop_oneof!["fish", "zsh"],
+        prop_oneof!["cargo test", "cargo fmt", "make build", "git status"],
+        prop_oneof!["/home/user/project", "/tmp/test", "."],
+        prop_oneof![
+            Just((None, None)),
+            (0..3i32, 0.0..10.0f64).prop_map(|(s, d)| (Some(s), Some(d)))
+        ],
+    )
+        .prop_map(|(t, shell, command, cwd, (exit_status, duration_secs))| {
+            Event::ShellCommand {
+                timestamp: ts(t),
+                shell,
+                command,
+                cwd,
+                exit_status,
+                duration_secs,
+            }
+        })
+}
+
 fn arb_event() -> impl Strategy<Value = Event> {
     prop_oneof![
         3 => arb_words(),
@@ -141,6 +164,7 @@ fn arb_event() -> impl Strategy<Value = Event> {
         1 => arb_diff(),
         1 => arb_ext_selection(),
         1 => arb_browser_selection(),
+        1 => arb_shell_command(),
     ]
 }
 

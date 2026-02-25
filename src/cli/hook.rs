@@ -15,6 +15,11 @@ pub(super) fn browser_value_parser() -> clap::builder::PossibleValuesParser {
     clap::builder::PossibleValuesParser::new(crate::browser::BROWSERS.iter().map(|b| b.name()))
 }
 
+/// Value parser that validates shell names against registered backends.
+pub(super) fn shell_value_parser() -> clap::builder::PossibleValuesParser {
+    clap::builder::PossibleValuesParser::new(crate::shell::SHELLS.iter().map(|s| s.name()))
+}
+
 /// Hook event subcommands with a mandatory --agent flag.
 #[derive(Subcommand)]
 pub enum HookEvent {

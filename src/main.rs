@@ -14,6 +14,7 @@ mod config;
 mod editor;
 mod hook;
 mod narrate;
+mod shell;
 mod state;
 mod terminal;
 mod util;

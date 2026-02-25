@@ -251,6 +251,45 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                     out.push('\n');
                 }
             }
+            Event::ShellCommand {
+                shell,
+                command,
+                cwd,
+                exit_status,
+                duration_secs,
+                ..
+            } => {
+                if in_prose {
+                    out.push('\n');
+                    in_prose = false;
+                }
+                if !out.is_empty() && !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push('\n');
+                out.push_str(&format!("```{shell}\n"));
+                // Show the working directory when it's not the project root.
+                if !cwd.is_empty() && cwd != "." {
+                    out.push_str(&format!("# in {cwd}\n"));
+                }
+                out.push_str(command);
+                // Append exit status and duration as a trailing shell comment
+                // for token efficiency. Omit when exit 0 and < 1s (trivial).
+                match (exit_status, duration_secs) {
+                    (Some(code), Some(dur)) if *code != 0 || *dur >= 1.0 => {
+                        out.push_str(&format!("  # exit {code}, {dur:.1}s"));
+                    }
+                    (Some(code), None) if *code != 0 => {
+                        out.push_str(&format!("  # exit {code}"));
+                    }
+                    (None, _) => {
+                        // Preexec (command still running): no comment.
+                    }
+                    _ => {}
+                }
+                out.push('\n');
+                out.push_str("```\n");
+            }
         }
     }
 

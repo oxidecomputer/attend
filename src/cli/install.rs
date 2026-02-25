@@ -7,15 +7,17 @@ pub(super) fn install(
     agent: Vec<String>,
     editor: Vec<String>,
     browser: Vec<String>,
+    shell: Vec<String>,
     project: Option<Utf8PathBuf>,
     dev: bool,
 ) -> anyhow::Result<()> {
-    if agent.is_empty() && editor.is_empty() && browser.is_empty() {
+    if agent.is_empty() && editor.is_empty() && browser.is_empty() && shell.is_empty() {
         anyhow::bail!(
-            "specify at least one --agent, --editor, or --browser.\n  \
+            "specify at least one --agent, --editor, --browser, or --shell.\n  \
              Available agents: {}\n  \
              Available editors: {}\n  \
-             Available browsers: {}",
+             Available browsers: {}\n  \
+             Available shells: {}",
             crate::agent::AGENTS
                 .iter()
                 .map(|a| a.name())
@@ -29,6 +31,11 @@ pub(super) fn install(
             crate::browser::BROWSERS
                 .iter()
                 .map(|b| b.name())
+                .collect::<Vec<_>>()
+                .join(", "),
+            crate::shell::SHELLS
+                .iter()
+                .map(|s| s.name())
                 .collect::<Vec<_>>()
                 .join(", "),
         );
@@ -45,44 +52,14 @@ pub(super) fn install(
     for name in &browser {
         let br = crate::browser::browser_by_name(name)
             .ok_or_else(|| anyhow::anyhow!("unknown browser: {name}"))?;
-        // The browser bridge binary must be the full path to `attend browser-bridge`.
-        // The native messaging host manifest's "path" field points to the attend
-        // binary; Firefox appends the subcommand via the manifest "type": "stdio".
-        // Wait — native messaging launches the binary directly with no args.
-        // The manifest "path" must point to a binary that speaks the native
-        // messaging protocol on stdin/stdout. We need a wrapper or we need
-        // the binary to detect it's being launched as a native messaging host.
-        //
-        // Solution: the manifest "path" points to `attend` and the manifest
-        // doesn't support arguments. We'll detect the native messaging context
-        // by checking if stdin is not a terminal (browser pipes) and use a
-        // wrapper script, OR we use the `browser-bridge` subcommand with
-        // a small shell wrapper.
-        //
-        // Actually, Firefox's native messaging protocol specifies that the
-        // manifest "path" is the full path to the executable, and Firefox
-        // passes the extension ID as the sole command-line argument. We need
-        // the binary to handle this. The simplest approach: make `attend`
-        // check if argv[1] matches an extension ID pattern and dispatch to
-        // browser-bridge mode. But that's fragile.
-        //
-        // Better: use a wrapper script that calls `attend browser-bridge`.
-        // The native_messaging crate doesn't handle this, so we write a
-        // small shell script.
-        //
-        // Simplest: write a shell wrapper at the attend binary location.
-        // E.g., ~/.cargo/bin/attend-browser-bridge that does:
-        //   #!/bin/sh
-        //   exec attend browser-bridge
-        //
-        // Actually, looking at this more carefully: Firefox native messaging
-        // does NOT pass any arguments to the host binary in `sendNativeMessage`
-        // mode (one-shot). It just launches the binary and pipes to stdin/stdout.
-        // So we need a dedicated binary or wrapper.
-        //
-        // Let's write a small wrapper script next to the attend binary.
         let wrapper_path = install_browser_wrapper(&bin_cmd)?;
         br.install(&wrapper_path)?;
+    }
+    for name in &shell {
+        let sh = crate::shell::shell_by_name(name)
+            .ok_or_else(|| anyhow::anyhow!("unknown shell: {name}"))?;
+        sh.install_hooks(&bin_cmd)?;
+        sh.install_completions(&bin_cmd)?;
     }
 
     // Track project paths: preserve existing, append new (deduplicated).
@@ -100,6 +77,7 @@ pub(super) fn install(
         agents: agent,
         editors: editor,
         browsers: browser,
+        shells: shell,
         dev,
         project_paths,
     });
@@ -141,9 +119,11 @@ pub(super) fn uninstall(
     agent: Vec<String>,
     editor: Vec<String>,
     browser: Vec<String>,
+    shell: Vec<String>,
     project: Option<Utf8PathBuf>,
 ) -> anyhow::Result<()> {
-    let uninstall_all = agent.is_empty() && editor.is_empty() && browser.is_empty();
+    let uninstall_all =
+        agent.is_empty() && editor.is_empty() && browser.is_empty() && shell.is_empty();
     let agents: Vec<String> = if uninstall_all {
         crate::agent::AGENTS
             .iter()
@@ -167,6 +147,14 @@ pub(super) fn uninstall(
             .collect()
     } else {
         browser
+    };
+    let shells: Vec<String> = if uninstall_all {
+        crate::shell::SHELLS
+            .iter()
+            .map(|s| s.name().to_string())
+            .collect()
+    } else {
+        shell
     };
 
     // When no --project is given, also uninstall from all tracked project paths.
@@ -200,6 +188,12 @@ pub(super) fn uninstall(
         br.uninstall()?;
         // Also remove the wrapper script (best-effort).
         remove_browser_wrapper();
+    }
+    for name in &shells {
+        let sh = crate::shell::shell_by_name(name)
+            .ok_or_else(|| anyhow::anyhow!("unknown shell: {name}"))?;
+        sh.uninstall_hooks()?;
+        sh.uninstall_completions()?;
     }
     Ok(())
 }

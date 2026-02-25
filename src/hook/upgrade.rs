@@ -37,12 +37,26 @@ pub(super) fn auto_upgrade_hooks() {
             tracing::warn!(editor = name, "Auto-upgrade failed for editor: {e}");
         }
     }
+    for name in &meta.shells {
+        if let Some(sh) = crate::shell::shell_by_name(name) {
+            if let Err(e) = sh.install_hooks(&bin_cmd) {
+                tracing::warn!(shell = name, "Auto-upgrade failed for shell hooks: {e}");
+            }
+            if let Err(e) = sh.install_completions(&bin_cmd) {
+                tracing::warn!(
+                    shell = name,
+                    "Auto-upgrade failed for shell completions: {e}"
+                );
+            }
+        }
+    }
 
     state::save_install_meta(&state::InstallMeta {
         version: running.to_string(),
         agents: meta.agents,
         editors: meta.editors,
         browsers: meta.browsers,
+        shells: meta.shells,
         dev: meta.dev,
         project_paths: meta.project_paths,
     });

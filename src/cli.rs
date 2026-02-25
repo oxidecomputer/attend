@@ -4,6 +4,7 @@ mod hook;
 mod install;
 mod look;
 mod narrate;
+mod shell_hook;
 
 pub use hook::HookEvent;
 pub use narrate::NarrateCommand;
@@ -100,7 +101,7 @@ pub enum Command {
         #[arg(long, short = 'i')]
         interval: Option<f64>,
     },
-    /// Set up agent hooks, editor keybindings, and browser integrations.
+    /// Set up agent hooks, editor keybindings, browser, and shell integrations.
     #[command(display_order = 6)]
     Install {
         /// Agent to install hooks for (repeatable).
@@ -115,6 +116,10 @@ pub enum Command {
         #[arg(long, short, value_parser = hook::browser_value_parser())]
         browser: Vec<String>,
 
+        /// Shell to install hooks and completions for (repeatable).
+        #[arg(long, short, value_parser = hook::shell_value_parser())]
+        shell: Vec<String>,
+
         /// Install to a project-local settings file instead of global.
         #[arg(long, short)]
         project: Option<Utf8PathBuf>,
@@ -124,7 +129,7 @@ pub enum Command {
         dev: bool,
     },
 
-    /// Remove agent hooks, editor keybindings, and browser integrations.
+    /// Remove agent hooks, editor keybindings, browser, and shell integrations.
     #[command(display_order = 7)]
     Uninstall {
         /// Agent to uninstall hooks for (repeatable).
@@ -138,6 +143,10 @@ pub enum Command {
         /// Browser to uninstall native messaging for (repeatable).
         #[arg(long, short, value_parser = hook::browser_value_parser())]
         browser: Vec<String>,
+
+        /// Shell to uninstall hooks and completions for (repeatable).
+        #[arg(long, short, value_parser = hook::shell_value_parser())]
+        shell: Vec<String>,
 
         /// Remove from a project-local settings file instead of global.
         #[arg(long, short)]
@@ -166,6 +175,38 @@ pub enum Command {
     /// Native messaging host for browser extensions (internal).
     #[command(display_order = 11, hide = true)]
     BrowserBridge,
+    /// Stage shell command events for narration (internal, called by shell hooks).
+    #[command(display_order = 12, hide = true, subcommand)]
+    ShellHook(ShellHookCommand),
+}
+
+/// Shell hook subcommands.
+#[derive(Subcommand)]
+pub enum ShellHookCommand {
+    /// Stage a preexec event (command starting).
+    Preexec {
+        /// Shell name (e.g. "fish", "zsh").
+        #[arg(long)]
+        shell: String,
+        /// The command as typed by the user.
+        #[arg(long)]
+        command: String,
+    },
+    /// Stage a postexec event (command completed).
+    Postexec {
+        /// Shell name (e.g. "fish", "zsh").
+        #[arg(long)]
+        shell: String,
+        /// The command as typed by the user.
+        #[arg(long)]
+        command: String,
+        /// Exit status of the command.
+        #[arg(long)]
+        exit_status: i32,
+        /// Wall-clock duration in seconds.
+        #[arg(long)]
+        duration: f64,
+    },
 }
 
 impl Cli {
@@ -221,19 +262,30 @@ impl Command {
             Command::Narrate(cmd) => cmd.run(),
             Command::Hook(event) => event.run(),
             Command::BrowserBridge => browser_bridge::run(),
+            Command::ShellHook(cmd) => match cmd {
+                ShellHookCommand::Preexec { shell, command } => shell_hook::preexec(shell, command),
+                ShellHookCommand::Postexec {
+                    shell,
+                    command,
+                    exit_status,
+                    duration,
+                } => shell_hook::postexec(shell, command, exit_status, duration),
+            },
             Command::Install {
                 agent,
                 editor,
                 browser,
+                shell,
                 project,
                 dev,
-            } => install::install(agent, editor, browser, project, dev),
+            } => install::install(agent, editor, browser, shell, project, dev),
             Command::Uninstall {
                 agent,
                 editor,
                 browser,
+                shell,
                 project,
-            } => install::uninstall(agent, editor, browser, project),
+            } => install::uninstall(agent, editor, browser, shell, project),
         }
     }
 }

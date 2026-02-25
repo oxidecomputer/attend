@@ -349,6 +349,135 @@ fn collect_pending_from(dir: &Path) -> Vec<PathBuf> {
 
 // -- No-session (_local) support tests --
 
+/// Shell commands with cwd inside the project pass the filter.
+#[test]
+fn filter_events_keeps_shell_command_inside_cwd() {
+    let cwd = Utf8Path::new("/project");
+    let mut events = vec![Event::ShellCommand {
+        timestamp: ts(0.0),
+        shell: "fish".to_string(),
+        command: "cargo test".to_string(),
+        cwd: "/project/src".to_string(),
+        exit_status: Some(0),
+        duration_secs: Some(2.5),
+    }];
+    filter_events(&mut events, cwd, &[]);
+    assert_eq!(events.len(), 1, "shell command inside cwd should pass");
+}
+
+/// Shell commands with cwd outside the project are filtered out.
+#[test]
+fn filter_events_drops_shell_command_outside_cwd() {
+    let cwd = Utf8Path::new("/project");
+    let mut events = vec![Event::ShellCommand {
+        timestamp: ts(0.0),
+        shell: "zsh".to_string(),
+        command: "ls".to_string(),
+        cwd: "/other-project".to_string(),
+        exit_status: Some(0),
+        duration_secs: Some(0.1),
+    }];
+    filter_events(&mut events, cwd, &[]);
+    assert!(
+        events.is_empty(),
+        "shell command outside cwd should be dropped"
+    );
+}
+
+/// Shell command cwd is relativized to the project root.
+#[test]
+fn relativize_events_strips_shell_command_cwd() {
+    let cwd = Utf8Path::new("/project");
+    let mut events = vec![Event::ShellCommand {
+        timestamp: ts(0.0),
+        shell: "fish".to_string(),
+        command: "cargo build".to_string(),
+        cwd: "/project/src/lib".to_string(),
+        exit_status: Some(0),
+        duration_secs: Some(5.0),
+    }];
+    relativize_events(&mut events, cwd);
+
+    if let Event::ShellCommand { cwd: cmd_cwd, .. } = &events[0] {
+        assert_eq!(cmd_cwd, "src/lib", "cwd should be relativized");
+    } else {
+        panic!("expected ShellCommand");
+    }
+}
+
+/// Shell command at project root gets cwd relativized to ".".
+#[test]
+fn relativize_events_shell_command_at_root() {
+    let cwd = Utf8Path::new("/project");
+    let mut events = vec![Event::ShellCommand {
+        timestamp: ts(0.0),
+        shell: "fish".to_string(),
+        command: "cargo fmt".to_string(),
+        cwd: "/project".to_string(),
+        exit_status: Some(0),
+        duration_secs: Some(0.3),
+    }];
+    relativize_events(&mut events, cwd);
+
+    if let Event::ShellCommand { cwd: cmd_cwd, .. } = &events[0] {
+        assert!(
+            cmd_cwd.is_empty(),
+            "project root should relativize to empty string"
+        );
+    } else {
+        panic!("expected ShellCommand");
+    }
+}
+
+/// Shell command in include_dirs passes the filter.
+#[test]
+fn filter_events_keeps_shell_command_in_include_dirs() {
+    let cwd = Utf8Path::new("/project");
+    let include = vec![Utf8PathBuf::from("/shared")];
+    let mut events = vec![Event::ShellCommand {
+        timestamp: ts(0.0),
+        shell: "zsh".to_string(),
+        command: "make".to_string(),
+        cwd: "/shared/build".to_string(),
+        exit_status: Some(0),
+        duration_secs: Some(1.0),
+    }];
+    filter_events(&mut events, cwd, &include);
+    assert_eq!(events.len(), 1, "shell command in include_dirs should pass");
+}
+
+/// End-to-end: shell commands in pending JSON survive the full read_pending pipeline.
+#[test]
+fn read_pending_renders_shell_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = vec![
+        Event::Words {
+            timestamp: ts(0.0),
+            text: "then I ran".to_string(),
+        },
+        Event::ShellCommand {
+            timestamp: ts(1.0),
+            shell: "fish".to_string(),
+            command: "cargo test --lib".to_string(),
+            cwd: "/project".to_string(),
+            exit_status: Some(1),
+            duration_secs: Some(3.2),
+        },
+    ];
+    let path = dir.path().join("test.json");
+    fs::write(&path, serde_json::to_string(&events).unwrap()).unwrap();
+
+    let cwd = Utf8Path::new("/project");
+    let result = read_pending(&[path], cwd, &[]).unwrap();
+    assert!(result.contains("then I ran"), "prose should be included");
+    assert!(
+        result.contains("cargo test --lib"),
+        "command should be rendered"
+    );
+    assert!(result.contains("```fish"), "should have fish code fence");
+    assert!(result.contains("exit 1"), "should show non-zero exit");
+}
+
 /// `collect_pending_dir` returns files from a single directory, sorted.
 #[test]
 fn collect_pending_dir_returns_sorted_json() {

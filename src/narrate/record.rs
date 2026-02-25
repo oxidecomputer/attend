@@ -189,12 +189,14 @@ impl DaemonState {
             .take()
             .expect("editor capture already stopped");
         let (editor_snapshots, file_diffs, ext_selections) = editor.collect();
-        let browser_selections = self.collect_browser_staging();
+        let browser_staging = self.collect_browser_staging();
+        let shell_staging = self.collect_shell_staging();
         self.transcribe_and_write(
             editor_snapshots,
             file_diffs,
             ext_selections,
-            browser_selections,
+            browser_staging,
+            shell_staging,
         )?;
         Ok(true)
     }
@@ -223,12 +225,14 @@ impl DaemonState {
             .as_ref()
             .expect("editor capture already stopped");
         let (editor_snapshots, file_diffs, ext_selections) = editor.drain();
-        let browser_selections = self.collect_browser_staging();
+        let browser_staging = self.collect_browser_staging();
+        let shell_staging = self.collect_shell_staging();
         self.transcribe_and_write(
             editor_snapshots,
             file_diffs,
             ext_selections,
-            browser_selections,
+            browser_staging,
+            shell_staging,
         )?;
 
         self.time_base_secs += elapsed;
@@ -291,10 +295,15 @@ impl DaemonState {
     ///
     /// File timestamps are converted to offset_secs relative to the current
     /// recording period so browser events interleave with speech and editor events.
-    /// Returns a [`BrowserStaging`] whose files are cleaned up only after the
+    /// Returns a [`StagingResult`] whose files are cleaned up only after the
     /// narration is written to disk (crash-safe).
-    fn collect_browser_staging(&self) -> super::BrowserStaging {
+    fn collect_browser_staging(&self) -> super::StagingResult {
         super::collect_browser_staging(self.session_id.as_ref(), self.period_start_utc)
+    }
+
+    /// Collect staged shell command events for this session.
+    fn collect_shell_staging(&self) -> super::StagingResult {
+        super::collect_shell_staging(self.session_id.as_ref(), self.period_start_utc)
     }
 
     /// Transcribe remaining audio, combine with pre-transcribed words, merge
@@ -304,7 +313,8 @@ impl DaemonState {
         editor_snapshots: Vec<Event>,
         file_diffs: Vec<Event>,
         ext_selections: Vec<Event>,
-        browser_staging: super::BrowserStaging,
+        browser_staging: super::StagingResult,
+        shell_staging: super::StagingResult,
     ) -> anyhow::Result<()> {
         let remaining_chunks = std::mem::take(&mut self.buffered_chunks);
         let mut all_words = std::mem::take(&mut self.pre_transcribed);
@@ -346,6 +356,7 @@ impl DaemonState {
             && file_diffs.is_empty()
             && ext_selections.is_empty()
             && browser_staging.events.is_empty()
+            && shell_staging.events.is_empty()
         {
             tracing::debug!("No content captured, discarding.");
             return Ok(());
@@ -368,6 +379,8 @@ impl DaemonState {
         events.extend(ext_selections);
         let (browser_events, browser_cleanup) = browser_staging.take();
         events.extend(browser_events);
+        let (shell_events, shell_cleanup) = shell_staging.take();
+        events.extend(shell_events);
 
         // Sort and compress/merge events, then serialize as JSON.
         merge::compress_and_merge(&mut events);
@@ -386,8 +399,9 @@ impl DaemonState {
         crate::util::atomic_write_str(&path, &json)?;
         tracing::info!(path = %path, "Narration written");
 
-        // Only remove browser staging files after narration is safely on disk.
+        // Only remove staging files after narration is safely on disk.
         browser_cleanup.cleanup();
+        shell_cleanup.cleanup();
 
         Ok(())
     }
