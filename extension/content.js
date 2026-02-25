@@ -7,6 +7,9 @@
 // Uses mouseup (for drag selections) and keyup (for keyboard selections
 // with Shift+arrows) to avoid the continuous firing of selectionchange.
 
+// Cross-browser: Firefox exposes `browser`, Chrome exposes `chrome`.
+const browser = globalThis.browser ?? globalThis.chrome;
+
 let lastSentHtml = "";
 
 document.addEventListener("mouseup", onSelectionComplete);

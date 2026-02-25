@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Attend Browser Bridge",
+  "version": "1.1",
+  "description": "Captures text selections and sends them to attend for narration context.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt/D9J1lLjlmsV1HwWe9P4V1aJnJ2Yd8gsXwVh9MYuHAVW4ZCQiBzmgGUi9gkPNPbG7DF5Yt1OCyvhvDtwgwKr2RgJaqSjYLEZ5N3dteScTqz+IAGOn6wp0XC50YFBlFWgqS73vVrnm4i+ijoo34sHXXqb0wKkCn6AogUEfCQ0tn2aGQPjzhWNh7MJb+1MQLQnWJcPERf05+AuN1v4jxwPJ240PCEbhgNEkGcnKs4SSpunf+rMrgSMY8s4Q1J7ubt8fbqjWKDzSXmWrpSnhUSNn6fx5Zi2hYim4lykPX1fzJfUGVcnihpghjWjbXdwen7FYWZaq6j/0ciC+wELeRx7QIDAQAB",
+  "permissions": ["nativeMessaging"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

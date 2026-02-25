@@ -3,6 +3,9 @@
 // Receives selection messages from the content script and relays them
 // to the attend native messaging host via one-shot sendNativeMessage.
 
+// Cross-browser: Firefox exposes `browser`, Chrome exposes `chrome`.
+const browser = globalThis.browser ?? globalThis.chrome;
+
 browser.runtime.onMessage.addListener((msg) => {
   if (msg.type !== "selection") return;
 

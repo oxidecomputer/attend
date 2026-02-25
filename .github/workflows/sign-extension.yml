@@ -1,0 +1,41 @@
+# Sign the Firefox browser extension and build attend with the signed .xpi
+# embedded. Runs on release tag pushes.
+#
+# Required repository secrets:
+#   AMO_JWT_ISSUER  — API key (JWT issuer) from addons.mozilla.org
+#   AMO_JWT_SECRET  — API secret from addons.mozilla.org
+
+name: Sign Extension & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  sign-and-build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install web-ext
+        run: npm install -g web-ext
+
+      - name: Sign Firefox extension
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: cargo xtask sign-extension
+
+      - name: Build with embedded .xpi
+        run: cargo build --release
+
+      - name: Upload .xpi as release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            extension/attend.xpi
+            target/release/attend

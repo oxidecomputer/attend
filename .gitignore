@@ -1,2 +1,4 @@
 target/
 attend-browser-bridge
+extension/attend.xpi
+.envrc

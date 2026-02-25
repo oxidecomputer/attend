@@ -29,7 +29,7 @@ be performed as specified, please do it.
 | 10 | [merge.rs Deep Refactor](./phase-10-merge-refactor.md) | Done | Phase 9 |
 | 11 | [Persistent Daemon](./phase-11-persistent-daemon.md) | Not started | Phases 6, 8 |
 | 12a | [External Context Sources (Part A)](./phase-12-context-sources.md) | Done | Phase 10 |
-| 12b | [Firefox Native Messaging (Part B)](./phase-12-context-sources.md) | In progress (B11 remaining) | Phase 12a |
+| 12b | [Firefox Native Messaging (Part B)](./phase-12-context-sources.md) | Done | Phase 12a |
 | 14 | [Loopback Audio Capture](./phase-14-loopback-capture.md) | Not started | Phases 6, 10 |
 
 ## Item Progress
@@ -141,7 +141,7 @@ be performed as specified, please do it.
 - [x] B7 `merge.rs`: BrowserSelection dedup + cross-type dedup with ExternalSelection
 - [x] B8 Tests: 12 new tests (compress, prop, render, receive)
 - [x] B9 Documentation updates
-- [ ] B11 AMO unlisted signing + GitHub release hosting of `.xpi`
+- [x] B11 Signed XPI embedding + Chrome support + xtask sign-extension + CI workflow
 
 ### Phase 14: Loopback Audio Capture
 - [ ] T1 Replace webrtc-vad with webrtc-audio-processing (VAD migration)

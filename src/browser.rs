@@ -1,5 +1,5 @@
+mod chrome;
 mod firefox;
-// <-- Add new browser modules here
 
 /// A browser integration that can install/uninstall native messaging manifests.
 pub trait Browser: Sync {
@@ -12,10 +12,7 @@ pub trait Browser: Sync {
 }
 
 /// All registered browser backends.
-pub const BROWSERS: &[&'static dyn Browser] = &[
-    &firefox::Firefox,
-    // <-- Add new browsers here
-];
+pub const BROWSERS: &[&'static dyn Browser] = &[&chrome::Chrome, &firefox::Firefox];
 
 /// Look up a browser by CLI name.
 pub fn browser_by_name(name: &str) -> Option<&'static dyn Browser> {

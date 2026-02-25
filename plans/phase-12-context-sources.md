@@ -588,7 +588,7 @@ platforms may have their own permission models handled via `is_available()`.
 | B8 | `receive.rs`: pass BrowserSelection through filter unchanged | Done |
 | B9 | `attend uninstall --browser firefox` | Done |
 | B10 | Tests: 12 new tests (compress, prop, render, receive, bridge) | Done |
-| B11 | AMO unlisted signing + GitHub release hosting of `.xpi` | TODO |
+| B11 | Signed XPI embedding + Chrome support + xtask + CI | Done |
 
 **Implementation notes:**
 - Uses `native_messaging` crate for protocol framing and manifest management
@@ -600,6 +600,19 @@ platforms may have their own permission models handled via `is_available()`.
 - Cross-type dedup: when BrowserSelection and ExternalSelection have matching
   text within 500ms, the ExternalSelection is dropped (browser provides richer
   context: URL, is_code flag)
+- B11: Signed `.xpi` is embedded in the binary via `include_bytes!` when
+  `extension/attend.xpi` exists at build time (`build.rs` sets `has_signed_xpi`
+  cfg). Install writes the `.xpi` to disk and opens it in Firefox.
+- Chrome support added: `attend install --browser chrome` writes an unpacked
+  extension to `<data_dir>/attend/chrome-extension/` and registers the native
+  messaging host. Chrome unpacked extensions persist across restarts.
+- JS files use `globalThis.browser ?? globalThis.chrome` polyfill for
+  cross-browser compatibility. Two manifest files: `manifest.json` (Firefox)
+  and `manifest.chrome.json` (Chrome MV3 service worker).
+- `cargo xtask sign-extension` runs `web-ext sign --channel=unlisted` with
+  AMO credentials from env vars, writes `extension/attend.xpi`.
+- GitHub Actions workflow (`.github/workflows/sign-extension.yml`) signs on
+  release tags and builds with the embedded `.xpi`.
 
 ### Dependencies between 12a and 12b
 
