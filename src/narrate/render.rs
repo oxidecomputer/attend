@@ -273,11 +273,11 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                     out.push('\n');
                 }
                 out.push('\n');
-                out.push_str(&format!("```{shell}\n"));
                 // Show the working directory when it's not the project root.
                 if !cwd.is_empty() && cwd != "." {
-                    out.push_str(&format!("# in {cwd}/\n"));
+                    out.push_str(&format!("in `{cwd}/`:\n"));
                 }
+                out.push_str(&format!("```{shell}\n"));
                 out.push_str(&format!("$ {command}"));
                 // Append exit status and duration as a trailing shell comment
                 // for token efficiency. Omit when exit 0 and < 1s (trivial).
