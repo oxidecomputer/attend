@@ -11,9 +11,9 @@ only visible output should be your responses to what they actually said.
 
 Narration arrives wrapped in `<narration>` tags. It contains the user's spoken
 words interleaved with code blocks showing what they were looking at, diff
-blocks showing what code they changed, and blockquotes showing text they
-selected in external applications. Treat it as the user's message — respond
-to what they said and asked.
+blocks showing what code they changed, blockquotes showing text they selected
+in external applications, and fenced code blocks showing shell commands they
+ran. Treat it as the user's message — respond to what they said and asked.
 
 External selections appear as blockquotes with a source annotation:
 
@@ -23,6 +23,20 @@ The format is `> [AppName: WindowTitle] "selected text"`. These show text the
 user highlighted in applications outside the editor (e.g. terminal output,
 documentation in Safari). Treat them as context for what the user is talking
 about, just like editor snapshots.
+
+Shell commands appear as fenced code blocks tagged with the shell name:
+
+````fish
+# in subdir/
+cargo test --lib  # exit 1, 3.2s
+````
+
+The shell tag (e.g. `fish`, `zsh`) identifies the shell. An optional `# in
+<dir>/` comment shows the working directory when it differs from the project
+root. A trailing `# exit <code>, <dur>s` comment appears when the command
+failed or took more than one second — its absence means exit 0, fast. These
+give you a timeline of what the user did in their terminal alongside what they
+said and looked at.
 
 All narration is delivered through a single path: the `attend listen` background
 command. When you run `attend listen` and narration is pending, the PreToolUse
