@@ -11,12 +11,21 @@ fn ts(secs: f64) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds((secs * 1000.0) as i64)
 }
 
-/// Collecting pending files from a nonexistent session returns empty.
+/// Collecting pending files from an empty cache tree returns empty.
+///
+/// Uses a cache_dir override so the test doesn't observe real `_local/` files
+/// left by the daemon on the developer's machine.
 #[test]
 fn collect_pending_empty_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = Utf8PathBuf::try_from(tmp.path().to_path_buf()).unwrap();
+    crate::state::set_cache_dir_override(Some(cache));
+
     let sid = SessionId::from("nonexistent-session");
     let files = collect_pending(&sid);
     assert!(files.is_empty());
+
+    crate::state::set_cache_dir_override(None);
 }
 
 /// An empty file list produces no narration output.
