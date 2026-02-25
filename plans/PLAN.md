@@ -27,10 +27,14 @@ be performed as specified, please do it.
 | 8 | [UX Improvements](./phase-08-ux-improvements.md) | Done (774ecae) | Phases 4, 6 |
 | 9 | [Test Hardening](./phase-09-test-hardening.md) | Done | Phase 3 |
 | 10 | [merge.rs Deep Refactor](./phase-10-merge-refactor.md) | Done | Phase 9 |
-| 11 | [Persistent Daemon](./phase-11-persistent-daemon.md) | Not started | Phases 6, 8 |
 | 12a | [External Context Sources (Part A)](./phase-12-context-sources.md) | Done | Phase 10 |
 | 12b | [Firefox Native Messaging (Part B)](./phase-12-context-sources.md) | Done | Phase 12a |
-| 14 | [Loopback Audio Capture](./phase-14-loopback-capture.md) | Not started | Phases 6, 10 |
+| 13 | [No-Session Support](./phase-13-no-session.md) | Not started | Phase 12b |
+| 14 | [Pause](./phase-14-pause.md) | Not started | Phase 6 |
+| 15 | [Shell Hook Integration](./phase-15-shell-hooks.md) | Not started | Phases 6, 10, 12b, 13 |
+| 16 | [Yank-to-Clipboard](./phase-16-yank.md) | Not started | Phase 13 |
+| 17 | [Loopback Audio Capture](./phase-17-loopback-capture.md) | Not started | Phases 6, 10 |
+| 18 | [Persistent Daemon](./phase-18-persistent-daemon.md) | Not started | Phase 14 |
 
 ## Item Progress
 
@@ -143,22 +147,62 @@ be performed as specified, please do it.
 - [x] B9 Documentation updates
 - [x] B11 Signed XPI embedding + Chrome support + xtask sign-extension + CI workflow
 
-### Phase 14: Loopback Audio Capture
-- [ ] T1 Replace webrtc-vad with webrtc-audio-processing (VAD migration)
-- [ ] T2 Add AudioSource to the event model
-- [ ] T3 Loopback capture stream (macOS only initially)
-- [ ] T4 Echo cancellation wiring
-- [ ] T5 Dual-stream transcription
-- [ ] T6 Render and merge (`<other-speaker>` blocks)
-- [ ] T7 Permission and UX (runtime detection, docs)
-- [ ] T8 Tests
+### Phase 13: No-Session Support
+- [ ] 13.1 Staging/pending dir functions: accept `Option<&SessionId>`, fall back to `"_local"`
+- [ ] 13.2 Daemon: pass `Option` to pending/staging dirs, remove `narration.json` fallback
+- [ ] 13.3 Browser bridge: use `_local` when no session but `record.lock` exists
+- [ ] 13.4 Receive: `collect_pending` / `read_pending` handle `_local` directory
+- [ ] 13.5 Tests: no-session staging, pending read from `_local`, browser bridge fallback
+
+### Phase 14: Pause
+- [ ] 14.1 Pause sentinel path + `attend narrate pause` CLI subcommand
+- [ ] 14.2 `audio::CaptureHandle::pause()` / `resume()`
+- [ ] 14.3 `capture::CaptureHandle` paused flag + `pause()` / `resume()`
+- [ ] 14.4 Editor/diff/ext threads: check `paused` flag, skip polling when set
+- [ ] 14.5 `DaemonState` pause support (flush-then-suspend, resume detection)
+- [ ] 14.6 Pause/resume chimes + empty chime
+- [ ] 14.7 Wire chimes into daemon (pause, resume, empty on stop/flush)
+- [ ] 14.8 `narrate status`: report "paused" state
+- [ ] 14.9 Zed task + keybinding for pause
+- [ ] 14.10 Tests: pause/resume sentinel, full suspend, empty chime
+
+### Phase 15: Shell Hook Integration
+- [ ] 15.1 `Event::ShellCommand` variant + serde
+- [ ] 15.2 `Shell` trait, module layout, fish + zsh stubs
+- [ ] 15.3 `attend shell-hook` CLI subcommand (staging)
+- [ ] 15.4 Fish hook + completion installation
+- [ ] 15.5 Zsh hook + completion installation
+- [ ] 15.6 `shell_staging_dir` + `collect_shell_staging` (or generalized `StagingDir`)
+- [ ] 15.7 Wire shell staging into recording daemon (`transcribe_and_write`)
+- [ ] 15.8 `render.rs`: render ShellCommand events
+- [ ] 15.9 `merge.rs`: preexec/postexec dedup within runs
+- [ ] 15.10 `receive.rs`: pass ShellCommand through filter unchanged
+- [ ] 15.11 CLI `--shell` wiring (install/uninstall/status)
+- [ ] 15.12 Tests: staging, merge/compress/prop, render, install round-trip
+
+### Phase 16: Yank-to-Clipboard
+- [ ] 16.1 `yanked_dir()` + yank sentinel path
+- [ ] 16.2 `check_yank()` in daemon (write to `yanked/` dir)
+- [ ] 16.3 `attend narrate yank` CLI subcommand
+- [ ] 16.4 Clipboard write via `arboard`
+- [ ] 16.5 Zed task + keybinding for yank
+- [ ] 16.6 Tests: yank output, empty yank preserves clipboard, `yanked/` cleanup
+
+### Phase 17: Loopback Audio Capture
+- [ ] 17.1 Replace webrtc-vad with webrtc-audio-processing (VAD migration)
+- [ ] 17.2 Add AudioSource to the event model
+- [ ] 17.3 Loopback capture stream (macOS only initially)
+- [ ] 17.4 Echo cancellation wiring
+- [ ] 17.5 Dual-stream transcription
+- [ ] 17.6 Render and merge (`<other-speaker>` blocks)
+- [ ] 17.7 Permission and UX (runtime detection, docs)
+- [ ] 17.8 Tests
 - [ ] **Linux loopback support** — blocked on cpal PulseAudio backend release (merged to master, not yet in a cpal release). Once available, loopback on Linux is straightforward: PulseAudio/PipeWire monitor sources are standard input devices. No attend code changes expected beyond enabling the `pulseaudio` cpal feature.
 
-### Phase 11: Persistent Daemon
-- [ ] 11.1 Benchmark model load time
-- [ ] 11.2 Design persistent daemon lifecycle
-- [ ] 11.3 IPC upgrade: sentinel files → command channel
-- [ ] 11.4 Implement idle state
-- [ ] 11.5 Memory footprint analysis
-- [ ] 11.6 Warm-start correctness
-- [ ] 11.7 Daemon health and observability
+### Phase 18: Persistent Daemon
+- [ ] 18.1 Benchmark model load time
+- [ ] 18.2 Stop → flush+pause (daemon survives stop, enters idle)
+- [ ] 18.3 IPC: wake a paused daemon (resume sentinel from toggle/start)
+- [ ] 18.4 Idle timeout (configurable, default 5m)
+- [ ] 18.5 Memory footprint analysis
+- [ ] 18.6 Daemon health and observability

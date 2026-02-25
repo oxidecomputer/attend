@@ -1,4 +1,4 @@
-# Phase 14: Loopback Audio Capture
+# Phase 17: Loopback Audio Capture
 
 Capture system audio output (speaker/headphone playback) alongside microphone
 input so that both sides of a collaborative session are transcribed. The local

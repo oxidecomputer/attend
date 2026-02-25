@@ -1,4 +1,4 @@
-# Phase 13: Shell Hook Integration
+# Phase 15: Shell Hook Integration
 
 Capture command execution context (command text, exit status, duration) from
 fish and zsh during narration sessions. Events are staged to disk with UTC
@@ -456,7 +456,7 @@ doing it before shell hooks land (or as part of the same phase) avoids
 building more infrastructure on the filesystem pattern only to migrate it
 later.
 
-This could be scoped as phase 13a (SQLite migration) followed by 13b (shell
+This could be scoped as phase 15a (SQLite migration) followed by 15b (shell
 hooks on the new foundation), or deferred if the filesystem approach remains
 acceptable.
 
