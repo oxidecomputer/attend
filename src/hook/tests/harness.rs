@@ -117,10 +117,14 @@ impl TestHarness {
         let listening = self.cache.join("listening");
         std::fs::write(&listening, session_id.as_str()).unwrap();
         // Write activated marker
-        let marker = self.cache.join(format!("activated-{session_id}"));
+        let marker = self
+            .cache
+            .join("sessions/activated")
+            .join(session_id.as_str());
+        std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
         std::fs::write(&marker, "").unwrap();
         // Clear any stale moved marker (like user_prompt does)
-        let moved = self.cache.join(format!("moved-{session_id}"));
+        let moved = self.cache.join("sessions/moved").join(session_id.as_str());
         let _ = std::fs::remove_file(&moved);
     }
 
