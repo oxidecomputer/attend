@@ -294,10 +294,7 @@ impl DaemonState {
     /// Returns a [`BrowserStaging`] whose files are cleaned up only after the
     /// narration is written to disk (crash-safe).
     fn collect_browser_staging(&self) -> super::BrowserStaging {
-        self.session_id
-            .as_ref()
-            .map(|sid| super::collect_browser_staging(sid, self.period_start_utc))
-            .unwrap_or_default()
+        super::collect_browser_staging(self.session_id.as_ref(), self.period_start_utc)
     }
 
     /// Transcribe remaining audio, combine with pre-transcribed words, merge
@@ -383,17 +380,11 @@ impl DaemonState {
         let json = serde_json::to_string(&events)?;
 
         let ts = utc_now().replace(':', "-");
-        if let Some(ref sid) = self.session_id {
-            let dir = pending_dir(sid);
-            fs::create_dir_all(&dir)?;
-            let path = dir.join(format!("{ts}.json"));
-            crate::util::atomic_write_str(&path, &json)?;
-            tracing::info!(path = %path, "Narration written");
-        } else {
-            let path = cache_dir().join("narration.json");
-            crate::util::atomic_write_str(&path, &json)?;
-            tracing::info!(path = %path, "Narration written");
-        }
+        let dir = pending_dir(self.session_id.as_ref());
+        fs::create_dir_all(&dir)?;
+        let path = dir.join(format!("{ts}.json"));
+        crate::util::atomic_write_str(&path, &json)?;
+        tracing::info!(path = %path, "Narration written");
 
         // Only remove browser staging files after narration is safely on disk.
         browser_cleanup.cleanup();

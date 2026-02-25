@@ -337,3 +337,86 @@ fn collect_pending_from(dir: &Path) -> Vec<PathBuf> {
     files.sort();
     files
 }
+
+// -- No-session (_local) support tests --
+
+/// `collect_pending_dir` returns files from a single directory, sorted.
+#[test]
+fn collect_pending_dir_returns_sorted_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let utf8 = Utf8Path::from_path(dir.path()).unwrap();
+    fs::write(dir.path().join("b.json"), "[]").unwrap();
+    fs::write(dir.path().join("a.json"), "[]").unwrap();
+    fs::write(dir.path().join("c.txt"), "ignored").unwrap();
+
+    let files = collect_pending_dir(utf8);
+    assert_eq!(files.len(), 2, "should find only .json files");
+    let names: Vec<_> = files.iter().map(|p| p.file_name().unwrap()).collect();
+    assert_eq!(names[0], "a.json");
+    assert_eq!(names[1], "b.json");
+}
+
+/// `collect_pending_dir` returns empty for a nonexistent directory.
+#[test]
+fn collect_pending_dir_missing_dir() {
+    let utf8 = Utf8Path::new("/tmp/nonexistent-attend-test-dir");
+    let files = collect_pending_dir(utf8);
+    assert!(files.is_empty());
+}
+
+/// The receive pipeline merges _local files with session files.
+///
+/// Simulates: daemon wrote to `_local` (no session), then a session starts
+/// and `collect_pending` picks up both session and _local files.
+#[test]
+fn collect_pending_merges_session_and_local() {
+    let base = tempfile::tempdir().unwrap();
+    let session_id = "merge-test-session";
+
+    // Session pending dir
+    let session_dir = base.path().join("pending").join(session_id);
+    fs::create_dir_all(&session_dir).unwrap();
+    let events_session = vec![Event::Words {
+        timestamp: ts(1.0),
+        text: "session narration".to_string(),
+    }];
+    fs::write(
+        session_dir.join("2026-02-18T10-00-01Z.json"),
+        serde_json::to_string(&events_session).unwrap(),
+    )
+    .unwrap();
+
+    // _local pending dir
+    let local_dir = base.path().join("pending").join("_local");
+    fs::create_dir_all(&local_dir).unwrap();
+    let events_local = vec![Event::Words {
+        timestamp: ts(0.0),
+        text: "local narration".to_string(),
+    }];
+    fs::write(
+        local_dir.join("2026-02-18T10-00-00Z.json"),
+        serde_json::to_string(&events_local).unwrap(),
+    )
+    .unwrap();
+
+    // Use collect_pending_dir on both dirs (simulating what collect_pending does).
+    let session_utf8 = Utf8Path::from_path(&session_dir).unwrap();
+    let local_utf8 = Utf8Path::from_path(&local_dir).unwrap();
+    let mut files = collect_pending_dir(session_utf8);
+    files.extend(collect_pending_dir(local_utf8));
+    files.sort();
+
+    assert_eq!(files.len(), 2);
+
+    // Read merges both files into one markdown document.
+    let cwd = Utf8Path::new("/project");
+    let content = read_pending(&files, cwd, &[]).unwrap();
+    assert!(
+        content.contains("local narration"),
+        "_local narration should be included"
+    );
+    assert!(
+        content.contains("session narration"),
+        "session narration should be included"
+    );
+}

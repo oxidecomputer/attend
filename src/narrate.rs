@@ -23,6 +23,13 @@ use camino::Utf8PathBuf;
 
 use crate::state::SessionId;
 
+/// Directory name used for staging/pending when no agent session is active.
+///
+/// The `record.lock` file (daemon is running) remains the sole gate for
+/// whether events are captured at all. This fallback only affects *where*
+/// events are staged when the daemon is running but no agent session exists.
+const LOCAL_DIR_NAME: &str = "_local";
+
 pub(crate) use clean::clean;
 #[cfg(test)]
 pub(crate) use clean::clean_archive_dir;
@@ -63,17 +70,26 @@ pub(crate) fn receive_lock_path() -> Utf8PathBuf {
     cache_dir().join("receive.lock")
 }
 
+/// Resolve the directory key from an optional session ID.
+///
+/// Returns the session ID string when present, or [`LOCAL_DIR_NAME`] when
+/// no agent session is active.
+fn dir_key(session_id: Option<&SessionId>) -> &str {
+    session_id.map(SessionId::as_str).unwrap_or(LOCAL_DIR_NAME)
+}
+
 /// Directory where pending narration files are written.
 ///
 /// Each narration is stored as `<timestamp>.json` inside
-/// `<cache_dir>/attend/pending/<session_id>/` (platform cache directory).
-pub(crate) fn pending_dir(session_id: &SessionId) -> Utf8PathBuf {
-    cache_dir().join("pending").join(session_id.as_str())
+/// `<cache_dir>/attend/pending/<key>/` where `<key>` is the session ID
+/// or `_local` when no agent session is active.
+pub(crate) fn pending_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
+    cache_dir().join("pending").join(dir_key(session_id))
 }
 
 /// Directory where archived narration files are stored.
-pub(crate) fn archive_dir(session_id: &SessionId) -> Utf8PathBuf {
-    cache_dir().join("archive").join(session_id.as_str())
+pub(crate) fn archive_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
+    cache_dir().join("archive").join(dir_key(session_id))
 }
 
 /// Directory where the browser bridge stages selection events.
@@ -81,10 +97,10 @@ pub(crate) fn archive_dir(session_id: &SessionId) -> Utf8PathBuf {
 /// Events in this directory are not delivered directly to the agent.
 /// Instead, the recording daemon collects them during flush/stop and
 /// includes them in the narration output.
-pub(crate) fn browser_staging_dir(session_id: &SessionId) -> Utf8PathBuf {
+pub(crate) fn browser_staging_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
     cache_dir()
         .join("browser-staging")
-        .join(session_id.as_str())
+        .join(dir_key(session_id))
 }
 
 /// Collected browser staging events, with file paths for deferred cleanup.
@@ -115,7 +131,7 @@ impl BrowserStaging {
     }
 }
 
-/// Collect staged browser selection events for a session.
+/// Collect staged browser selection events.
 ///
 /// File timestamps (from the filename) are assigned as UTC timestamps
 /// on the events, so they sort correctly with all other event types.
@@ -123,7 +139,7 @@ impl BrowserStaging {
 /// Files are **not** removed until [`BrowserCleanup::cleanup`] is called,
 /// so a crash between collection and narration write does not lose events.
 pub(crate) fn collect_browser_staging(
-    session_id: &SessionId,
+    session_id: Option<&SessionId>,
     period_start_utc: chrono::DateTime<chrono::Utc>,
 ) -> BrowserStaging {
     let dir = browser_staging_dir(session_id);

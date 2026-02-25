@@ -63,14 +63,9 @@ pub(super) fn run() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Find the active session.
-    let Some(session_id) = state::listening_session() else {
-        native_messaging::host::send_json(
-            &mut stdout,
-            &serde_json::json!({"status": "no_session"}),
-        )?;
-        return Ok(());
-    };
+    // Resolve the session, if any. When no agent session is active the
+    // event is staged to the `_local` directory so it is still captured.
+    let session_id = state::listening_session();
 
     // Stage the event for collection by the recording daemon.
     // Browser selections are not delivered directly to the agent; they
@@ -87,7 +82,7 @@ pub(super) fn run() -> anyhow::Result<()> {
 
     let json = serde_json::to_string(&events)?;
     let ts = util::utc_now().replace(':', "-");
-    let dir = browser_staging_dir(&session_id);
+    let dir = browser_staging_dir(session_id.as_ref());
     fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{ts}.json"));
     util::atomic_write_str(&path, &json)?;

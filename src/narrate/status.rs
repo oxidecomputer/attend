@@ -87,21 +87,24 @@ pub(crate) fn status() -> anyhow::Result<()> {
         }
     }
 
-    // Pending narration count
-    if let Some(ref sid) = session {
-        let dir = pending_dir(sid);
-        let count = fs::read_dir(&dir)
+    // Pending narration count (session + _local)
+    let count_json = |dir: camino::Utf8PathBuf| -> usize {
+        fs::read_dir(&dir)
             .map(|entries| {
                 entries
                     .filter_map(|e| e.ok())
                     .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
                     .count()
             })
-            .unwrap_or(0);
-        println!("Pending:    {count} narration(s)");
-    } else {
-        println!("Pending:    -");
-    }
+            .unwrap_or(0)
+    };
+    let session_count = session
+        .as_ref()
+        .map(|sid| count_json(pending_dir(Some(sid))))
+        .unwrap_or(0);
+    let local_count = count_json(pending_dir(None));
+    let count = session_count + local_count;
+    println!("Pending:    {count} narration(s)");
 
     // Config validation
     let mut warnings = Vec::new();

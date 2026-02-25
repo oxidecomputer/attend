@@ -29,7 +29,7 @@ be performed as specified, please do it.
 | 10 | [merge.rs Deep Refactor](./phase-10-merge-refactor.md) | Done | Phase 9 |
 | 12a | [External Context Sources (Part A)](./phase-12-context-sources.md) | Done | Phase 10 |
 | 12b | [Firefox Native Messaging (Part B)](./phase-12-context-sources.md) | Done | Phase 12a |
-| 13 | [No-Session Support](./phase-13-no-session.md) | Not started | Phase 12b |
+| 13 | [No-Session Support](./phase-13-no-session.md) | Done | Phase 12b |
 | 14 | [Pause](./phase-14-pause.md) | Not started | Phase 6 |
 | 15 | [Shell Hook Integration](./phase-15-shell-hooks.md) | Not started | Phases 6, 10, 12b, 13 |
 | 16 | [Yank-to-Clipboard](./phase-16-yank.md) | Not started | Phase 13 |
@@ -148,11 +148,11 @@ be performed as specified, please do it.
 - [x] B11 Signed XPI embedding + Chrome support + xtask sign-extension + CI workflow
 
 ### Phase 13: No-Session Support
-- [ ] 13.1 Staging/pending dir functions: accept `Option<&SessionId>`, fall back to `"_local"`
-- [ ] 13.2 Daemon: pass `Option` to pending/staging dirs, remove `narration.json` fallback
-- [ ] 13.3 Browser bridge: use `_local` when no session but `record.lock` exists
-- [ ] 13.4 Receive: `collect_pending` / `read_pending` handle `_local` directory
-- [ ] 13.5 Tests: no-session staging, pending read from `_local`, browser bridge fallback
+- [x] 13.1 Staging/pending dir functions: accept `Option<&SessionId>`, fall back to `"_local"`
+- [x] 13.2 Daemon: pass `Option` to pending/staging dirs, remove `narration.json` fallback
+- [x] 13.3 Browser bridge: use `_local` when no session but `record.lock` exists
+- [x] 13.4 Receive: `collect_pending` / `read_pending` handle `_local` directory
+- [x] 13.5 Tests: no-session staging, pending read from `_local`, browser bridge fallback
 
 ### Phase 14: Pause
 - [ ] 14.1 Pause sentinel path + `attend narrate pause` CLI subcommand

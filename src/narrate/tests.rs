@@ -176,7 +176,7 @@ fn cache_dir_is_under_attend() {
 #[test]
 fn pending_dir_includes_session() {
     let sid = SessionId::from("abc-123");
-    let dir = pending_dir(&sid);
+    let dir = pending_dir(Some(&sid));
     assert!(dir.ends_with("pending/abc-123") || dir.ends_with("pending\\abc-123"));
 }
 
@@ -184,6 +184,49 @@ fn pending_dir_includes_session() {
 #[test]
 fn archive_dir_includes_session() {
     let sid = SessionId::from("abc-123");
-    let dir = archive_dir(&sid);
+    let dir = archive_dir(Some(&sid));
     assert!(dir.ends_with("archive/abc-123") || dir.ends_with("archive\\abc-123"));
+}
+
+// -- No-session (_local) fallback tests --
+
+/// When no session ID is provided, pending_dir uses the `_local` fallback.
+#[test]
+fn pending_dir_falls_back_to_local() {
+    let dir = pending_dir(None);
+    assert!(
+        dir.ends_with("pending/_local") || dir.ends_with("pending\\_local"),
+        "expected _local fallback, got: {dir}"
+    );
+}
+
+/// When no session ID is provided, archive_dir uses the `_local` fallback.
+#[test]
+fn archive_dir_falls_back_to_local() {
+    let dir = archive_dir(None);
+    assert!(
+        dir.ends_with("archive/_local") || dir.ends_with("archive\\_local"),
+        "expected _local fallback, got: {dir}"
+    );
+}
+
+/// When no session ID is provided, browser_staging_dir uses the `_local` fallback.
+#[test]
+fn browser_staging_dir_falls_back_to_local() {
+    let dir = browser_staging_dir(None);
+    assert!(
+        dir.ends_with("browser-staging/_local") || dir.ends_with("browser-staging\\_local"),
+        "expected _local fallback, got: {dir}"
+    );
+}
+
+/// `browser_staging_dir(Some(sid))` still includes the session ID.
+#[test]
+fn browser_staging_dir_includes_session() {
+    let sid = SessionId::from("sess-99");
+    let dir = browser_staging_dir(Some(&sid));
+    assert!(
+        dir.ends_with("browser-staging/sess-99") || dir.ends_with("browser-staging\\sess-99"),
+        "expected session ID, got: {dir}"
+    );
 }

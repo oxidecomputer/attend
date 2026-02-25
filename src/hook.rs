@@ -78,9 +78,12 @@ pub fn session_end(agent: &dyn Agent) -> anyhow::Result<()> {
             let _ = std::fs::remove_file(path);
         }
 
-        // Clean up browser staging directory for this session (best-effort).
-        let staging_dir = crate::narrate::browser_staging_dir(sid);
+        // Clean up browser staging directories for this session (best-effort).
+        let staging_dir = crate::narrate::browser_staging_dir(Some(sid));
         let _ = std::fs::remove_dir_all(staging_dir);
+        // Also clean _local staging (events captured before a session existed).
+        let local_staging = crate::narrate::browser_staging_dir(None);
+        let _ = std::fs::remove_dir_all(local_staging);
     }
 
     Ok(())

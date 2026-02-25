@@ -1,11 +1,12 @@
 //! Check for and deliver pending narration files to Claude Code.
 //!
 //! Narration files are stored as individual timestamped JSON files in
-//! `<cache_dir>/attend/pending/<session_id>/` (platform cache directory). Each file contains a
-//! `Vec<Event>` with absolute paths. On receive, events are filtered to
-//! the current project directory (and any configured `include_dirs`),
-//! paths are relativized, and the result is rendered as markdown wrapped
-//! in `<narration>` tags.
+//! `<cache_dir>/attend/pending/<key>/` where `<key>` is the session ID
+//! or `_local` when no agent session was active during recording. Each
+//! file contains a `Vec<Event>` with absolute paths. On receive, events
+//! are filtered to the current project directory (and any configured
+//! `include_dirs`), paths are relativized, and the result is rendered as
+//! markdown wrapped in `<narration>` tags.
 
 use std::fs;
 use std::path::PathBuf;
@@ -32,20 +33,27 @@ const REDISPATCH_MSG: &str = "\n<system-instruction>\n\
      </system-instruction>";
 
 /// Collect all pending narration files for a session, sorted by filename (timestamp).
+///
+/// Also collects files from the `_local` directory (narrations captured when
+/// no agent session was active), so they are delivered when a session starts.
 pub(crate) fn collect_pending(session_id: &SessionId) -> Vec<PathBuf> {
-    let dir = pending_dir(session_id);
-    let Ok(entries) = fs::read_dir(&dir) else {
+    let mut files = collect_pending_dir(&pending_dir(Some(session_id)));
+    // Also collect from _local (no-session narrations).
+    files.extend(collect_pending_dir(&pending_dir(None)));
+    files.sort();
+    files
+}
+
+/// Collect `.json` files from a single pending directory.
+fn collect_pending_dir(dir: &Utf8Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();
     };
-
-    let mut files: Vec<PathBuf> = entries
+    entries
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
-        .collect();
-
-    files.sort();
-    files
+        .collect()
 }
 
 /// Deserialize, filter, relativize, and render pending JSON event files.
@@ -138,8 +146,11 @@ fn relativize_str(path: &str, cwd: &Utf8Path) -> String {
 }
 
 /// Archive pending narration files by moving them to the archive directory.
+///
+/// Files from both the session directory and `_local` are archived under the
+/// session's archive directory. Empty source directories are cleaned up.
 pub(crate) fn archive_pending(files: &[PathBuf], session_id: &SessionId) {
-    let archive = archive_dir(session_id);
+    let archive = archive_dir(Some(session_id));
     // Best-effort archival: non-critical for narration delivery.
     let _ = fs::create_dir_all(&archive);
 
@@ -151,8 +162,11 @@ pub(crate) fn archive_pending(files: &[PathBuf], session_id: &SessionId) {
     }
 
     // Best-effort: only succeeds if empty.
-    let dir = pending_dir(session_id);
+    let dir = pending_dir(Some(session_id));
     let _ = fs::remove_dir(&dir);
+    // Also clean _local if empty (files may have come from there).
+    let local_dir = pending_dir(None);
+    let _ = fs::remove_dir(&local_dir);
 }
 
 /// Prune archived narrations older than the configured retention period.
