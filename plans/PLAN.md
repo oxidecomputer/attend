@@ -32,7 +32,7 @@ be performed as specified, please do it.
 | 13 | [No-Session Support](./phase-13-no-session.md) | Done (0bea28a) | Phase 12b |
 | 14 | [Pause](./phase-14-pause.md) | Done (9729a96) | Phase 6 |
 | 15 | [Shell Hook Integration](./phase-15-shell-hooks.md) | Done (4bfd7aa) | Phases 6, 10, 12b, 13 |
-| 16 | [Yank-to-Clipboard](./phase-16-yank.md) | Done | Phases 13, 14 |
+| 16 | [Yank-to-Clipboard](./phase-16-yank.md) | Done (56dc48b) | Phases 13, 14 |
 | 17 | [Loopback Audio Capture](./phase-17-loopback-capture.md) | Not started | Phases 6, 10 |
 | 18 | [Persistent Daemon](./phase-18-persistent-daemon.md) | Not started | Phase 14 |
 

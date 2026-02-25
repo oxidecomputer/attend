@@ -76,27 +76,35 @@ context.
 
 ### Editor hotkeys
 
-By default, `attend install --editor zed` installs two keybindings in Zed (if
-those aren't already bound), as well as two named tasks they trigger:
+By default, `attend install --editor zed` installs keybindings in Zed (if
+those aren't already bound), as well as named tasks they trigger:
 
-- `⌘ :` starts narration. Pressing it again sends narration to the agent and
-  keeps recording.
-- `⌘ ;` toggles narration. Pressing it again sends narration to the agent and
-  stops recording.
+| Shortcut | Task | Effect |
+|----------|------|--------|
+| `⌘ ;` | attend: toggle narration | Start narration, or send and stop |
+| `⌘ :` | attend: start narration | Start narration, or send and keep recording |
+| `⌘ {` | attend: pause narration | Pause recording (toggle: press again to resume) |
+| `⌘ }` | attend: yank narration | Stop and copy narration to clipboard |
 
 You can change these after the fact within Zed, and future reinstallation of Zed
-hooks from `attend` will respect your preferences. To manually assign key
-bindings, bind the tasks "attend: toggle narration" and "attend: start
-narration".
+hooks from `attend` will respect your preferences.
 
 #### macOS
 
 Alternatively, if you use a hotkey manager that can assign commands to keys, you
-can bind *global* hotkeys to `attend narrate start` and `attend narrate toggle`.
-On macOS, you can [bind a global keyboard shortcut to a script using the
-Shortcuts
+can bind *global* hotkeys to any of the narrate subcommands. On macOS, you can
+[bind a global keyboard shortcut to a script using the Shortcuts
 app](https://support.apple.com/guide/shortcuts-mac/launch-a-shortcut-from-another-app-apd163eb9f95/mac).
 Your favorite Linux distribution almost certainly has some way to do this too.
+
+The commands to bind are:
+
+| Command | Purpose |
+|---------|---------|
+| `attend narrate toggle` | Start narration, or send and stop |
+| `attend narrate start` | Start narration, or send and keep recording |
+| `attend narrate pause` | Pause/resume recording |
+| `attend narrate yank` | Stop and copy narration to clipboard |
 
 #### iTerm2
 
@@ -105,10 +113,16 @@ To use the same keybindings from iTerm2, add key mappings under Settings > Keys
 > Key Bindings:
 
 1. Click **+** to add a new binding.
-2. Set the shortcut (e.g. `⌘;`), action **Run Coprocess**, and command:
-   `~/.cargo/bin/attend narrate toggle`
+2. Set the shortcut, action **Run Coprocess**, and the corresponding command.
 3. Ensure it is marked as "Apply to current session" (we only want it to run once at a time).
-3. Repeat for `⌘:` with command: `~/.cargo/bin/attend narrate start`
+4. Repeat for each shortcut you want.
+
+| Shortcut | Command |
+|----------|---------|
+| `⌘;` | `~/.cargo/bin/attend narrate toggle` |
+| `⌘:` | `~/.cargo/bin/attend narrate start` |
+| `⌘{` | `~/.cargo/bin/attend narrate pause` |
+| `⌘}` | `~/.cargo/bin/attend narrate yank` |
 
 You must use the full path to the binary (`~/.cargo/bin/attend`) because
 iTerm2 coprocesses run under `/bin/sh`, which does not have `~/.cargo/bin`
@@ -292,6 +306,8 @@ terminal is possible, but takes you out of the flow.
 | `attend narrate start` | Start narration, or send current narration and keep recording |
 | `attend narrate toggle` | Start narration, or send current narration and stop recording |
 | `attend narrate stop` | Send current narration and stop recording |
+| `attend narrate pause` | Pause recording (toggle: run again to resume) |
+| `attend narrate yank` | Stop recording and copy narration to clipboard |
 
 ### Agent integration
 
