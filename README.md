@@ -55,49 +55,49 @@ attend install --agent claude --editor zed
 ```
 
 The final step installs the all-important hooks that provide editor context to
-Claude Code, plus keybindings to toggle voice narration from within Zed.
+Claude Code, plus keybindings for narration control (toggle, start, pause,
+yank) from within Zed. See [Narration hotkeys](#narration-hotkeys) for
+the full list.
 
 ### Browser integration (optional)
 
-To capture text selections from Firefox and deliver them as narration context:
+To capture text selections from your browser and deliver them as narration
+context:
 
 ```bash
-attend install --browser firefox
+attend install --browser firefox   # or: --browser chrome
 ```
 
-This installs a native messaging host manifest. You also need to load the
-browser extension: open `about:debugging#/runtime/this-firefox` in Firefox,
-click "Load Temporary Add-on", and select `extension/manifest.json` from the
-attend source tree.
+For Firefox, this installs a native messaging host manifest and opens the
+signed extension for installation. After clicking "Add" in Firefox, the
+extension persists across restarts.
 
-When narration is active, text you select in Firefox will be captured with the
-page URL and title, and delivered to your agent alongside speech and editor
-context.
+For Chrome, this installs a native messaging host manifest and writes an
+unpacked extension to a persistent directory. You then load it manually:
+open `chrome://extensions`, enable Developer mode, click "Load unpacked",
+and select the directory printed by the install command.
 
-### Editor hotkeys
+When narration is active, text you select in the browser will be captured
+with the page URL and title, and delivered to your agent alongside speech
+and editor context.
 
-By default, `attend install --editor zed` installs keybindings in Zed (if
-those aren't already bound), as well as named tasks they trigger:
+### Shell integration (optional)
 
-| Shortcut | Task | Effect |
-|----------|------|--------|
-| `⌘ ;` | attend: toggle narration | Start narration, or send and stop |
-| `⌘ :` | attend: start narration | Start narration, or send and keep recording |
-| `⌘ {` | attend: pause narration | Pause recording (toggle: press again to resume) |
-| `⌘ }` | attend: yank narration | Stop and copy narration to clipboard |
+To capture shell commands (what you ran, exit status, duration) as narration
+context:
 
-You can change these after the fact within Zed, and future reinstallation of Zed
-hooks from `attend` will respect your preferences.
+```bash
+attend install --shell fish   # or: --shell zsh
+```
 
-#### macOS
+This installs hooks that fire on every command. When narration is active,
+commands you run in that shell are captured and delivered alongside speech and
+editor context, so the agent can see what you executed.
 
-Alternatively, if you use a hotkey manager that can assign commands to keys, you
-can bind *global* hotkeys to any of the narrate subcommands. On macOS, you can
-[bind a global keyboard shortcut to a script using the Shortcuts
-app](https://support.apple.com/guide/shortcuts-mac/launch-a-shortcut-from-another-app-apd163eb9f95/mac).
-Your favorite Linux distribution almost certainly has some way to do this too.
+### Narration hotkeys
 
-The commands to bind are:
+Narration is controlled by four commands. You'll have the best experience if
+these are bound to hotkeys accessible without leaving your editor.
 
 | Command | Purpose |
 |---------|---------|
@@ -106,15 +106,36 @@ The commands to bind are:
 | `attend narrate pause` | Pause/resume recording |
 | `attend narrate yank` | Stop and copy narration to clipboard |
 
+#### Zed
+
+`attend install --editor zed` installs keybindings and tasks automatically:
+
+| macOS | Linux | Task |
+|-------|-------|------|
+| `⌘ ;` | `Super ;` | attend: toggle narration |
+| `⌘ :` | `Super :` | attend: start narration |
+| `⌘ {` | `Super {` | attend: pause narration |
+| `⌘ }` | `Super }` | attend: yank narration |
+
+Reinstallation respects any keybinding changes you've made in Zed.
+
+#### Global hotkeys (macOS / Linux)
+
+If you use a hotkey manager that can assign commands to keys, you can bind
+*global* hotkeys to the narrate subcommands. On macOS, you can [bind a
+global keyboard shortcut to a script using the Shortcuts
+app](https://support.apple.com/guide/shortcuts-mac/launch-a-shortcut-from-another-app-apd163eb9f95/mac).
+Your favorite Linux distribution almost certainly has some way to do this
+too.
+
 #### iTerm2
 
-iTerm2 does not pick up the globally set hotkeys in the manner described above.
-To use the same keybindings from iTerm2, add key mappings under Settings > Keys
-> Key Bindings:
+iTerm2 does not pick up macOS global hotkeys. To use the same keybindings
+from iTerm2, add key mappings under Settings > Keys > Key Bindings:
 
 1. Click **+** to add a new binding.
 2. Set the shortcut, action **Run Coprocess**, and the corresponding command.
-3. Ensure it is marked as "Apply to current session" (we only want it to run once at a time).
+3. Ensure it is marked as "Apply to current session".
 4. Repeat for each shortcut you want.
 
 | Shortcut | Command |
@@ -124,9 +145,8 @@ To use the same keybindings from iTerm2, add key mappings under Settings > Keys
 | `⌘{` | `~/.cargo/bin/attend narrate pause` |
 | `⌘}` | `~/.cargo/bin/attend narrate yank` |
 
-You must use the full path to the binary (`~/.cargo/bin/attend`) because
-iTerm2 coprocesses run under `/bin/sh`, which does not have `~/.cargo/bin`
-in its PATH.
+Use the full path (`~/.cargo/bin/attend`) because iTerm2 coprocesses run
+under `/bin/sh`, which does not have `~/.cargo/bin` in its PATH.
 
 ### Agent integration
 
@@ -295,19 +315,18 @@ each narration delivery (configurable via `archive_retention` in the config file
 You can also remove old archived narration files manually using this command, which
 defaults to cleaning everything older than 7 days.
 
-### Editor integration
+### Narration commands
 
-You'll have the best experience if you bind some of these to hotkeys, either
-accessible through your editor, or globally. Manually running them in your
-terminal is possible, but takes you out of the flow.
+See [Narration hotkeys](#narration-hotkeys) for the commands and how to
+bind them. You can also run them directly in a terminal:
 
-| Command | Purpose |
-|---------|---------|
-| `attend narrate start` | Start narration, or send current narration and keep recording |
-| `attend narrate toggle` | Start narration, or send current narration and stop recording |
-| `attend narrate stop` | Send current narration and stop recording |
-| `attend narrate pause` | Pause recording (toggle: run again to resume) |
-| `attend narrate yank` | Stop recording and copy narration to clipboard |
+```bash
+attend narrate toggle   # start, or send and stop
+attend narrate start    # start, or send and keep recording
+attend narrate stop     # send and stop (no toggle)
+attend narrate pause    # pause/resume
+attend narrate yank     # stop and copy to clipboard
+```
 
 ### Agent integration
 
