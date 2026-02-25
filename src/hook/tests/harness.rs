@@ -149,6 +149,29 @@ impl TestHarness {
         std::fs::write(dir.join(filename), content).unwrap();
     }
 
+    /// Write a pending narration file whose content will be filtered out
+    /// during delivery (path outside the test cwd).
+    ///
+    /// The file exists on disk (so `collect_pending` finds it), but
+    /// `read_pending` returns `None` because the event's path doesn't
+    /// match the session's working directory.
+    pub(super) fn write_undeliverable_pending(&self, session_id: &SessionId) {
+        let dir = self.cache().join("pending").join(session_id.as_str());
+        std::fs::create_dir_all(&dir).unwrap();
+        let seq = PENDING_SEQ.fetch_add(1, Ordering::Relaxed);
+        let filename = format!("{seq:020}.json");
+        // FileDiff with a path outside any test cwd. read_pending filters
+        // by cwd, so this event will be dropped, yielding None.
+        let events = vec![Event::FileDiff {
+            timestamp: ts(0.0),
+            path: "/nonexistent/outside/project/foo.rs".to_string(),
+            old: "old".to_string(),
+            new: "new".to_string(),
+        }];
+        let content = serde_json::to_string(&events).unwrap();
+        std::fs::write(dir.join(filename), content).unwrap();
+    }
+
     /// Simulate a running receiver by writing a lock file with our PID.
     pub(super) fn fake_receiver(&self) -> ReceiverGuard {
         let lock_path = self.cache().join("receive.lock");

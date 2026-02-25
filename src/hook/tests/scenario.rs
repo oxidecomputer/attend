@@ -262,6 +262,69 @@ fn batched_narration_delivery() {
     TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::StartReceiver));
 }
 
+/// **Scenario**: Livelock variant A (regression): undeliverable pending
+/// files + receiver alive.
+///
+/// **Before fix**: Pending files existed but their content was filtered
+/// out by cwd. General hooks blocked with NarrationReady. `attend listen`
+/// couldn't deliver anything but didn't archive the files. With a receiver
+/// alive, it blocked with ListenerAlreadyActive. The pending files
+/// persisted, so the cycle repeated forever (livelock).
+///
+/// **After fix**: The general hook detects that pending files are
+/// undeliverable, archives them, and reports no pending. The agent is
+/// never blocked for content that can't be delivered.
+#[test]
+fn livelock_variant_a_undeliverable_pending_plus_receiver() {
+    let h = TestHarness::new();
+    let s: SessionId = "session-1".into();
+    h.activate(&s);
+    let _receiver = h.fake_receiver();
+
+    // Write pending content that will be filtered out during delivery.
+    h.write_undeliverable_pending(&s);
+
+    // General hook: detects undeliverable files, archives them, reports
+    // no pending. Receiver is alive, so result is Silent.
+    let out = h.fire_hook(&s, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::Silent);
+
+    // Subsequent hooks remain clean: no pending, receiver alive.
+    let out = h.fire_hook(&s, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::Silent);
+}
+
+/// **Scenario**: Livelock variant B (regression): undeliverable pending
+/// files, no receiver.
+///
+/// **Before fix**: Pending files existed but their content was filtered
+/// out. No receiver was alive. General hook blocked with NarrationReady.
+/// `attend listen` approved silently but didn't archive files. The
+/// receiver saw files and exited with REDISPATCH_MSG. Agent restarted
+/// listener, general hook blocked again. Infinite cycle.
+///
+/// **After fix**: The general hook detects that pending files are
+/// undeliverable, archives them, and reports no pending. The normal
+/// "start a receiver" nudge is emitted instead.
+#[test]
+fn livelock_variant_b_undeliverable_pending_no_receiver() {
+    let h = TestHarness::new();
+    let s: SessionId = "session-1".into();
+    h.activate(&s);
+
+    // Write pending content that will be filtered out during delivery.
+    h.write_undeliverable_pending(&s);
+
+    // General hook: detects undeliverable files, archives them, reports
+    // no pending. No receiver, so nudges to start one.
+    let out = h.fire_hook(&s, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::StartReceiver));
+
+    // Subsequent hooks remain clean: no pending, no receiver.
+    let out = h.fire_hook(&s, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::StartReceiver));
+}
+
 /// **Scenario**: Narration for session A is not visible to session B,
 /// even if B is the active listener.
 ///

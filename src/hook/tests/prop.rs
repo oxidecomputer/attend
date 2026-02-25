@@ -33,6 +33,9 @@ enum Op {
     Activate(usize),
     /// Write a pending narration file for session `n`.
     WritePending(usize),
+    /// Write a pending narration file whose content will be filtered out
+    /// during delivery (path outside cwd). Exercises the livelock bug path.
+    WriteUndeliverablePending(usize),
     /// Start a fake background receiver (write lock with live PID).
     StartReceiver,
     /// Kill the fake receiver (remove lock file).
@@ -54,6 +57,7 @@ fn op_strategy() -> impl Strategy<Value = Op> {
     prop_oneof![
         3 => (0..NUM_SESSIONS).prop_map(Op::Activate),
         2 => (0..NUM_SESSIONS).prop_map(Op::WritePending),
+        2 => (0..NUM_SESSIONS).prop_map(Op::WriteUndeliverablePending),
         1 => Just(Op::StartReceiver),
         1 => Just(Op::KillReceiver),
         8 => (0..NUM_SESSIONS, 0..3usize, any::<bool>()).prop_map(|(s, ht_idx, listen)| {
@@ -67,6 +71,18 @@ fn op_strategy() -> impl Strategy<Value = Op> {
             }
         }),
     ]
+}
+
+/// Whether a session has pending narration, and if so, whether it's
+/// deliverable (contains renderable content after cwd filtering).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PendingKind {
+    /// No pending files.
+    None,
+    /// Files exist but all content will be filtered out by cwd.
+    Undeliverable,
+    /// Files exist with at least some deliverable content.
+    Deliverable,
 }
 
 /// Oracle model: mirrors the filesystem state that `check_narration` reads
@@ -83,8 +99,8 @@ struct OracleModel {
     moved_notified: [bool; NUM_SESSIONS],
     /// Whether the receiver process is alive.
     receiver_alive: bool,
-    /// Whether each session has undelivered pending narration.
-    has_pending: [bool; NUM_SESSIONS],
+    /// What kind of pending narration each session has.
+    pending: [PendingKind; NUM_SESSIONS],
 }
 
 impl OracleModel {
@@ -94,7 +110,7 @@ impl OracleModel {
             activated: [false; NUM_SESSIONS],
             moved_notified: [false; NUM_SESSIONS],
             receiver_alive: false,
-            has_pending: [false; NUM_SESSIONS],
+            pending: [PendingKind::None; NUM_SESSIONS],
         }
     }
 
@@ -105,7 +121,17 @@ impl OracleModel {
     }
 
     fn write_pending(&mut self, session: usize) {
-        self.has_pending[session] = true;
+        // Deliverable content: overrides any prior state.
+        self.pending[session] = PendingKind::Deliverable;
+    }
+
+    fn write_undeliverable_pending(&mut self, session: usize) {
+        // Only set to Undeliverable if nothing is pending yet.
+        // If deliverable content already exists, the combined set is
+        // still deliverable (read_pending finds the deliverable events).
+        if self.pending[session] == PendingKind::None {
+            self.pending[session] = PendingKind::Undeliverable;
+        }
     }
 
     fn start_receiver(&mut self) {
@@ -114,6 +140,10 @@ impl OracleModel {
 
     fn kill_receiver(&mut self) {
         self.receiver_alive = false;
+    }
+
+    fn has_pending(&self, session: usize) -> bool {
+        self.pending[session] != PendingKind::None
     }
 
     fn relation(&self, session: usize) -> SessionRelation {
@@ -208,31 +238,63 @@ impl OracleModel {
 
         if is_listen {
             // attend listen PreToolUse on active session.
-            if self.has_pending[session] {
-                // Delivery path: pending narration is read, rendered, and
-                // delivered in one round trip. Pending files are archived.
-                self.assert_narration(outcome, "active listen delivery");
-                self.has_pending[session] = false;
-            } else if self.receiver_alive {
-                // Duplicate listener prevention.
-                self.assert_decision(
-                    outcome,
-                    &HookDecision::block(GuidanceReason::ListenerAlreadyActive),
-                    "active listen (receiver alive)",
-                );
-            } else {
-                // No pending, no receiver: let the listener start silently.
-                self.assert_decision(
-                    outcome,
-                    &HookDecision::Silent,
-                    "active listen (clean startup)",
-                );
+            match self.pending[session] {
+                PendingKind::Deliverable => {
+                    // Delivery path: pending narration is read, rendered,
+                    // and delivered in one round trip. All files archived.
+                    self.assert_narration(outcome, "active listen delivery");
+                    self.pending[session] = PendingKind::None;
+                }
+                PendingKind::Undeliverable => {
+                    // Files exist but read_pending returns None (content
+                    // filtered out). The fix archives them anyway, clearing
+                    // the pending state. Then falls through to receiver/
+                    // silent check.
+                    self.pending[session] = PendingKind::None;
+                    if self.receiver_alive {
+                        self.assert_decision(
+                            outcome,
+                            &HookDecision::block(GuidanceReason::ListenerAlreadyActive),
+                            "active listen (undeliverable, receiver alive)",
+                        );
+                    } else {
+                        self.assert_decision(
+                            outcome,
+                            &HookDecision::Silent,
+                            "active listen (undeliverable, clean startup)",
+                        );
+                    }
+                }
+                PendingKind::None => {
+                    if self.receiver_alive {
+                        // Duplicate listener prevention.
+                        self.assert_decision(
+                            outcome,
+                            &HookDecision::block(GuidanceReason::ListenerAlreadyActive),
+                            "active listen (receiver alive)",
+                        );
+                    } else {
+                        // No pending, no receiver: let the listener start.
+                        self.assert_decision(
+                            outcome,
+                            &HookDecision::Silent,
+                            "active listen (clean startup)",
+                        );
+                    }
+                }
             }
         } else {
             // General (non-listen) hook on active session.
-            if self.has_pending[session] {
-                // Pending narration blocks all hooks to force the agent
-                // to run `attend listen` before continuing.
+            //
+            // Undeliverable pending is cleaned up eagerly: the general
+            // hook archives filtered-out files and treats them as absent.
+            // Only deliverable pending triggers NarrationReady.
+            if self.pending[session] == PendingKind::Undeliverable {
+                self.pending[session] = PendingKind::None;
+            }
+            if self.has_pending(session) {
+                // Deliverable pending blocks all hooks to force the agent
+                // to run `attend listen` first.
                 self.assert_decision(
                     outcome,
                     &HookDecision::block(GuidanceReason::NarrationReady),
@@ -287,7 +349,7 @@ impl std::fmt::Debug for OracleModel {
             .field("activated", &self.activated)
             .field("moved_notified", &self.moved_notified)
             .field("receiver_alive", &self.receiver_alive)
-            .field("has_pending", &self.has_pending)
+            .field("pending", &self.pending)
             .finish()
     }
 }
@@ -317,6 +379,10 @@ proptest! {
                     h.write_pending(&sessions[*s], "test narration");
                     model.write_pending(*s);
                 }
+                Op::WriteUndeliverablePending(s) => {
+                    h.write_undeliverable_pending(&sessions[*s]);
+                    model.write_undeliverable_pending(*s);
+                }
                 Op::StartReceiver => {
                     if receiver_guard.is_none() {
                         receiver_guard = Some(h.fake_receiver());
@@ -343,6 +409,95 @@ proptest! {
                     );
                     model.check_and_update(*session, *hook_type, *is_listen, &outcome);
                 }
+            }
+        }
+    }
+
+    /// **Progress property**: no sequence of general hook → attend listen →
+    /// general hook can produce NarrationReady twice without new content
+    /// being written between the two general hooks.
+    ///
+    /// This is the livelock invariant. If NarrationReady fires, the agent
+    /// runs `attend listen`. After that, pending must be cleared (either
+    /// delivered or archived as undeliverable). A subsequent general hook
+    /// that returns NarrationReady again means the agent is stuck.
+    ///
+    /// The property also checks that undeliverable pending never triggers
+    /// NarrationReady in the first place: the general hook should detect
+    /// undeliverable files, archive them, and report no pending.
+    #[test]
+    fn no_livelock_possible(
+        has_deliverable in any::<bool>(),
+        has_undeliverable in any::<bool>(),
+        receiver_alive in any::<bool>(),
+    ) {
+        // Only interesting when there's some pending content.
+        prop_assume!(has_deliverable || has_undeliverable);
+
+        let h = TestHarness::new();
+        let s: SessionId = "progress-test".into();
+        h.activate(&s);
+
+        // Set up receiver state.
+        let _receiver = if receiver_alive {
+            Some(h.fake_receiver())
+        } else {
+            None
+        };
+
+        // Write pending content based on the flags.
+        if has_deliverable {
+            h.write_pending(&s, "deliverable content");
+        }
+        if has_undeliverable {
+            h.write_undeliverable_pending(&s);
+        }
+
+        // Step 1: General hook. If only undeliverable content exists,
+        // it should be archived and NOT trigger NarrationReady.
+        let out = h.fire_hook(&s, HookType::PreToolUse, false, false);
+        let first_was_narration_ready = matches!(
+            &out,
+            Outcome::Decision(HookDecision::Guidance {
+                reason: GuidanceReason::NarrationReady,
+                ..
+            })
+        );
+
+        if !has_deliverable {
+            // Undeliverable-only pending must not trigger NarrationReady.
+            assert!(
+                !first_was_narration_ready,
+                "undeliverable pending should not trigger NarrationReady. \
+                 receiver_alive={receiver_alive}"
+            );
+            return Ok(()); // Nothing more to check.
+        }
+
+        // Deliverable pending: NarrationReady should fire.
+        assert!(
+            first_was_narration_ready,
+            "deliverable pending should trigger NarrationReady"
+        );
+
+        // Step 2: Agent follows guidance, runs attend listen.
+        let _out = h.fire_hook(&s, HookType::PreToolUse, true, false);
+
+        // Step 3: The critical progress check. No NarrationReady after
+        // attend listen consumed the pending content.
+        let out = h.fire_hook(&s, HookType::PreToolUse, false, false);
+        match &out {
+            Outcome::Decision(d) => {
+                assert_ne!(
+                    d,
+                    &HookDecision::block(GuidanceReason::NarrationReady),
+                    "LIVELOCK: attend listen did not clear pending narration. \
+                     has_deliverable={has_deliverable}, has_undeliverable={has_undeliverable}, \
+                     receiver_alive={receiver_alive}"
+                );
+            }
+            Outcome::Narration(_) => {
+                panic!("general hook should not deliver narration");
             }
         }
     }

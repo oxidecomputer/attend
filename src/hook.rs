@@ -246,6 +246,14 @@ fn handle_listen_hook(
                 crate::narrate::receive::auto_prune(&config);
                 return agent.deliver_narration(&content);
             }
+            // Files exist but produced no deliverable content (filtered
+            // out by cwd, empty, or malformed). Archive them so they
+            // can't trigger a livelock if general_hook's check races
+            // with this one (defense-in-depth: general_hook does the
+            // same cleanup, but belt-and-suspenders here too).
+            if !files.is_empty() {
+                crate::narrate::receive::archive_pending(&files, session_id);
+            }
             if receiver_alive() {
                 return agent.attend_result(
                     &HookDecision::block(GuidanceReason::ListenerAlreadyActive),
@@ -272,7 +280,23 @@ fn handle_general_hook(
 ) -> anyhow::Result<()> {
     let has_pending = matches!(relation, SessionRelation::Active) && {
         let session_id = listening.unwrap();
-        !crate::narrate::receive::collect_pending(session_id).is_empty()
+        let cwd = resolve_cwd(input);
+        let config = crate::config::Config::load(&cwd);
+        let files = crate::narrate::receive::collect_pending(session_id);
+        if files.is_empty() {
+            false
+        } else if crate::narrate::receive::read_pending(&files, Some(&cwd), &config.include_dirs)
+            .is_some()
+        {
+            true
+        } else {
+            // Files exist but produced no deliverable content (filtered
+            // out by cwd, empty, or malformed). Archive them so they
+            // don't keep triggering NarrationReady blocks on every
+            // subsequent hook, which would livelock the agent.
+            crate::narrate::receive::archive_pending(&files, session_id);
+            false
+        }
     };
 
     let stop_hook_active =
