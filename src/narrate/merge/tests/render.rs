@@ -563,7 +563,7 @@ fn shell_command_with_cwd() {
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
     assert!(
-        md.contains("# in subdir/nested\n"),
+        md.contains("# in subdir/nested/\n"),
         "should show cwd comment: {md:?}"
     );
 }

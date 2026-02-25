@@ -270,7 +270,7 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                 out.push_str(&format!("```{shell}\n"));
                 // Show the working directory when it's not the project root.
                 if !cwd.is_empty() && cwd != "." {
-                    out.push_str(&format!("# in {cwd}\n"));
+                    out.push_str(&format!("# in {cwd}/\n"));
                 }
                 out.push_str(command);
                 // Append exit status and duration as a trailing shell comment
