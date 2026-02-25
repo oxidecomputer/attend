@@ -575,22 +575,22 @@ fn ext_selection_mixed_with_snapshots() {
     assert!(has_ext, "external selection survives");
 }
 
-/// ExternalSelection renders as a blockquote.
+/// ExternalSelection renders as attribution label above blockquote.
 #[test]
 fn ext_selection_renders_blockquote() {
     let mut events = vec![ext_sel(1.0, "iTerm2", "error[E0308]: mismatched types")];
     let md = format_markdown(&mut events, SnipConfig::default());
     assert!(
-        md.contains("> [iTerm2: window]"),
-        "should have source annotation"
+        md.contains("iTerm2: window:\n"),
+        "should have source label: {md:?}"
     );
     assert!(
-        md.contains("error[E0308]: mismatched types"),
-        "should contain the text"
+        md.contains("> error[E0308]: mismatched types"),
+        "should contain the text as blockquote: {md:?}"
     );
 }
 
-/// ExternalSelection with empty window title omits the colon-separator.
+/// ExternalSelection with empty window title uses app name only.
 #[test]
 fn ext_selection_empty_window_title() {
     let mut events = vec![Event::ExternalSelection {
@@ -600,9 +600,10 @@ fn ext_selection_empty_window_title() {
         text: "some text".to_string(),
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
+    assert!(md.contains("Safari:\n"), "should use app name only: {md:?}");
     assert!(
-        md.contains("> [Safari]"),
-        "should use app name only: {md:?}"
+        md.contains("> some text"),
+        "text should be blockquoted: {md:?}"
     );
 }
 
@@ -761,7 +762,7 @@ fn browser_selection_across_word_boundary() {
     assert_eq!(count, 2, "word boundary prevents merge");
 }
 
-/// BrowserSelection renders with link header and markdown content.
+/// BrowserSelection renders with link attribution above blockquoted content.
 #[test]
 fn browser_selection_renders_markdown() {
     let mut events = vec![browser_sel(
@@ -771,16 +772,16 @@ fn browser_selection_renders_markdown() {
     )];
     let md = format_markdown(&mut events, SnipConfig::default());
     assert!(
-        md.contains("> [Page Title](https://docs.rs/tokio)"),
-        "link header: {md:?}"
+        md.contains("[Page Title](https://docs.rs/tokio):\n"),
+        "link attribution: {md:?}"
     );
     assert!(
-        md.contains("**bold** and [a link](https://example.com)"),
-        "markdown content: {md:?}"
+        md.contains("> **bold** and [a link](https://example.com)"),
+        "markdown content blockquoted: {md:?}"
     );
 }
 
-/// BrowserSelection with empty title uses bare URL.
+/// BrowserSelection with empty title uses bare URL as attribution.
 #[test]
 fn browser_selection_empty_title() {
     let mut events = vec![Event::BrowserSelection {
@@ -791,7 +792,7 @@ fn browser_selection_empty_title() {
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
     assert!(
-        md.contains("> <https://example.com>"),
+        md.contains("<https://example.com>:\n"),
         "bare URL when no title: {md:?}"
     );
 }

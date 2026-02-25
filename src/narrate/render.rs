@@ -127,8 +127,11 @@ fn clean_whisper_text(raw: &str) -> String {
 ///
 /// The output interleaves prose text with fenced code/diff blocks:
 /// - Words become flowing prose text
-/// - Editor snapshots become fenced code blocks with `// path:line` headers
-/// - File diffs become fenced diff blocks with `// path` headers
+/// - Editor snapshots become fenced code blocks with `` `path:line`: `` labels
+/// - File diffs become fenced diff blocks with `` `path`: `` labels
+/// - Shell commands become fenced code blocks with `$ ` command prefix
+/// - External selections become attributed blockquotes
+/// - Browser selections become link-attributed blockquotes
 pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
     let mut out = String::new();
     let mut in_prose = false;
@@ -166,11 +169,11 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                         &region.selections,
                     );
                     let snipped = snip(&annotated, snip_cfg, Some(region.first_line as usize));
+                    out.push_str(&format!("`{}:{}`:\n", region.path, region.first_line));
                     match &region.language {
                         Some(lang) => out.push_str(&format!("```{lang}\n")),
                         None => out.push_str("```\n"),
                     }
-                    out.push_str(&format!("// {}:{}\n", region.path, region.first_line));
                     out.push_str(&snipped);
                     if !snipped.ends_with('\n') {
                         out.push('\n');
@@ -191,8 +194,8 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                     out.push('\n');
                 }
                 out.push('\n');
+                out.push_str(&format!("`{path}`:\n"));
                 out.push_str("```diff\n");
-                out.push_str(&format!("// {path}\n"));
                 // Diffs are not snipped: they represent transient on-disk state
                 // that cannot be reconstructed after the fact.
                 out.push_str(&diff);
@@ -215,15 +218,17 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                     out.push('\n');
                 }
                 out.push('\n');
-                // Render as a blockquote with source annotation.
+                // Render as attribution label above a blockquote.
                 // External selections are not snipped: they represent ephemeral
                 // state (accessibility API) that cannot be reconstructed.
-                let source = if window_title.is_empty() {
-                    app.to_string()
+                if window_title.is_empty() {
+                    out.push_str(&format!("{app}:\n"));
                 } else {
-                    format!("{app}: {window_title}")
-                };
-                out.push_str(&format!("> [{source}] \"{}\"\n", text.trim()));
+                    out.push_str(&format!("{app}: {window_title}:\n"));
+                }
+                for line in text.trim().lines() {
+                    out.push_str(&format!("> {line}\n"));
+                }
             }
             Event::BrowserSelection {
                 url, title, text, ..
@@ -241,14 +246,15 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                 // The text field contains markdown converted from HTML by the
                 // browser bridge (via htmd).
                 if title.is_empty() {
-                    out.push_str(&format!("> <{url}>\n"));
+                    out.push_str(&format!("<{url}>:\n"));
                 } else {
-                    out.push_str(&format!("> [{title}]({url})\n"));
+                    out.push_str(&format!("[{title}]({url}):\n"));
                 }
                 let trimmed = text.trim();
                 if !trimmed.is_empty() {
-                    out.push_str(trimmed);
-                    out.push('\n');
+                    for line in trimmed.lines() {
+                        out.push_str(&format!("> {line}\n"));
+                    }
                 }
             }
             Event::ShellCommand {
@@ -272,7 +278,7 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                 if !cwd.is_empty() && cwd != "." {
                     out.push_str(&format!("# in {cwd}/\n"));
                 }
-                out.push_str(command);
+                out.push_str(&format!("$ {command}"));
                 // Append exit status and duration as a trailing shell comment
                 // for token efficiency. Omit when exit 0 and < 1s (trivial).
                 match (exit_status, duration_secs) {

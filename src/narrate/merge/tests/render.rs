@@ -52,8 +52,8 @@ fn words_with_code() {
     let expected = "\
 Look at this function
 
+`src/main.rs:1`:
 ```
-// src/main.rs:1
 fn main() {
     println!(\"hello\");
 }
@@ -83,8 +83,8 @@ fn diff_event() {
     let expected = "\
 I just changed this
 
+`src/lib.rs`:
 ```diff
-// src/lib.rs
 -    pub timeout: u64,
 +    pub timeout: Duration,
 ```
@@ -144,7 +144,7 @@ fn code_only_no_prose() {
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
     let expected =
-        "\n```\n// src/lib.rs:42\npub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n```\n";
+        "\n`src/lib.rs:42`:\n```\npub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n```\n";
     assert_eq!(md, expected);
 }
 
@@ -172,8 +172,8 @@ fn multiple_files_in_snapshot() {
         ],
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
-    assert!(md.contains("```\n// src/a.py:1"));
-    assert!(md.contains("```\n// src/b.js:10"));
+    assert!(md.contains("`src/a.py:1`:\n```"));
+    assert!(md.contains("`src/b.js:10`:\n```"));
 }
 
 /// Full rendering scenario: prose, code, prose, code, prose, diff, prose (snapshot test).
@@ -245,7 +245,7 @@ fn prose_after_diff() {
         },
     ];
     let md = format_markdown(&mut events, SnipConfig::default());
-    assert!(md.contains("```diff\n// foo.rs\n+new line\n```\n"));
+    assert!(md.contains("`foo.rs`:\n```diff\n+new line\n```\n"));
     assert!(md.contains("\nthat was the change\n"));
 }
 
@@ -492,7 +492,10 @@ fn shell_command_postexec_failure() {
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
     assert!(md.contains("```fish\n"), "should have fish language tag");
-    assert!(md.contains("cargo test"), "should have command text");
+    assert!(
+        md.contains("$ cargo test"),
+        "should have $ prefixed command"
+    );
     assert!(
         md.contains("# exit 1, 3.2s"),
         "should have exit+duration comment: {md:?}"
@@ -512,7 +515,10 @@ fn shell_command_postexec_fast_success() {
         duration_secs: Some(0.3),
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
-    assert!(md.contains("cargo fmt\n```"), "no trailing comment: {md:?}");
+    assert!(
+        md.contains("$ cargo fmt\n```"),
+        "no trailing comment: {md:?}"
+    );
     assert!(!md.contains("# exit"), "no exit comment for fast success");
 }
 
@@ -547,7 +553,7 @@ fn shell_command_preexec() {
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
     assert!(md.contains("```zsh\n"), "should have zsh language tag");
-    assert!(md.contains("cargo test\n```"), "no trailing comment");
+    assert!(md.contains("$ cargo test\n```"), "no trailing comment");
 }
 
 /// Shell command with non-project cwd shows directory comment.
@@ -628,7 +634,7 @@ fn bare_fence_when_no_language() {
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
     assert!(
-        md.contains("```\n// src/main.rs"),
+        md.contains("`src/main.rs:1`:\n```\n"),
         "fence should be bare when no language: {md:?}"
     );
     assert!(

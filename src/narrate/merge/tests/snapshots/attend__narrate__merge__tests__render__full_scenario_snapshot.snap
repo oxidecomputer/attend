@@ -1,11 +1,12 @@
 ---
 source: src/narrate/merge/tests/render.rs
+assertion_line: 229
 expression: md
 ---
 Please look at this function
 
+`src/main.rs:42`:
 ```
-// src/main.rs:42
 fn parse_config(path: &Path) -> Result<Config> {
     let raw = std::fs::read_to_string(path)?;
     toml::from_str(&raw)
@@ -14,8 +15,8 @@ fn parse_config(path: &Path) -> Result<Config> {
 
 and refactor it to use this struct
 
+`src/lib.rs:8`:
 ```
-// src/lib.rs:8
 pub struct Config {
     pub name: String,
     pub timeout: Duration,
@@ -24,8 +25,8 @@ pub struct Config {
 
 I just changed the timeout field
 
+`src/lib.rs`:
 ```diff
-// src/lib.rs
 -    pub timeout: u64,
 +    pub timeout: Duration,
 ```

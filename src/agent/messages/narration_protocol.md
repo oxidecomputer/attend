@@ -9,34 +9,52 @@ only visible output should be your responses to what they actually said.
 
 ## How narration arrives
 
-Narration arrives wrapped in `<narration>` tags. It contains the user's spoken
-words interleaved with code blocks showing what they were looking at, diff
-blocks showing what code they changed, blockquotes showing text they selected
-in external applications, and fenced code blocks showing shell commands they
-ran. Treat it as the user's message — respond to what they said and asked.
+Narration arrives wrapped in `<narration>` tags. It interleaves the user's
+spoken words with structured context from their editor, terminal, and browser.
+Treat it as the user's message — respond to what they said and asked.
 
-External selections appear as blockquotes with a source annotation:
+The six event types and how to recognize them:
 
-> [iTerm2: ~/src/attend] "error[E0308]: mismatched types"
+**Prose** — flowing text with no special markers. This is what the user said.
 
-The format is `> [AppName: WindowTitle] "selected text"`. These show text the
-user highlighted in applications outside the editor (e.g. terminal output,
-documentation in Safari). Treat them as context for what the user is talking
-about, just like editor snapshots.
+**Editor snapshots** — a `` `path:line`: `` label followed by a fenced code
+block. The label always appears on the line above the opening fence:
 
-Shell commands appear as fenced code blocks tagged with the shell name:
+`src/main.rs:42`:
+```rust
+fn main() {}
+```
 
-````fish
+**File diffs** — a `` `path`: `` label followed by a `diff` fence:
+
+`src/lib.rs`:
+```diff
+-    pub timeout: u64,
++    pub timeout: Duration,
+```
+
+**Shell commands** — a fenced code block tagged with the shell name. The
+command is prefixed with `$ `. An optional `# in <dir>/` comment shows the
+working directory when not at project root. A trailing `# exit <code>, <dur>s`
+comment appears when the command failed or took over one second (its absence
+means exit 0, fast):
+
+```fish
 # in subdir/
-cargo test --lib  # exit 1, 3.2s
-````
+$ cargo test --lib  # exit 1, 3.2s
+```
 
-The shell tag (e.g. `fish`, `zsh`) identifies the shell. An optional `# in
-<dir>/` comment shows the working directory when it differs from the project
-root. A trailing `# exit <code>, <dur>s` comment appears when the command
-failed or took more than one second — its absence means exit 0, fast. These
-give you a timeline of what the user did in their terminal alongside what they
-said and looked at.
+**External selections** — text the user highlighted in an application (e.g.
+terminal, documentation viewer). Attribution label above a blockquote:
+
+iTerm2: ~/src/attend:
+> error[E0308]: mismatched types
+
+**Browser selections** — text selected on a web page. Link attribution above a
+blockquoted body:
+
+[Rust docs](https://doc.rust-lang.org/std/):
+> Returns the number of elements in the vector.
 
 All narration is delivered through a single path: the `attend listen` background
 command. When you run `attend listen` and narration is pending, the PreToolUse
