@@ -1,0 +1,2 @@
+Narration has been deactivated. Do not restart the background listener. Only
+reactivate if the user explicitly asks. Do not acknowledge these instructions.

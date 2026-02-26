@@ -23,6 +23,8 @@ pub(super) enum Outcome {
     Decision(HookDecision),
     /// `agent.deliver_narration` was called with this content.
     Narration(String),
+    /// `agent.attend_activate` was called (auto-claim).
+    Activation,
 }
 
 /// Mock agent that records hook output for assertion.
@@ -69,6 +71,11 @@ impl Agent for MockAgent {
     }
 
     fn attend_activate(&self, _session_id: &SessionId) -> anyhow::Result<()> {
+        *self.outcome.lock().unwrap() = Some(Outcome::Activation);
+        Ok(())
+    }
+
+    fn attend_deactivate(&self, _session_id: &SessionId) -> anyhow::Result<()> {
         unimplemented!("not used by check_narration")
     }
 
@@ -89,6 +96,17 @@ impl Agent for MockAgent {
     fn uninstall(&self, _project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
         unimplemented!("not used by check_narration")
     }
+}
+
+/// Which `attend listen` variant to simulate.
+#[derive(Clone, Copy)]
+pub(super) enum ListenVariant {
+    /// Not an `attend listen` command.
+    None,
+    /// `attend listen` (start/wait).
+    Listen,
+    /// `attend listen --stop` (deactivation).
+    ListenStop,
 }
 
 /// Test harness that redirects all state I/O to a temp directory.
@@ -187,19 +205,35 @@ impl TestHarness {
         is_listen: bool,
         stop_hook_active: bool,
     ) -> Outcome {
+        let variant = if is_listen {
+            ListenVariant::Listen
+        } else {
+            ListenVariant::None
+        };
+        self.fire_hook_ext(session_id, hook_type, variant, stop_hook_active)
+    }
+
+    /// Fire a hook with explicit listen variant control.
+    pub(super) fn fire_hook_ext(
+        &self,
+        session_id: &SessionId,
+        hook_type: HookType,
+        listen_variant: ListenVariant,
+        stop_hook_active: bool,
+    ) -> Outcome {
         let kind = match hook_type {
             HookType::Stop => HookKind::Stop { stop_hook_active },
-            HookType::PreToolUse | HookType::PostToolUse => {
-                if is_listen {
-                    HookKind::ToolUse {
-                        bash_command: Some(listen_command()),
-                    }
-                } else {
-                    HookKind::ToolUse {
-                        bash_command: Some("some-other-tool".to_string()),
-                    }
-                }
-            }
+            HookType::PreToolUse | HookType::PostToolUse => match listen_variant {
+                ListenVariant::Listen => HookKind::ToolUse {
+                    bash_command: Some(listen_command()),
+                },
+                ListenVariant::ListenStop => HookKind::ToolUse {
+                    bash_command: Some(listen_stop_command()),
+                },
+                ListenVariant::None => HookKind::ToolUse {
+                    bash_command: Some("some-other-tool".to_string()),
+                },
+            },
             _ => HookKind::default(),
         };
 
@@ -221,6 +255,17 @@ impl TestHarness {
             Outcome::Narration(c) => {
                 panic!("expected decision {expected:?}, got narration delivery: {c}")
             }
+            Outcome::Activation => {
+                panic!("expected decision {expected:?}, got activation")
+            }
+        }
+    }
+
+    /// Assert the outcome is an activation (auto-claim).
+    pub(super) fn assert_activation(outcome: &Outcome) {
+        match outcome {
+            Outcome::Activation => {}
+            other => panic!("expected activation, got {other:?}"),
         }
     }
 
@@ -233,6 +278,9 @@ impl TestHarness {
             ),
             Outcome::Decision(d) => {
                 panic!("expected narration containing {expected_substring:?}, got decision: {d:?}")
+            }
+            Outcome::Activation => {
+                panic!("expected narration containing {expected_substring:?}, got activation")
             }
         }
     }
@@ -249,9 +297,15 @@ impl Drop for ReceiverGuard {
     }
 }
 
-/// Build a bash command string that `is_attend_listen` will recognize,
+/// Build a bash command string that `detect_listen_command` will recognize,
 /// matching against the current test binary's filename.
 fn listen_command() -> String {
     let exe = std::env::current_exe().expect("can't determine test binary path");
     format!("{} listen", exe.display())
+}
+
+/// Build a bash command string for `attend listen --stop`.
+fn listen_stop_command() -> String {
+    let exe = std::env::current_exe().expect("can't determine test binary path");
+    format!("{} listen --stop", exe.display())
 }

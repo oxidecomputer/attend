@@ -32,6 +32,10 @@ impl Agent for Claude {
         output::attend_activate(session_id)
     }
 
+    fn attend_deactivate(&self, session_id: &SessionId) -> anyhow::Result<()> {
+        output::attend_deactivate(session_id)
+    }
+
     fn deliver_narration(&self, content: &str) -> anyhow::Result<()> {
         output::deliver_narration(content)
     }

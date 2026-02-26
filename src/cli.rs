@@ -168,6 +168,10 @@ pub enum Command {
         /// Session ID (defaults to listening file).
         #[arg(long)]
         session: Option<String>,
+
+        /// Deactivate narration: remove the listening file and exit.
+        #[arg(long)]
+        stop: bool,
     },
     /// Respond to agent lifecycle events (used by installed hooks).
     #[command(display_order = 10, subcommand)]
@@ -254,10 +258,18 @@ impl Command {
                 None,
                 None,
             ),
-            Command::Listen { check, session } => {
-                // check → one-shot (old `receive` without --wait)
-                // default → wait (old `receive --wait`)
-                crate::narrate::receive::run(!check, session)
+            Command::Listen {
+                check,
+                session,
+                stop,
+            } => {
+                if stop {
+                    crate::narrate::receive::stop()
+                } else {
+                    // check → one-shot (old `receive` without --wait)
+                    // default → wait (old `receive --wait`)
+                    crate::narrate::receive::run(!check, session)
+                }
             }
             Command::Narrate(cmd) => cmd.run(),
             Command::Hook(event) => event.run(),

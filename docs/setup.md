@@ -100,6 +100,10 @@ In Claude Code, this is done with the `/attend` slash-command. If you use
 multiple Claude Code sessions, you can move narration from one session to
 another by invoking `/attend` in whichever session you'd like to switch to.
 
+To stop narration, use the `/unattend` slash-command, or ask the agent to
+stop listening (it will run `attend listen --stop` on your behalf). The
+running background listener detects the change and exits naturally.
+
 Insofar as the agent doesn't ask for keyboard input (i.e. by presenting a plan,
 asking a multiple choice question, or requesting permission to do an action),
 you need never leave your focused editor, because you can narrate your responses

@@ -68,6 +68,7 @@ Guidance reasons:
 | `NarrationReady`        | Pending narration: agent should run `attend listen`|
 | `ListenerAlreadyActive` | A listener is already running for this session     |
 | `ListenerStarted`       | A listener was just started in the background      |
+| `Deactivated`           | Narration was deactivated via `attend listen --stop`|
 
 ## 1. Create the agent module — `src/agent/<name>/`
 
@@ -108,6 +109,11 @@ impl Agent for Name {
 
     fn attend_activate(&self, session_id: &SessionId) -> anyhow::Result<()> {
         // Acknowledge narration activation to stdout.
+        Ok(())
+    }
+
+    fn attend_deactivate(&self, session_id: &SessionId) -> anyhow::Result<()> {
+        // Acknowledge narration deactivation to stdout.
         Ok(())
     }
 
@@ -182,9 +188,11 @@ all agents. Use `include_str!` to embed them:
 | `narration_protocol.md` | Full narration protocol: silence requirement, two delivery paths, receiver restart behavior, `<narration>` tag format, cursor-only handling, `include_dirs` | None |
 | `narration_pause.txt` | "Pause and consider narration before using tools" | None |
 | `activate_response.txt` | Confirmation when narration is activated | None |
+| `deactivate_response.txt` | Confirmation when narration is deactivated | None |
 | `guidance_session_moved.txt` | "Narration moved to another session" | None |
 | `guidance_start_receiver.txt` | "Start the receiver" nudge | None |
 | `guidance_listener_active.txt` | "Listener already running" | None |
+| `guidance_deactivated.txt` | "Narration deactivated" | None |
 
 These cover the attend protocol — what narration is, how to behave, what
 operational messages mean. Your agent gets all of this for free.
@@ -213,6 +221,8 @@ At minimum, your agent should:
 2. **On narration activation**: emit `activate_response.txt` so the agent
    knows to start listening. Include your own activation instructions
    explaining how to run `attend listen` in your agent's execution model.
+3. **On narration deactivation**: emit `deactivate_response.txt` so the
+   agent knows to stop its background receiver.
 3. **On narration re-emission** (session start with `is_listening = true`):
    re-emit narration instructions so the agent restarts the receiver after
    context compaction or clear.

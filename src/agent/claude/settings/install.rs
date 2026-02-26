@@ -182,16 +182,15 @@ pub fn install(bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()
     Ok(())
 }
 
-/// Install the SKILL.md file for `/attend` discoverability.
+/// Install SKILL.md files for `/attend` and `/unattend` discoverability.
 fn install_skill_file(bin_cmd: &str, project: Option<&Path>) -> anyhow::Result<()> {
     let base = if let Some(proj) = project {
         proj.to_path_buf()
     } else {
         dirs::home_dir().context("cannot determine home directory")?
     };
-    let skill_dir = base.join(".claude/skills/attend");
-    fs::create_dir_all(&skill_dir)?;
 
+    // /attend skill
     let protocol = include_str!("../../messages/narration_protocol.md");
     let skill_content = format!(
         "{}{}",
@@ -206,6 +205,15 @@ fn install_skill_file(bin_cmd: &str, project: Option<&Path>) -> anyhow::Result<(
         ),
     );
 
-    crate::util::atomic_write_str(skill_dir.join("SKILL.md"), &skill_content)?;
+    let attend_dir = base.join(".claude/skills/attend");
+    crate::util::atomic_replace_dir(&attend_dir, &[("SKILL.md", &skill_content)])?;
+
+    // /unattend skill (frontmatter only — the UserPromptSubmit hook
+    // handles everything; this file just makes /unattend discoverable
+    // in the completion list)
+    let unattend_content = include_str!("../messages/skill_unattend_frontmatter.md");
+    let unattend_dir = base.join(".claude/skills/unattend");
+    crate::util::atomic_replace_dir(&unattend_dir, &[("SKILL.md", unattend_content)])?;
+
     Ok(())
 }

@@ -1,7 +1,7 @@
 use proptest::prelude::*;
 
 use super::super::*;
-use super::harness::{ReceiverGuard, TestHarness};
+use super::harness::{ListenVariant, ReceiverGuard, TestHarness};
 use crate::state::SessionId;
 use decision::SessionRelation;
 
@@ -26,6 +26,17 @@ const SESSION_NAMES: [&str; NUM_SESSIONS] = ["s0", "s1", "s2"];
 /// Re-imported from harness for pattern matching in the oracle.
 use super::harness::Outcome;
 
+/// Which listen variant to simulate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ListenKind {
+    /// Not an `attend listen` command.
+    None,
+    /// `attend listen` (start/wait).
+    Listen,
+    /// `attend listen --stop` (deactivation).
+    ListenStop,
+}
+
 /// A random operation on the hook state machine.
 #[derive(Debug, Clone)]
 enum Op {
@@ -44,15 +55,15 @@ enum Op {
     FireHook {
         session: usize,
         hook_type: HookType,
-        is_listen: bool,
+        listen_kind: ListenKind,
     },
 }
 
 /// Strategy that generates a single random operation.
 ///
 /// Session indices are drawn from `0..NUM_SESSIONS`. Hook types are drawn
-/// from the three types that reach `check_narration`. `is_listen` is only
-/// set for ToolUse hooks (Stop hooks don't have a tool name).
+/// from the three types that reach `check_narration`. Listen variants are
+/// drawn only for ToolUse hooks (Stop hooks don't have a tool name).
 fn op_strategy() -> impl Strategy<Value = Op> {
     prop_oneof![
         3 => (0..NUM_SESSIONS).prop_map(Op::Activate),
@@ -60,14 +71,22 @@ fn op_strategy() -> impl Strategy<Value = Op> {
         2 => (0..NUM_SESSIONS).prop_map(Op::WriteUndeliverablePending),
         1 => Just(Op::StartReceiver),
         1 => Just(Op::KillReceiver),
-        8 => (0..NUM_SESSIONS, 0..3usize, any::<bool>()).prop_map(|(s, ht_idx, listen)| {
+        8 => (0..NUM_SESSIONS, 0..3usize, 0..3usize).prop_map(|(s, ht_idx, listen_idx)| {
             let hook_type = ALL_HOOK_TYPES[ht_idx];
-            // is_listen only meaningful for ToolUse hooks, not Stop.
-            let is_listen = listen && hook_type != HookType::Stop;
+            // listen variants only meaningful for ToolUse hooks, not Stop.
+            let listen_kind = if hook_type == HookType::Stop {
+                ListenKind::None
+            } else {
+                match listen_idx {
+                    0 => ListenKind::None,
+                    1 => ListenKind::Listen,
+                    _ => ListenKind::ListenStop,
+                }
+            };
             Op::FireHook {
                 session: s,
                 hook_type,
-                is_listen,
+                listen_kind,
             }
         }),
     ]
@@ -158,25 +177,57 @@ impl OracleModel {
     /// model state for any side effects.
     ///
     /// This is a complete oracle: it encodes every reachable branch of
-    /// `check_narration` -> `handle_listen_hook` / `handle_general_hook`
-    /// -> `general_decision`, including the activation gate and the
-    /// SessionMoved ratchet. A mismatch means the code diverges from
-    /// the spec.
+    /// `check_narration` -> `handle_listen_hook` / `handle_unlisten_hook`
+    /// / `handle_general_hook` -> `general_decision`, including the
+    /// activation gate and the SessionMoved ratchet. A mismatch means
+    /// the code diverges from the spec.
     fn check_and_update(
         &mut self,
         session: usize,
         hook_type: HookType,
-        is_listen: bool,
+        listen_kind: ListenKind,
         outcome: &Outcome,
     ) {
         let relation = self.relation(session);
 
         // -- Activation gate --
         // Sessions that never ran `/attend` and aren't the active listener
-        // are invisible to the hook system. This is the first check in
-        // check_narration: if it fires, nothing else runs.
-        if relation != SessionRelation::Active && !self.activated[session] {
+        // are invisible to the hook system, UNLESS they're running
+        // `attend listen` (auto-claim path).
+        if relation != SessionRelation::Active
+            && !self.activated[session]
+            && listen_kind != ListenKind::Listen
+        {
             self.assert_decision(outcome, &HookDecision::Silent, "activation gate");
+            return;
+        }
+
+        // -- attend listen --stop --
+        if listen_kind == ListenKind::ListenStop {
+            if hook_type == HookType::PostToolUse {
+                // Command already ran, approve silently.
+                self.assert_decision(outcome, &HookDecision::Silent, "listen --stop PostToolUse");
+                return;
+            }
+            // PreToolUse
+            match relation {
+                SessionRelation::Active => {
+                    // Deactivate: remove listening file.
+                    self.listening = None;
+                    self.assert_decision(
+                        outcome,
+                        &HookDecision::approve(GuidanceReason::Deactivated),
+                        "listen --stop active",
+                    );
+                }
+                SessionRelation::Stolen | SessionRelation::Inactive => {
+                    self.assert_decision(
+                        outcome,
+                        &HookDecision::block(GuidanceReason::SessionMoved),
+                        "listen --stop non-owner",
+                    );
+                }
+            }
             return;
         }
 
@@ -184,7 +235,7 @@ impl OracleModel {
         // The command already ran. This fires before the relation check
         // in handle_listen_hook, so it applies to Active, Stolen, and
         // Inactive alike (as long as the session was activated).
-        if is_listen && hook_type == HookType::PostToolUse {
+        if listen_kind == ListenKind::Listen && hook_type == HookType::PostToolUse {
             self.assert_decision(
                 outcome,
                 &HookDecision::approve(GuidanceReason::ListenerStarted),
@@ -195,15 +246,21 @@ impl OracleModel {
 
         // -- Inactive (no listener exists) --
         // Both handle_listen_hook and handle_general_hook/general_decision
-        // return Silent for Inactive.
+        // return Silent for Inactive, except attend listen which auto-claims.
         if relation == SessionRelation::Inactive {
-            self.assert_decision(outcome, &HookDecision::Silent, "inactive");
+            if listen_kind == ListenKind::Listen && hook_type == HookType::PreToolUse {
+                // Auto-claim: activate the session.
+                self.activate(session);
+                self.assert_activation(outcome, "inactive listen auto-claim");
+            } else {
+                self.assert_decision(outcome, &HookDecision::Silent, "inactive");
+            }
             return;
         }
 
         // -- Stolen session --
         if relation == SessionRelation::Stolen {
-            if is_listen {
+            if listen_kind == ListenKind::Listen {
                 // Anti-livelock: attend listen is blocked for stolen sessions
                 // to prevent two sessions bouncing the listener back and forth.
                 self.assert_decision(
@@ -236,7 +293,7 @@ impl OracleModel {
         // -- Active session --
         assert_eq!(relation, SessionRelation::Active);
 
-        if is_listen {
+        if listen_kind == ListenKind::Listen {
             // attend listen PreToolUse on active session.
             match self.pending[session] {
                 PendingKind::Deliverable => {
@@ -328,6 +385,9 @@ impl OracleModel {
             Outcome::Narration(c) => {
                 panic!("[{label}] expected {expected:?}, got narration: {c}\nmodel={self:?}")
             }
+            Outcome::Activation => {
+                panic!("[{label}] expected {expected:?}, got activation\nmodel={self:?}")
+            }
         }
     }
 
@@ -337,6 +397,22 @@ impl OracleModel {
             Outcome::Narration(_) => {}
             Outcome::Decision(d) => {
                 panic!("[{label}] expected narration delivery, got {d:?}\nmodel={self:?}")
+            }
+            Outcome::Activation => {
+                panic!("[{label}] expected narration delivery, got activation\nmodel={self:?}")
+            }
+        }
+    }
+
+    /// Assert the outcome is an activation (auto-claim).
+    fn assert_activation(&self, outcome: &Outcome, label: &str) {
+        match outcome {
+            Outcome::Activation => {}
+            Outcome::Decision(d) => {
+                panic!("[{label}] expected activation, got {d:?}\nmodel={self:?}")
+            }
+            Outcome::Narration(c) => {
+                panic!("[{label}] expected activation, got narration: {c}\nmodel={self:?}")
             }
         }
     }
@@ -360,7 +436,7 @@ proptest! {
     ///
     /// The model is a complete oracle: it predicts the exact decision for
     /// every combination of (relation x activated x pending x receiver x
-    /// hook_type x is_listen x moved_notified). Any divergence is a bug,
+    /// hook_type x listen_kind x moved_notified). Any divergence is a bug,
     /// and proptest shrinking will find the minimal failing sequence.
     #[test]
     fn random_sequences_match_oracle(ops in prop::collection::vec(op_strategy(), 1..40)) {
@@ -398,22 +474,27 @@ proptest! {
                 Op::FireHook {
                     session,
                     hook_type,
-                    is_listen,
+                    listen_kind,
                 } => {
-                    let outcome = h.fire_hook(
+                    let variant = match listen_kind {
+                        ListenKind::None => ListenVariant::None,
+                        ListenKind::Listen => ListenVariant::Listen,
+                        ListenKind::ListenStop => ListenVariant::ListenStop,
+                    };
+                    let outcome = h.fire_hook_ext(
                         &sessions[*session],
                         *hook_type,
-                        *is_listen,
+                        variant,
                         false, // stop_hook_active always false (safety valve
                                // tested separately by exhaustive + scenario tests)
                     );
-                    model.check_and_update(*session, *hook_type, *is_listen, &outcome);
+                    model.check_and_update(*session, *hook_type, *listen_kind, &outcome);
                 }
             }
         }
     }
 
-    /// **Progress property**: no sequence of general hook → attend listen →
+    /// **Progress property**: no sequence of general hook -> attend listen ->
     /// general hook can produce NarrationReady twice without new content
     /// being written between the two general hooks.
     ///
@@ -498,6 +579,9 @@ proptest! {
             }
             Outcome::Narration(_) => {
                 panic!("general hook should not deliver narration");
+            }
+            Outcome::Activation => {
+                panic!("general hook should not activate");
             }
         }
     }

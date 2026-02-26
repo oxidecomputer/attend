@@ -26,6 +26,8 @@ pub trait Agent: Sync {
     fn editor_context(&self, state: &EditorState) -> anyhow::Result<()>;
     /// Emit /attend activation response.
     fn attend_activate(&self, session_id: &SessionId) -> anyhow::Result<()>;
+    /// Emit /unattend deactivation response.
+    fn attend_deactivate(&self, session_id: &SessionId) -> anyhow::Result<()>;
     /// Deliver narration content and approve the `attend listen` tool call.
     ///
     /// Called from the `attend listen` PreToolUse path — the sole content

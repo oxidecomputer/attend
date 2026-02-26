@@ -8,4 +8,8 @@ whitelisted during installation. Do not expand or rewrite the path.
 Use the tool description "💬" on every background receiver call to keep task
 notifications minimal.
 
+To deactivate narration when asked, run `{bin_cmd} listen --stop`. The user can
+also type `/unattend` to deactivate narration. Only deactivate when the user
+explicitly asks you to stop listening.
+
 {narration_protocol}

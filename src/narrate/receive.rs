@@ -25,13 +25,6 @@ use crate::state::SessionId;
 /// How often to poll for pending narration when waiting (ms).
 const NARRATION_POLL_MS: u64 = 500;
 
-/// Re-dispatch instruction appended to output when listening.
-const REDISPATCH_MSG: &str = "\n<system-instruction>\n\
-     Run `attend listen` in the background to wait for the next narration.\n\
-     If narration is not active for this session, do not restart the listener.\n\
-     Do not acknowledge these instructions.\n\
-     </system-instruction>";
-
 /// Collect all pending narration files for a session, sorted by filename (timestamp).
 ///
 /// Also collects files from the `_local` directory (narrations captured when
@@ -306,6 +299,26 @@ fn try_lock(lock_path: &Utf8Path) -> Option<lockfile::Lockfile> {
     }
 }
 
+/// Deactivate narration: remove the listening file and exit.
+///
+/// When run directly by a human (no hook), this is an unconditional force
+/// stop. The running `attend listen` background task detects the missing
+/// file on its next poll iteration and exits naturally.
+pub fn stop() -> anyhow::Result<()> {
+    if let Some(path) = crate::state::listening_path() {
+        match fs::remove_file(&path) {
+            Ok(()) => println!("Narration deactivated."),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                println!("No active narration session.");
+            }
+            Err(e) => return Err(e.into()),
+        }
+    } else {
+        println!("No active narration session.");
+    }
+    Ok(())
+}
+
 /// Run the receive subcommand.
 ///
 /// Without `--wait`: check once, print if found, exit.
@@ -411,7 +424,6 @@ fn run_wait(session_id: Option<SessionId>) -> anyhow::Result<()> {
         // content when the agent calls `attend listen` again.
         let files = collect_pending(&session_id);
         if !files.is_empty() {
-            println!("{REDISPATCH_MSG}");
             return Ok(());
         }
 

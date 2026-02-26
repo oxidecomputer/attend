@@ -65,5 +65,24 @@ pub fn uninstall(project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
         println!("No attend hooks found in {}", settings_path.display());
     }
 
+    // Remove skill directories (best-effort).
+    remove_skill_dirs(project.as_deref().map(|p| p.as_std_path()));
+
     Ok(())
+}
+
+/// Remove attend and unattend skill directories.
+fn remove_skill_dirs(project: Option<&Path>) {
+    let base = if let Some(proj) = project {
+        proj.to_path_buf()
+    } else {
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
+        home
+    };
+
+    for skill_name in ["attend", "unattend"] {
+        let _ = fs::remove_dir_all(base.join(format!(".claude/skills/{skill_name}")));
+    }
 }

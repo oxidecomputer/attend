@@ -58,3 +58,55 @@ fn partial() {
     };
     assert!(!is_attend_prompt(&input));
 }
+
+// ---------------------------------------------------------------------------
+// is_unattend_prompt tests
+// ---------------------------------------------------------------------------
+
+/// Exact `/unattend` match.
+#[test]
+fn unattend_exact() {
+    let input = HookInput {
+        kind: HookKind::UserPrompt {
+            prompt: Some("/unattend".into()),
+        },
+        ..Default::default()
+    };
+    assert!(is_unattend_prompt(&input));
+}
+
+/// `/unattend` with surrounding whitespace.
+#[test]
+fn unattend_with_whitespace() {
+    let input = HookInput {
+        kind: HookKind::UserPrompt {
+            prompt: Some("  /unattend  ".into()),
+        },
+        ..Default::default()
+    };
+    assert!(is_unattend_prompt(&input));
+}
+
+/// Non-unattend prompt text.
+#[test]
+fn unattend_different_text() {
+    let input = HookInput {
+        kind: HookKind::UserPrompt {
+            prompt: Some("/attend".into()),
+        },
+        ..Default::default()
+    };
+    assert!(!is_unattend_prompt(&input));
+}
+
+/// Partial match: `/unattend now` should not match.
+#[test]
+fn unattend_partial() {
+    let input = HookInput {
+        kind: HookKind::UserPrompt {
+            prompt: Some("/unattend now".into()),
+        },
+        ..Default::default()
+    };
+    assert!(!is_unattend_prompt(&input));
+}

@@ -106,3 +106,4 @@ typically don't run them directly: your coding agent does.
 | `attend hook --agent <agent> <event>` | Run a hook event (session-start, user-prompt, stop) |
 | `attend listen` | Wait for narration and deliver it to the agent |
 | `attend listen --check` | Check for pending narration without waiting |
+| `attend listen --stop` | Deactivate narration: remove the listening file and exit |

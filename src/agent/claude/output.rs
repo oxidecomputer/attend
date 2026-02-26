@@ -64,6 +64,15 @@ pub(super) fn attend_activate(_session_id: &SessionId) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Emit /unattend deactivation response.
+pub(super) fn attend_deactivate(_session_id: &SessionId) -> anyhow::Result<()> {
+    let response = serde_json::json!({
+        "additionalContext": include_str!("../messages/deactivate_response.txt")
+    });
+    println!("{}", serde_json::to_string(&response)?);
+    Ok(())
+}
+
 /// Emit hook decision as JSON for Claude Code.
 ///
 /// Output format varies by hook type:
@@ -152,6 +161,9 @@ fn guidance_message(reason: &GuidanceReason) -> &'static str {
         }
         GuidanceReason::ListenerStarted => {
             include_str!("../messages/guidance_listener_started.txt")
+        }
+        GuidanceReason::Deactivated => {
+            include_str!("../messages/guidance_deactivated.txt")
         }
     }
 }

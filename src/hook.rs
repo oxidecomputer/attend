@@ -20,8 +20,8 @@ pub(crate) use session_state::clear_session_moved_marker;
 
 // Internal imports from submodules.
 #[cfg(test)]
-use command::is_listen_command;
-use command::{is_attend_listen, is_attend_prompt};
+use command::parse_listen_command;
+use command::{ListenCommand, detect_listen_command, is_attend_prompt, is_unattend_prompt};
 use decision::{SessionRelation, general_decision, receiver_alive};
 use session_state::{
     clean_session_markers, mark_session_activated, mark_session_moved_notified, session_cache_path,
@@ -105,25 +105,24 @@ pub fn user_prompt(agent: &dyn Agent, cli_cwd: Option<Utf8PathBuf>) -> anyhow::R
             .session_id
             .ok_or_else(|| anyhow::anyhow!("no session_id in hook input"))?;
 
-        let Some(path) = state::listening_path() else {
-            return Err(anyhow::anyhow!("cannot determine cache directory"));
-        };
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        crate::util::atomic_write(&path, |file| {
-            use std::io::Write;
-            file.write_all(session_id.as_str().as_bytes())
-        })?;
-
-        // Mark this session as having activated attend, so narration
-        // hooks know it participates. Clear any stale "session moved"
-        // marker so this session gets a fresh notification if narration
-        // moves away again later.
-        mark_session_activated(&session_id);
-        clear_session_moved_marker(&session_id);
-
+        activate_session(&session_id)?;
         return agent.attend_activate(&session_id);
+    }
+
+    // Check for /unattend deactivation
+    if is_unattend_prompt(&input) {
+        let session_id = input
+            .session_id
+            .ok_or_else(|| anyhow::anyhow!("no session_id in hook input"))?;
+
+        let listening = state::listening_session();
+        if listening.as_ref() == Some(&session_id)
+            && let Some(path) = state::listening_path()
+        {
+            let _ = fs::remove_file(path);
+        }
+
+        return agent.attend_deactivate(&session_id);
     }
 
     let cwd = cli_cwd.or(input.cwd).unwrap_or_else(|| {
@@ -182,19 +181,26 @@ pub fn check_narration(agent: &dyn Agent, hook_type: HookType) -> anyhow::Result
         _ => SessionRelation::Inactive,
     };
 
+    let listen_cmd = detect_listen_command(&input);
+
     // Sessions that never activated `/attend` don't participate in
     // narration: skip all hook logic so we don't block unrelated sessions.
+    // Exception: `attend listen` bypasses the gate so the agent can
+    // self-activate without the user typing /attend first.
     if relation != SessionRelation::Active
         && let Some(ref sid) = input.session_id
         && !session_was_activated(sid)
+        && !matches!(listen_cmd, Some(ListenCommand::Listen))
     {
         return agent.attend_result(&HookDecision::Silent, hook_type);
     }
 
-    if is_attend_listen(&input) {
-        handle_listen_hook(agent, hook_type, &input, relation, listening.as_ref())
-    } else {
-        handle_general_hook(agent, hook_type, &input, relation, listening.as_ref())
+    match listen_cmd {
+        Some(ListenCommand::Listen) => {
+            handle_listen_hook(agent, hook_type, &input, relation, listening.as_ref())
+        }
+        Some(ListenCommand::ListenStop) => handle_unlisten_hook(agent, hook_type, &input, relation),
+        None => handle_general_hook(agent, hook_type, &input, relation, listening.as_ref()),
     }
 }
 
@@ -263,7 +269,59 @@ fn handle_listen_hook(
             // No pending, no receiver — let it start silently.
             agent.attend_result(&HookDecision::Silent, hook_type)
         }
-        SessionRelation::Inactive => agent.attend_result(&HookDecision::Silent, hook_type),
+        SessionRelation::Inactive => {
+            // Auto-claim: if the agent runs `attend listen` without an
+            // active session, activate narration for this session so it
+            // doesn't need the user to type /attend first.
+            if matches!(hook_type, HookType::PreToolUse)
+                && let Some(ref sid) = input.session_id
+            {
+                if let Err(e) = activate_session(sid) {
+                    tracing::warn!("auto-claim failed: {e}");
+                }
+                return agent.attend_activate(sid);
+            }
+            agent.attend_result(&HookDecision::Silent, hook_type)
+        }
+    }
+}
+
+/// Handle PreToolUse/PostToolUse for `attend listen --stop`.
+///
+/// - PostToolUse: approve silently (the command already ran).
+/// - Active session: remove listening file, approve with deactivation guidance.
+/// - Stolen/Inactive: block (only the owning session can deactivate).
+fn handle_unlisten_hook(
+    agent: &dyn Agent,
+    hook_type: HookType,
+    _input: &HookInput,
+    relation: SessionRelation,
+) -> anyhow::Result<()> {
+    // PostToolUse: the command already ran. Approve silently.
+    if matches!(hook_type, HookType::PostToolUse) {
+        return agent.attend_result(&HookDecision::Silent, hook_type);
+    }
+
+    // PreToolUse: gate whether deactivation is allowed.
+    match relation {
+        SessionRelation::Active => {
+            // This session owns narration — deactivate.
+            if let Some(path) = state::listening_path() {
+                let _ = fs::remove_file(path);
+            }
+            agent.attend_result(
+                &HookDecision::approve(GuidanceReason::Deactivated),
+                hook_type,
+            )
+        }
+        SessionRelation::Stolen | SessionRelation::Inactive => {
+            // Not this session's narration — block to prevent
+            // cross-session interference.
+            agent.attend_result(
+                &HookDecision::block(GuidanceReason::SessionMoved),
+                hook_type,
+            )
+        }
     }
 }
 
@@ -329,6 +387,30 @@ fn handle_general_hook(
     }
 
     agent.attend_result(&decision, hook_type)
+}
+
+/// Write the session ID to the listening file and mark the session as
+/// activated. Shared by `/attend` (UserPromptSubmit) and auto-claim
+/// (`attend listen` PreToolUse on Inactive).
+fn activate_session(session_id: &state::SessionId) -> anyhow::Result<()> {
+    let Some(path) = state::listening_path() else {
+        return Err(anyhow::anyhow!("cannot determine cache directory"));
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    crate::util::atomic_write(&path, |file| {
+        use std::io::Write;
+        file.write_all(session_id.as_str().as_bytes())
+    })?;
+
+    // Mark this session as having activated attend, so narration
+    // hooks know it participates. Clear any stale "session moved"
+    // marker so this session gets a fresh notification if narration
+    // moves away again later.
+    mark_session_activated(session_id);
+    clear_session_moved_marker(session_id);
+    Ok(())
 }
 
 /// Resolve the working directory from hook input, falling back to the

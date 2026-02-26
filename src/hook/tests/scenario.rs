@@ -1,5 +1,5 @@
 use super::super::*;
-use super::harness::TestHarness;
+use super::harness::{ListenVariant, TestHarness};
 use crate::state::SessionId;
 
 const ALL_HOOK_TYPES: [HookType; 3] = [HookType::Stop, HookType::PreToolUse, HookType::PostToolUse];
@@ -350,4 +350,100 @@ fn pending_narration_is_per_session() {
     // A is displaced — gets SessionMoved, not NarrationReady.
     let out = h.fire_hook(&a, HookType::PreToolUse, false, false);
     TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::SessionMoved));
+}
+
+/// **Scenario**: `attend listen --stop` deactivates narration for the
+/// active session.
+///
+/// **Flow**: Session activates -> fires `attend listen --stop` PreToolUse
+/// -> listening file is removed, Deactivated guidance returned.
+/// PostToolUse is silently approved.
+#[test]
+fn listen_stop_deactivates_active_session() {
+    let h = TestHarness::new();
+    let s: SessionId = "session-1".into();
+    h.activate(&s);
+
+    // PreToolUse: deactivation approved with guidance.
+    let out = h.fire_hook_ext(&s, HookType::PreToolUse, ListenVariant::ListenStop, false);
+    TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::Deactivated));
+
+    // PostToolUse: silent (command already ran).
+    let out = h.fire_hook_ext(&s, HookType::PostToolUse, ListenVariant::ListenStop, false);
+    TestHarness::assert_decision(&out, &HookDecision::Silent);
+
+    // Subsequent general hooks: session is now inactive (no listener),
+    // so silent (session was activated but listening file is gone).
+    let out = h.fire_hook(&s, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::Silent);
+}
+
+/// **Scenario**: `attend listen --stop` is blocked for non-owning sessions.
+///
+/// **Flow**: Session A activates -> Session B tries `listen --stop` ->
+/// blocked (B doesn't own narration).
+#[test]
+fn listen_stop_blocked_for_non_owner() {
+    let h = TestHarness::new();
+    let a: SessionId = "session-a".into();
+    let b: SessionId = "session-b".into();
+
+    h.activate(&a);
+    // B was activated at some point (so it passes the activation gate).
+    h.activate(&b);
+    // A steals back.
+    h.activate(&a);
+
+    // B tries to deactivate: blocked (A owns narration).
+    let out = h.fire_hook_ext(&b, HookType::PreToolUse, ListenVariant::ListenStop, false);
+    TestHarness::assert_decision(&out, &HookDecision::block(GuidanceReason::SessionMoved));
+}
+
+/// **Scenario**: `attend listen` auto-claims narration when no session
+/// is active, activating the calling session.
+///
+/// **Flow**: Fresh session (never activated) fires `attend listen`
+/// PreToolUse with no active listener -> session is auto-claimed,
+/// activation instructions emitted. Subsequent hooks behave as if
+/// `/attend` was typed.
+#[test]
+fn listen_auto_claims_fresh_session() {
+    let h = TestHarness::new();
+    let s: SessionId = "session-1".into();
+
+    // No prior activation. `attend listen` on fresh session:
+    // auto-claim activates, returns activation instructions.
+    let out = h.fire_hook(&s, HookType::PreToolUse, true, false);
+    TestHarness::assert_activation(&out);
+
+    // After auto-claim, subsequent general hooks see an active session
+    // with no receiver (the listen command was blocked by activation).
+    let out = h.fire_hook(&s, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::StartReceiver));
+}
+
+/// **Scenario**: `attend listen` auto-claims narration after
+/// deactivation via `listen --stop`.
+///
+/// **Flow**: Session activates -> deactivates via `listen --stop` ->
+/// fires `attend listen` again -> auto-claims (session was previously
+/// activated, now inactive).
+#[test]
+fn listen_auto_claims_after_deactivation() {
+    let h = TestHarness::new();
+    let s: SessionId = "session-1".into();
+
+    // Activate then deactivate.
+    h.activate(&s);
+    let out = h.fire_hook_ext(&s, HookType::PreToolUse, ListenVariant::ListenStop, false);
+    TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::Deactivated));
+
+    // Session is now inactive but was previously activated.
+    // `attend listen` auto-claims.
+    let out = h.fire_hook(&s, HookType::PreToolUse, true, false);
+    TestHarness::assert_activation(&out);
+
+    // Subsequent hooks see the session as active again.
+    let out = h.fire_hook(&s, HookType::PreToolUse, false, false);
+    TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::StartReceiver));
 }

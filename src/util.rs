@@ -31,6 +31,28 @@ pub(crate) fn atomic_write_str(path: impl AsRef<Path>, content: &str) -> io::Res
     atomic_write(path, |f| io::Write::write_all(f, content.as_bytes()))
 }
 
+/// Atomically replace a directory's contents.
+///
+/// Writes files to a staging directory (`<dir>.staging`), removes the
+/// old directory, and renames the staging directory into place. This
+/// prevents readers from seeing a partially-written skill directory.
+pub(crate) fn atomic_replace_dir(dir: impl AsRef<Path>, files: &[(&str, &str)]) -> io::Result<()> {
+    let dir = dir.as_ref();
+    let staging = dir.with_extension("staging");
+
+    // Clean up any leftover staging directory from a prior crash.
+    let _ = fs::remove_dir_all(&staging);
+    fs::create_dir_all(&staging)?;
+
+    for (name, content) in files {
+        fs::write(staging.join(name), content)?;
+    }
+
+    // Swap: remove old dir, rename staging into place.
+    let _ = fs::remove_dir_all(dir);
+    fs::rename(&staging, dir)
+}
+
 /// Return the current UTC time as an ISO 8601 string (e.g. `2026-02-18T15:30:45Z`).
 pub fn utc_now() -> String {
     Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()

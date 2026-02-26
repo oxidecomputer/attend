@@ -84,6 +84,8 @@ pub enum GuidanceReason {
     /// A listener was just started in the background. Primes the agent to
     /// restart (not read the output) when the task notification arrives.
     ListenerStarted,
+    /// Narration was deactivated via `attend listen --stop`.
+    Deactivated,
 }
 
 /// Whether guidance blocks or approves the current action.
