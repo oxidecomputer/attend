@@ -11,6 +11,7 @@ mod shell_hook;
 
 pub use hook::HookEvent;
 pub use narrate::NarrateCommand;
+pub use shell_hook::ShellHookCommand;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -73,35 +74,6 @@ pub enum Command {
     ShellHook(ShellHookCommand),
 }
 
-/// Shell hook subcommands.
-#[derive(Subcommand)]
-pub enum ShellHookCommand {
-    /// Stage a preexec event (command starting).
-    Preexec {
-        /// Shell name (e.g. "fish", "zsh").
-        #[arg(long)]
-        shell: String,
-        /// The command as typed by the user.
-        #[arg(long)]
-        command: String,
-    },
-    /// Stage a postexec event (command completed).
-    Postexec {
-        /// Shell name (e.g. "fish", "zsh").
-        #[arg(long)]
-        shell: String,
-        /// The command as typed by the user.
-        #[arg(long)]
-        command: String,
-        /// Exit status of the command.
-        #[arg(long)]
-        exit_status: i32,
-        /// Wall-clock duration in seconds.
-        #[arg(long)]
-        duration: f64,
-    },
-}
-
 impl Cli {
     /// Run the CLI: dispatch to subcommand.
     pub fn run(self) -> anyhow::Result<()> {
@@ -117,21 +89,13 @@ impl Command {
             Command::Glance(args) => args.run(),
             Command::Look(args) => args.run(),
             Command::Meditate(args) => args.run(),
+            Command::Install(args) => args.run(),
+            Command::Uninstall(args) => args.run(),
             Command::Completions(args) => args.run(),
             Command::Listen(args) => args.run(),
             Command::Hook(event) => event.run(),
             Command::BrowserBridge => browser_bridge::run(),
-            Command::ShellHook(cmd) => match cmd {
-                ShellHookCommand::Preexec { shell, command } => shell_hook::preexec(shell, command),
-                ShellHookCommand::Postexec {
-                    shell,
-                    command,
-                    exit_status,
-                    duration,
-                } => shell_hook::postexec(shell, command, exit_status, duration),
-            },
-            Command::Install(args) => args.run(),
-            Command::Uninstall(args) => args.run(),
+            Command::ShellHook(cmd) => cmd.run(),
         }
     }
 }

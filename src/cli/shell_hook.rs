@@ -6,24 +6,54 @@
 
 use std::fs;
 
+use clap::Subcommand;
+
 use crate::narrate::merge::Event;
 use crate::narrate::shell_staging_dir;
 use crate::state;
 use crate::util;
 
-/// Stage a preexec event (command starting).
-pub(super) fn preexec(shell: String, command: String) -> anyhow::Result<()> {
-    stage_event(shell, command, None, None)
+/// Shell hook subcommands.
+#[derive(Subcommand)]
+pub enum ShellHookCommand {
+    /// Stage a preexec event (command starting).
+    Preexec {
+        /// Shell name (e.g. "fish", "zsh").
+        #[arg(long)]
+        shell: String,
+        /// The command as typed by the user.
+        #[arg(long)]
+        command: String,
+    },
+    /// Stage a postexec event (command completed).
+    Postexec {
+        /// Shell name (e.g. "fish", "zsh").
+        #[arg(long)]
+        shell: String,
+        /// The command as typed by the user.
+        #[arg(long)]
+        command: String,
+        /// Exit status of the command.
+        #[arg(long)]
+        exit_status: i32,
+        /// Wall-clock duration in seconds.
+        #[arg(long)]
+        duration: f64,
+    },
 }
 
-/// Stage a postexec event (command completed).
-pub(super) fn postexec(
-    shell: String,
-    command: String,
-    exit_status: i32,
-    duration: f64,
-) -> anyhow::Result<()> {
-    stage_event(shell, command, Some(exit_status), Some(duration))
+impl ShellHookCommand {
+    pub fn run(self) -> anyhow::Result<()> {
+        match self {
+            ShellHookCommand::Preexec { shell, command } => stage_event(shell, command, None, None),
+            ShellHookCommand::Postexec {
+                shell,
+                command,
+                exit_status,
+                duration,
+            } => stage_event(shell, command, Some(exit_status), Some(duration)),
+        }
+    }
 }
 
 /// Write a `ShellCommand` event to the shell staging directory.
