@@ -540,23 +540,24 @@ fn ext_selection_different_apps_kept() {
     assert_eq!(events.len(), 2, "different apps survive");
 }
 
-/// External selections interleaved with words are not merged across boundaries.
+/// External selections with identical text across a word boundary survive when
+/// the time gap exceeds the cross-run subsumption tolerance (2s).
 #[test]
-fn ext_selection_across_word_boundary() {
+fn ext_selection_across_word_boundary_beyond_tolerance() {
     let mut events = vec![
         ext_sel(1.0, "iTerm2", "error"),
         Event::Words {
-            timestamp: ts(2.0),
+            timestamp: ts(3.0),
             text: "look at this".to_string(),
         },
-        ext_sel(3.0, "iTerm2", "error"),
+        ext_sel(5.0, "iTerm2", "error"),
     ];
     compress_and_merge(&mut events);
     let ext_count = events
         .iter()
         .filter(|e| matches!(e, Event::ExternalSelection { .. }))
         .count();
-    assert_eq!(ext_count, 2, "word boundary prevents merge");
+    assert_eq!(ext_count, 2, "beyond tolerance, both survive");
 }
 
 /// External selections mix with editor snapshots in the same run.
@@ -672,17 +673,22 @@ fn ext_selection_different_source_no_merge() {
     assert_eq!(events.len(), 2, "different window_title, no merge");
 }
 
-/// Two separate progressive selections of the same text: both survive.
-/// The user selects "err" → "error" (merged to "error"), then later selects
-/// "err" → "error" again (merged to "error"). Two "error" events remain.
+/// Two separate progressive selections of the same text separated by speech:
+/// both survive. The user selects "err" → "error" (merged to "error"), speaks,
+/// then selects "err" → "error" again (merged to "error"). Two "error" events
+/// remain because they are in different runs and beyond subsumption tolerance.
 #[test]
 fn ext_selection_two_progressive_same_text() {
     let mut events = vec![
         ext_sel(1.0, "iTerm2", "err"),
         ext_sel(2.0, "iTerm2", "error"),
+        Event::Words {
+            timestamp: ts(3.0),
+            text: "some speech".to_string(),
+        },
         // Gap: user deselected, then re-selected the same text.
-        ext_sel(4.0, "iTerm2", "err"),
-        ext_sel(5.0, "iTerm2", "error"),
+        ext_sel(6.0, "iTerm2", "err"),
+        ext_sel(7.0, "iTerm2", "error"),
     ];
     compress_and_merge(&mut events);
     let ext_events: Vec<_> = events
@@ -743,23 +749,24 @@ fn browser_selection_different_urls_kept() {
     assert_eq!(events.len(), 2, "different urls survive");
 }
 
-/// Browser selections interleaved with words are not merged across boundaries.
+/// Browser selections with identical text across a word boundary survive when
+/// the time gap exceeds the cross-run subsumption tolerance (2s).
 #[test]
-fn browser_selection_across_word_boundary() {
+fn browser_selection_across_word_boundary_beyond_tolerance() {
     let mut events = vec![
         browser_sel(1.0, "https://docs.rs/tokio", "spawn"),
         Event::Words {
-            timestamp: ts(2.0),
+            timestamp: ts(3.0),
             text: "look at this".to_string(),
         },
-        browser_sel(3.0, "https://docs.rs/tokio", "spawn"),
+        browser_sel(5.0, "https://docs.rs/tokio", "spawn"),
     ];
     compress_and_merge(&mut events);
     let count = events
         .iter()
         .filter(|e| matches!(e, Event::BrowserSelection { .. }))
         .count();
-    assert_eq!(count, 2, "word boundary prevents merge");
+    assert_eq!(count, 2, "beyond tolerance, both survive");
 }
 
 /// BrowserSelection renders with link attribution above blockquoted content.
@@ -969,6 +976,291 @@ fn preexec_only_survives() {
         .filter(|e| matches!(e, Event::ShellCommand { .. }))
         .count();
     assert_eq!(cmd_count, 1, "preexec survives without postexec");
+}
+
+// ── Cross-run selection subsumption ────────────────────────────────────────
+
+/// Partial external selection, words, then full selection within 2s tolerance.
+/// The partial selection should be subsumed by the full one.
+#[test]
+fn ext_selection_cross_run_subsumption() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "error"),
+        Event::Words {
+            timestamp: ts(1.5),
+            text: "look at this".to_string(),
+        },
+        ext_sel(2.5, "iTerm2", "error[E0308]: mismatched types"),
+    ];
+    compress_and_merge(&mut events);
+    let ext: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, Event::ExternalSelection { .. }))
+        .collect();
+    assert_eq!(ext.len(), 1, "partial subsumed by full");
+    assert!(matches!(
+        ext[0],
+        Event::ExternalSelection { text, .. } if text == "error[E0308]: mismatched types"
+    ));
+}
+
+/// Identical text across word boundary within tolerance: earlier is subsumed
+/// (exact duplicate is a special case of substring containment).
+#[test]
+fn ext_selection_cross_run_exact_dup() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "error"),
+        Event::Words {
+            timestamp: ts(1.5),
+            text: "same thing".to_string(),
+        },
+        ext_sel(2.0, "iTerm2", "error"),
+    ];
+    compress_and_merge(&mut events);
+    let ext_count = events
+        .iter()
+        .filter(|e| matches!(e, Event::ExternalSelection { .. }))
+        .count();
+    assert_eq!(ext_count, 1, "exact dup within tolerance: one survives");
+    assert_eq!(events.last().unwrap().timestamp(), ts(2.0));
+}
+
+/// Partial ⊂ full but delta > 2s: both survive (beyond tolerance).
+#[test]
+fn ext_selection_cross_run_beyond_tolerance() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "error"),
+        Event::Words {
+            timestamp: ts(2.0),
+            text: "talking".to_string(),
+        },
+        ext_sel(4.0, "iTerm2", "error[E0308]: mismatched types"),
+    ];
+    compress_and_merge(&mut events);
+    let ext_count = events
+        .iter()
+        .filter(|e| matches!(e, Event::ExternalSelection { .. }))
+        .count();
+    assert_eq!(ext_count, 2, "beyond 2s tolerance, both survive");
+}
+
+/// Partial ⊂ full within tolerance but different (app, window_title):
+/// both survive (different source key).
+#[test]
+fn ext_selection_cross_run_different_source() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "error"),
+        Event::Words {
+            timestamp: ts(1.5),
+            text: "look".to_string(),
+        },
+        Event::ExternalSelection {
+            timestamp: ts(2.5),
+            app: "Safari".to_string(),
+            window_title: "window".to_string(),
+            text: "error[E0308]".to_string(),
+        },
+    ];
+    compress_and_merge(&mut events);
+    let ext_count = events
+        .iter()
+        .filter(|e| matches!(e, Event::ExternalSelection { .. }))
+        .count();
+    assert_eq!(ext_count, 2, "different app, no subsumption");
+}
+
+/// Chain subsumption: A ⊂ B ⊂ C across three runs, each link within
+/// tolerance but A→C exceeds tolerance. Only C survives.
+#[test]
+fn ext_selection_cross_run_chain() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "err"),
+        Event::Words {
+            timestamp: ts(1.5),
+            text: "first".to_string(),
+        },
+        ext_sel(2.8, "iTerm2", "error"),
+        Event::Words {
+            timestamp: ts(3.5),
+            text: "second".to_string(),
+        },
+        ext_sel(4.5, "iTerm2", "error[E0308]"),
+    ];
+    compress_and_merge(&mut events);
+    let ext: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, Event::ExternalSelection { .. }))
+        .collect();
+    assert_eq!(ext.len(), 1, "chain subsumption: only widest survives");
+    assert!(matches!(
+        ext[0],
+        Event::ExternalSelection { text, .. } if text == "error[E0308]"
+    ));
+}
+
+/// Browser selection cross-run subsumption: partial ⊂ full within tolerance.
+#[test]
+fn browser_selection_cross_run_subsumption() {
+    let mut events = vec![
+        browser_sel(1.0, "https://docs.rs/tokio", "spawn"),
+        Event::Words {
+            timestamp: ts(1.5),
+            text: "here".to_string(),
+        },
+        browser_sel(2.5, "https://docs.rs/tokio", "spawn a task"),
+    ];
+    compress_and_merge(&mut events);
+    let bs: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, Event::BrowserSelection { .. }))
+        .collect();
+    assert_eq!(bs.len(), 1, "partial browser selection subsumed");
+    assert!(matches!(
+        bs[0],
+        Event::BrowserSelection { text, .. } if text == "spawn a task"
+    ));
+}
+
+/// Editor snapshot cross-run subsumption: narrow selection on file X, words,
+/// wider selection on same file within tolerance. Only the wider survives.
+#[test]
+fn editor_snapshot_cross_run_subsumption() {
+    let mut events = vec![
+        selection_snap_with(1.0, "src/main.rs", "fn main"),
+        Event::Words {
+            timestamp: ts(1.5),
+            text: "here".to_string(),
+        },
+        selection_snap_with(
+            2.5,
+            "src/main.rs",
+            "fn main() {\n    println!(\"hello\");\n}",
+        ),
+    ];
+    compress_and_merge(&mut events);
+    let snaps: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, Event::EditorSnapshot { .. }))
+        .collect();
+    assert_eq!(snaps.len(), 1, "narrow snapshot subsumed by wider");
+    if let Event::EditorSnapshot { regions, .. } = snaps[0] {
+        assert!(regions[0].content.contains("println"));
+    } else {
+        panic!("expected EditorSnapshot");
+    }
+}
+
+/// Editor snapshots with different file paths: no subsumption (different keys).
+#[test]
+fn editor_snapshot_cross_run_different_files() {
+    let mut events = vec![
+        selection_snap_with(1.0, "src/a.rs", "fn a()"),
+        Event::Words {
+            timestamp: ts(1.5),
+            text: "then".to_string(),
+        },
+        selection_snap_with(2.5, "src/b.rs", "fn b()"),
+    ];
+    compress_and_merge(&mut events);
+    let snap_count = events
+        .iter()
+        .filter(|e| matches!(e, Event::EditorSnapshot { .. }))
+        .count();
+    assert_eq!(snap_count, 2, "different files, no subsumption");
+}
+
+/// Multi-region snapshot: snapshot with {file_A, file_B}, words, snapshot
+/// with only {file_A wider}. Both survive because file_B isn't covered.
+#[test]
+fn editor_snapshot_cross_run_partial_coverage() {
+    let start = Position {
+        line: Line::new(1).unwrap(),
+        col: Col::new(1).unwrap(),
+    };
+    let end = Position {
+        line: Line::new(5).unwrap(),
+        col: Col::new(10).unwrap(),
+    };
+    let sel = Selection { start, end };
+    let snap_ab = Event::EditorSnapshot {
+        timestamp: ts(1.0),
+        files: vec![
+            FileEntry {
+                path: "a.rs".into(),
+                selections: vec![sel],
+            },
+            FileEntry {
+                path: "b.rs".into(),
+                selections: vec![sel],
+            },
+        ],
+        regions: vec![
+            CapturedRegion {
+                path: "a.rs".to_string(),
+                content: "fn a()".to_string(),
+                first_line: 1,
+                selections: vec![sel],
+                language: None,
+            },
+            CapturedRegion {
+                path: "b.rs".to_string(),
+                content: "fn b()".to_string(),
+                first_line: 1,
+                selections: vec![sel],
+                language: None,
+            },
+        ],
+    };
+    let snap_a_wider = selection_snap_with(2.5, "a.rs", "fn a() { ... }");
+
+    let mut events = vec![
+        snap_ab,
+        Event::Words {
+            timestamp: ts(1.5),
+            text: "and".to_string(),
+        },
+        snap_a_wider,
+    ];
+    compress_and_merge(&mut events);
+    let snap_count = events
+        .iter()
+        .filter(|e| matches!(e, Event::EditorSnapshot { .. }))
+        .count();
+    assert_eq!(
+        snap_count, 2,
+        "partial coverage: both survive because b.rs not covered"
+    );
+}
+
+/// Non-selection events between external selections don't interfere with
+/// same-type forward scan for subsumption.
+#[test]
+fn ext_selection_cross_run_with_other_events() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "error"),
+        selection_snap_with(1.2, "src/main.rs", "fn main()"),
+        Event::FileDiff {
+            timestamp: ts(1.4),
+            path: "src/main.rs".to_string(),
+            old: "old\n".to_string(),
+            new: "new\n".to_string(),
+        },
+        Event::Words {
+            timestamp: ts(1.6),
+            text: "see".to_string(),
+        },
+        ext_sel(2.5, "iTerm2", "error[E0308]: mismatched types"),
+    ];
+    compress_and_merge(&mut events);
+    let ext: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, Event::ExternalSelection { .. }))
+        .collect();
+    assert_eq!(ext.len(), 1, "non-selection events don't block subsumption");
+    assert!(matches!(
+        ext[0],
+        Event::ExternalSelection { text, .. } if text == "error[E0308]: mismatched types"
+    ));
 }
 
 /// Postexec dedup preserves the preexec's cwd, not the postexec's.

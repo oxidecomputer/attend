@@ -24,11 +24,20 @@
 //!
 //! # Merge pipeline
 //!
-//! [`compress_and_merge`] processes the raw event stream in three steps:
+//! [`compress_and_merge`] processes the raw event stream in four steps:
 //!
 //! 1. **Chronological sort** by `timestamp`.
 //!
-//! 2. **Single-pass run processing**: the sorted list is split into
+//! 2. **Global progressive selection subsumption**
+//!    ([`subsume_progressive_selections`]): drops earlier, narrower selections
+//!    when a later, wider selection from the same source arrives within a 2s
+//!    tolerance window. Applies to `ExternalSelection` (keyed on app +
+//!    window_title), `BrowserSelection` (keyed on url), and `EditorSnapshot`
+//!    (keyed on region paths with per-path content containment). Runs before
+//!    run-splitting so intermediate events serve as temporal bridges for chain
+//!    subsumption.
+//!
+//! 3. **Single-pass run processing**: the sorted list is split into
 //!    alternating `Words` events and non-speech "runs" (maximal sequences
 //!    of `EditorSnapshot` / `FileDiff` with no `Words` between them). Each
 //!    run is processed through three composable transformations:
@@ -51,7 +60,7 @@
 //!      (the net change). If the file was changed and then reverted (A→B→A),
 //!      the net diff is empty and the event is dropped at render time.
 //!
-//! 3. **Trailing cursor drop**: if speech is present, a final cursor-only
+//! 4. **Trailing cursor drop**: if speech is present, a final cursor-only
 //!    snapshot is removed because the stop hook provides more up-to-date
 //!    editor context. Code-only narrations (no speech at all) keep
 //!    everything.
@@ -64,6 +73,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::state::FileEntry;
 pub use crate::view::CapturedRegion;
+
+/// Window (ms) for cross-type dedup: BrowserSelection vs ExternalSelection.
+const CROSS_TYPE_DEDUP_WINDOW_MS: i64 = 500;
+
+/// Window (ms) for cross-run progressive selection subsumption.
+///
+/// When an earlier selection's text is a substring of a later selection from
+/// the same source within this window, the earlier event is dropped. The poll
+/// interval is 200ms and typical speech between captures is 500ms–1.5s, so
+/// 2 seconds is generous without merging unrelated selections.
+const SUBSUME_WINDOW_MS: i64 = 2000;
 
 /// The kind of event that was redacted (filtered due to project scope).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -430,7 +450,7 @@ fn collapse_ext_selections(selections: Vec<Event>) -> Vec<Event> {
 /// richer context (URL, HTML→markdown) than the accessibility API, so the browser
 /// event wins.
 fn dedup_browser_vs_external(events: &mut Vec<Event>) {
-    let dedup_window = chrono::Duration::milliseconds(500);
+    let dedup_window = chrono::Duration::milliseconds(CROSS_TYPE_DEDUP_WINDOW_MS);
 
     // Collect browser selection timestamps and texts for matching.
     let browser_entries: Vec<(chrono::DateTime<chrono::Utc>, String)> = events
@@ -459,6 +479,118 @@ fn dedup_browser_vs_external(events: &mut Vec<Event>) {
         !browser_entries.iter().any(|(bs_ts, bs_text)| {
             bs_text == trimmed && (*timestamp - *bs_ts).abs().le(&dedup_window)
         })
+    });
+}
+
+// ── Global progressive selection subsumption ────────────────────────────────
+
+/// Drop earlier, narrower selections when a later, wider selection from the
+/// same source arrives within [`SUBSUME_WINDOW_MS`].
+///
+/// Operates on the chronologically sorted event list before run-splitting, so
+/// intermediate events (including words) act as temporal bridges for chain
+/// subsumption: A ⊂ B ⊂ C each within tolerance even if A→C exceeds it.
+///
+/// Applies uniformly to `ExternalSelection` (keyed on app + window_title),
+/// `BrowserSelection` (keyed on url), and `EditorSnapshot` (keyed on region
+/// paths, where every region must be covered for subsumption).
+fn subsume_progressive_selections(events: &mut Vec<Event>) {
+    let tolerance = chrono::Duration::milliseconds(SUBSUME_WINDOW_MS);
+    let len = events.len();
+    let mut remove = vec![false; len];
+
+    for i in 0..len {
+        if remove[i] {
+            continue;
+        }
+        let ts_i = events[i].timestamp();
+
+        match &events[i] {
+            Event::ExternalSelection {
+                app,
+                window_title,
+                text,
+                ..
+            } => {
+                let app = app.clone();
+                let wt = window_title.clone();
+                let text = text.clone();
+                for later in &events[i + 1..] {
+                    if (later.timestamp() - ts_i) > tolerance {
+                        break;
+                    }
+                    if let Event::ExternalSelection {
+                        app: a,
+                        window_title: w,
+                        text: t,
+                        ..
+                    } = later
+                        && *a == app
+                        && *w == wt
+                        && t.contains(text.as_str())
+                    {
+                        remove[i] = true;
+                        break;
+                    }
+                }
+            }
+            Event::BrowserSelection { url, text, .. } => {
+                let url = url.clone();
+                let text = text.clone();
+                for later in &events[i + 1..] {
+                    if (later.timestamp() - ts_i) > tolerance {
+                        break;
+                    }
+                    if let Event::BrowserSelection {
+                        url: u, text: t, ..
+                    } = later
+                        && *u == url
+                        && t.contains(text.as_str())
+                    {
+                        remove[i] = true;
+                        break;
+                    }
+                }
+            }
+            Event::EditorSnapshot { regions, .. } => {
+                let regions_i: Vec<(&str, &str)> = regions
+                    .iter()
+                    .map(|r| (r.path.as_str(), r.content.as_str()))
+                    .collect();
+                if regions_i.is_empty() {
+                    continue;
+                }
+                for later in &events[i + 1..] {
+                    if (later.timestamp() - ts_i) > tolerance {
+                        break;
+                    }
+                    if let Event::EditorSnapshot {
+                        regions: regions_j, ..
+                    } = later
+                    {
+                        // Every region in i must have a matching region in j
+                        // (same path, content contains).
+                        let covered = regions_i.iter().all(|(path_i, content_i)| {
+                            regions_j
+                                .iter()
+                                .any(|rj| rj.path == *path_i && rj.content.contains(content_i))
+                        });
+                        if covered {
+                            remove[i] = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut idx = 0;
+    events.retain(|_| {
+        let keep = !remove[idx];
+        idx += 1;
+        keep
     });
 }
 
@@ -571,7 +703,12 @@ pub fn compress_and_merge(events: &mut Vec<Event>) {
     // Step 1: chronological sort.
     events.sort_by_key(|a| a.timestamp());
 
-    // Step 2: single pass — split on Words boundaries, process each run.
+    // Step 2: global progressive selection subsumption.
+    // Must run before run-splitting so intermediate events serve as temporal
+    // bridges for chain subsumption (A ⊂ B ⊂ C across run boundaries).
+    subsume_progressive_selections(events);
+
+    // Step 3: single pass — split on Words boundaries, process each run.
     let mut output = Vec::with_capacity(events.len());
     let mut run = Vec::new();
 
@@ -589,7 +726,7 @@ pub fn compress_and_merge(events: &mut Vec<Event>) {
         output.extend(process_run(run));
     }
 
-    // Step 3: drop trailing cursor-only snapshot when speech is present.
+    // Step 4: drop trailing cursor-only snapshot when speech is present.
     // The stop hook already provides the latest editor context, which is
     // more up-to-date. For code-only narrations (no speech), keep everything.
     let has_words = output.iter().any(|e| matches!(e, Event::Words { .. }));

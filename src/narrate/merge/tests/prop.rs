@@ -168,8 +168,162 @@ fn arb_event() -> impl Strategy<Value = Event> {
     ]
 }
 
+// ── Cross-run subsumption sequence strategies ───────────────────────────────
+//
+// Generate three-event sequences mimicking real progressive selection:
+// partial selection → words (speech while dragging) → wider selection.
+// The words event lands between the two selections, splitting them into
+// different runs. The global subsumption pass must recognize the pattern
+// and drop the partial. Random text from arb_event() almost never produces
+// substring relationships, so these ensure the subsumption paths are
+// reliably exercised.
+
+/// Partial ExternalSelection → Words → wider ExternalSelection (same source).
+fn arb_cross_run_ext() -> impl Strategy<Value = Vec<Event>> {
+    (
+        0.0..96.0f64,
+        0.2..1.0f64,
+        0.2..1.0f64,
+        prop_oneof!["iTerm2", "Safari", "Firefox"],
+        "[a-z ]{1,15}",
+        "[a-z ]{1,15}",
+        "[a-z ]{1,20}",
+    )
+        .prop_map(|(t, dt_word, dt_wide, app, prefix, suffix, speech)| {
+            let t_word = t + dt_word;
+            let t_wide = t_word + dt_wide;
+            let wide = format!("{prefix}{suffix}");
+            vec![
+                Event::ExternalSelection {
+                    timestamp: ts(t),
+                    app: app.clone(),
+                    window_title: "window".to_string(),
+                    text: prefix,
+                },
+                Event::Words {
+                    timestamp: ts(t_word),
+                    text: speech,
+                },
+                Event::ExternalSelection {
+                    timestamp: ts(t_wide),
+                    app,
+                    window_title: "window".to_string(),
+                    text: wide,
+                },
+            ]
+        })
+}
+
+/// Partial BrowserSelection → Words → wider BrowserSelection (same URL).
+fn arb_cross_run_browser() -> impl Strategy<Value = Vec<Event>> {
+    (
+        0.0..96.0f64,
+        0.2..1.0f64,
+        0.2..1.0f64,
+        prop_oneof![
+            "https://docs.rs/tokio",
+            "https://example.com",
+            "https://github.com/foo"
+        ],
+        "[a-z ]{1,15}",
+        "[a-z ]{1,15}",
+        "[a-z ]{1,20}",
+    )
+        .prop_map(|(t, dt_word, dt_wide, url, prefix, suffix, speech)| {
+            let t_word = t + dt_word;
+            let t_wide = t_word + dt_wide;
+            let wide = format!("{prefix}{suffix}");
+            vec![
+                Event::BrowserSelection {
+                    timestamp: ts(t),
+                    url: url.clone(),
+                    title: "Page".to_string(),
+                    text: prefix,
+                },
+                Event::Words {
+                    timestamp: ts(t_word),
+                    text: speech,
+                },
+                Event::BrowserSelection {
+                    timestamp: ts(t_wide),
+                    url,
+                    title: "Page".to_string(),
+                    text: wide,
+                },
+            ]
+        })
+}
+
+/// Narrow EditorSnapshot → Words → wider EditorSnapshot (same file path).
+fn arb_cross_run_snapshot() -> impl Strategy<Value = Vec<Event>> {
+    (
+        0.0..96.0f64,
+        0.2..1.0f64,
+        0.2..1.0f64,
+        "[a-z]{1,8}\\.rs",
+        "[a-z ]{1,15}",
+        "[a-z ]{1,15}",
+        "[a-z ]{1,20}",
+        arb_language(),
+    )
+        .prop_map(
+            |(t, dt_word, dt_wide, path, prefix, suffix, speech, language)| {
+                let t_word = t + dt_word;
+                let t_wide = t_word + dt_wide;
+                let wide = format!("{prefix}{suffix}");
+                let start = Position {
+                    line: Line::new(1).unwrap(),
+                    col: Col::new(1).unwrap(),
+                };
+                let end = Position {
+                    line: Line::new(5).unwrap(),
+                    col: Col::new(10).unwrap(),
+                };
+                let sel = Selection { start, end };
+                let make_snap = |ts_val: f64, content: String| Event::EditorSnapshot {
+                    timestamp: ts(ts_val),
+                    files: vec![FileEntry {
+                        path: path.clone().into(),
+                        selections: vec![sel],
+                    }],
+                    regions: vec![CapturedRegion {
+                        path: path.clone(),
+                        content,
+                        first_line: 1,
+                        selections: vec![sel],
+                        language: language.clone(),
+                    }],
+                };
+                vec![
+                    make_snap(t, prefix),
+                    Event::Words {
+                        timestamp: ts(t_word),
+                        text: speech,
+                    },
+                    make_snap(t_wide, wide),
+                ]
+            },
+        )
+}
+
 fn arb_events() -> impl Strategy<Value = Vec<Event>> {
-    proptest::collection::vec(arb_event(), 0..20)
+    (
+        proptest::collection::vec(arb_event(), 0..15),
+        proptest::collection::vec(
+            prop_oneof![
+                arb_cross_run_ext(),
+                arb_cross_run_browser(),
+                arb_cross_run_snapshot(),
+            ],
+            0..3,
+        ),
+    )
+        .prop_map(|(mut events, runs)| {
+            for run in runs {
+                events.extend(run);
+            }
+            events
+        })
 }
 
 // ── compress_and_merge ──────────────────────────────────────────────────────
@@ -437,38 +591,47 @@ proptest! {
         }
     }
 
-    /// BrowserSelection events are deduplicated per (url, text) within a run.
-    /// The count after merge equals the number of unique (url, text) pairs
-    /// per wordless run (minus any that were cross-type deduped with
-    /// ExternalSelection, which is extremely rare with random text).
+    /// Every input BrowserSelection's text is either present in the output
+    /// or is a substring of a surviving BrowserSelection from the same url.
+    /// Mirrors the `merge_preserves_ext_selection_content` invariant.
     #[test]
-    fn merge_preserves_browser_selection_text(events in arb_events()) {
-        let mut sorted = events.clone();
-        sorted.sort_by(|a, b| a.timestamp().cmp(&b.timestamp()));
-
-        let mut expected_count = 0usize;
-        let mut run_pairs: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
-
-        let flush = |pairs: &mut std::collections::HashSet<(String, String)>, count: &mut usize| {
-            *count += pairs.len();
-            pairs.clear();
-        };
-
-        for e in &sorted {
-            match e {
-                Event::Words { .. } => flush(&mut run_pairs, &mut expected_count),
-                Event::BrowserSelection { url, text, .. } => {
-                    run_pairs.insert((url.clone(), text.clone()));
-                }
-                _ => {}
-            }
-        }
-        flush(&mut run_pairs, &mut expected_count);
+    fn merge_preserves_browser_selection_content(events in arb_events()) {
+        let input_texts: Vec<(String, String)> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::BrowserSelection { url, text, .. } =>
+                    Some((url.clone(), text.clone())),
+                _ => None,
+            })
+            .collect();
 
         let mut merged = events;
         compress_and_merge(&mut merged);
-        let actual_count = merged.iter().filter(|e| matches!(e, Event::BrowserSelection { .. })).count();
-        prop_assert_eq!(actual_count, expected_count);
+
+        let output_texts: Vec<(String, String)> = merged
+            .iter()
+            .filter_map(|e| match e {
+                Event::BrowserSelection { url, text, .. } =>
+                    Some((url.clone(), text.clone())),
+                _ => None,
+            })
+            .collect();
+
+        for (url, text) in &input_texts {
+            let covered = output_texts.iter().any(|(ou, ot)| {
+                ou == url && (ot == text || ot.contains(text.as_str()))
+            });
+            // Allow cross-type dedup: a BrowserSelection may be removed if
+            // an ExternalSelection with matching trimmed text exists nearby.
+            let cross_type_deduped = !covered && merged.iter().any(|e| {
+                matches!(e, Event::ExternalSelection { text: t, .. } if t.trim() == text.trim())
+            });
+            prop_assert!(
+                covered || cross_type_deduped,
+                "input browser text {:?} from {} not covered in output",
+                text, url
+            );
+        }
     }
 
     /// Each diff path from input appears in output unless the net change
@@ -522,6 +685,60 @@ proptest! {
                 output_paths.contains(path),
                 "expected diff path {:?} missing from output",
                 path
+            );
+        }
+    }
+
+    /// Every input EditorSnapshot region's content (from snapshots with real
+    /// selections) either appears in some output EditorSnapshot region with
+    /// the same path, or is a substring of one. Cross-run subsumption may
+    /// drop a snapshot, but only when a later snapshot fully covers it.
+    #[test]
+    fn merge_preserves_snapshot_content(events in arb_events()) {
+        let input_regions: Vec<(String, String)> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::EditorSnapshot { files, regions, .. }
+                    if files.iter().any(|f| f.selections.iter().any(|s| !s.is_cursor_like())) =>
+                {
+                    Some(
+                        regions
+                            .iter()
+                            .map(|r| (r.path.clone(), r.content.clone()))
+                            .collect::<Vec<_>>(),
+                    )
+                }
+                _ => None,
+            })
+            .flatten()
+            .collect();
+
+        let mut merged = events;
+        compress_and_merge(&mut merged);
+
+        let output_regions: Vec<(String, String)> = merged
+            .iter()
+            .filter_map(|e| match e {
+                Event::EditorSnapshot { regions, .. } => Some(
+                    regions
+                        .iter()
+                        .map(|r| (r.path.clone(), r.content.clone()))
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+
+        for (path, content) in &input_regions {
+            let covered = output_regions.iter().any(|(op, oc)| {
+                op == path && (oc == content || oc.contains(content.as_str()))
+            });
+            prop_assert!(
+                covered,
+                "input snapshot region {:?} content {:?} not covered in output",
+                path,
+                content
             );
         }
     }
