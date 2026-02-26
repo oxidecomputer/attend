@@ -33,9 +33,9 @@ I invite you to see if you feel the same way.
 - Browsers: [Firefox](https://www.mozilla.org/firefox/) (via native messaging extension)
 - Platforms: anything Unix-esque should work; Windows is not supported currently
 
-The architecture supports adding new editors, agents, and browsers independently
-of one another. See [docs/extending.md](docs/extending.md) for how to implement
-new editor or agent integrations. Contributions welcome!
+The architecture supports adding new editors, agents, shells, and browsers
+independently of one another. See the [extending guide](docs/extending.md)
+for how to add new integrations. Contributions welcome!
 
 ## Platform requirements
 
