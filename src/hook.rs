@@ -16,7 +16,7 @@ use crate::state::{self, EditorState};
 pub use types::{GuidanceEffect, GuidanceReason, HookDecision, HookInput, HookKind, HookType};
 
 // Crate-internal re-export.
-pub(crate) use session_state::clear_session_moved_marker;
+pub(crate) use session_state::clear_session_displaced;
 
 // Internal imports from submodules.
 #[cfg(test)]
@@ -24,8 +24,8 @@ use command::parse_listen_command;
 use command::{ListenCommand, detect_listen_command, is_attend_prompt, is_unattend_prompt};
 use decision::{SessionRelation, general_decision, receiver_alive};
 use session_state::{
-    clean_session_markers, mark_session_activated, mark_session_moved_notified, session_cache_path,
-    session_moved_already_notified, session_was_activated,
+    clean_session_markers, mark_session_activated, mark_session_displaced, session_cache_path,
+    session_displaced, session_was_activated,
 };
 use upgrade::auto_upgrade_hooks;
 
@@ -48,7 +48,7 @@ pub fn session_start(agent: &dyn Agent) -> anyhow::Result<()> {
         let _ = fs::remove_file(cp); // Best-effort: stale cache file may not exist
     }
 
-    // Clean up orphan session marker files (moved-*, activated-*).
+    // Clean up orphan session marker files (displaced-*, activated-*).
     clean_session_markers();
 
     // Auto-upgrade hooks on version mismatch. Runs at most once per binary
@@ -328,7 +328,7 @@ fn handle_unlisten_hook(
 /// Handle Stop/PreToolUse/PostToolUse for tools other than `attend listen`.
 ///
 /// Calls `general_decision` for the pure logic, then applies the
-/// SessionMoved ratchet (deliver once, suppress thereafter).
+/// displaced ratchet (deliver SessionMoved advisory once, suppress thereafter).
 fn handle_general_hook(
     agent: &dyn Agent,
     hook_type: HookType,
@@ -368,9 +368,9 @@ fn handle_general_hook(
         hook_type,
     );
 
-    // SessionMoved ratchet: deliver the advisory once per session, then
-    // suppress. The PreToolUse block on `attend listen` independently
-    // prevents the agent from stealing the session back.
+    // Displaced ratchet: deliver the SessionMoved advisory once per
+    // session, then suppress. The PreToolUse block on `attend listen`
+    // independently prevents the agent from stealing the session back.
     if matches!(
         decision,
         HookDecision::Guidance {
@@ -379,10 +379,10 @@ fn handle_general_hook(
         }
     ) && let Some(ref sid) = input.session_id
     {
-        if session_moved_already_notified(sid) {
+        if session_displaced(sid) {
             decision = HookDecision::Silent;
         } else {
-            mark_session_moved_notified(sid);
+            mark_session_displaced(sid);
         }
     }
 
@@ -405,11 +405,11 @@ fn activate_session(session_id: &state::SessionId) -> anyhow::Result<()> {
     })?;
 
     // Mark this session as having activated attend, so narration
-    // hooks know it participates. Clear any stale "session moved"
-    // marker so this session gets a fresh notification if narration
-    // moves away again later.
+    // hooks know it participates. Clear any stale "displaced" marker
+    // so this session gets a fresh notification if narration moves
+    // away again later.
     mark_session_activated(session_id);
-    clear_session_moved_marker(session_id);
+    clear_session_displaced(session_id);
     Ok(())
 }
 

@@ -115,7 +115,7 @@ struct OracleModel {
     /// Which sessions have ever run `/attend`.
     activated: [bool; NUM_SESSIONS],
     /// Which sessions have been told about a session steal (ratchet).
-    moved_notified: [bool; NUM_SESSIONS],
+    displaced: [bool; NUM_SESSIONS],
     /// Whether the receiver process is alive.
     receiver_alive: bool,
     /// What kind of pending narration each session has.
@@ -127,7 +127,7 @@ impl OracleModel {
         Self {
             listening: None,
             activated: [false; NUM_SESSIONS],
-            moved_notified: [false; NUM_SESSIONS],
+            displaced: [false; NUM_SESSIONS],
             receiver_alive: false,
             pending: [PendingKind::None; NUM_SESSIONS],
         }
@@ -136,7 +136,7 @@ impl OracleModel {
     fn activate(&mut self, session: usize) {
         self.listening = Some(session);
         self.activated[session] = true;
-        self.moved_notified[session] = false; // ratchet reset on re-activation
+        self.displaced[session] = false; // ratchet reset on re-activation
     }
 
     fn write_pending(&mut self, session: usize) {
@@ -272,7 +272,7 @@ impl OracleModel {
                 // General hooks: advisory SessionMoved once, then silent
                 // (ratchet). The ratchet prevents the agent from seeing the
                 // same "session moved" message on every single tool call.
-                if self.moved_notified[session] {
+                if self.displaced[session] {
                     self.assert_decision(
                         outcome,
                         &HookDecision::Silent,
@@ -284,7 +284,7 @@ impl OracleModel {
                         &HookDecision::approve(GuidanceReason::SessionMoved),
                         "stolen general (first notification)",
                     );
-                    self.moved_notified[session] = true;
+                    self.displaced[session] = true;
                 }
             }
             return;
@@ -423,7 +423,7 @@ impl std::fmt::Debug for OracleModel {
         f.debug_struct("Model")
             .field("listening", &self.listening.map(|i| SESSION_NAMES[i]))
             .field("activated", &self.activated)
-            .field("moved_notified", &self.moved_notified)
+            .field("displaced", &self.displaced)
             .field("receiver_alive", &self.receiver_alive)
             .field("pending", &self.pending)
             .finish()
@@ -436,7 +436,7 @@ proptest! {
     ///
     /// The model is a complete oracle: it predicts the exact decision for
     /// every combination of (relation x activated x pending x receiver x
-    /// hook_type x listen_kind x moved_notified). Any divergence is a bug,
+    /// hook_type x listen_kind x displaced). Any divergence is a bug,
     /// and proptest shrinking will find the minimal failing sequence.
     #[test]
     fn random_sequences_match_oracle(ops in prop::collection::vec(op_strategy(), 1..40)) {

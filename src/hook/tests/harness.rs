@@ -141,12 +141,12 @@ impl TestHarness {
             .join(session_id.as_str());
         std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
         std::fs::write(&marker, "").unwrap();
-        // Clear any stale moved marker (like user_prompt does)
-        let moved = self
+        // Clear any stale displaced marker (like user_prompt does)
+        let displaced = self
             .cache()
-            .join("sessions/moved")
+            .join("sessions/displaced")
             .join(session_id.as_str());
-        let _ = std::fs::remove_file(&moved);
+        let _ = std::fs::remove_file(&displaced);
     }
 
     /// Write a pending narration file for the given session.

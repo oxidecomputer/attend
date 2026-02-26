@@ -36,7 +36,7 @@ pub(super) fn general_decision(
     match relation {
         SessionRelation::Inactive => HookDecision::Silent,
 
-        // Advisory: inform the agent that narration moved away.
+        // Advisory: inform the agent that narration was displaced.
         SessionRelation::Stolen => HookDecision::approve(GuidanceReason::SessionMoved),
 
         SessionRelation::Active => {

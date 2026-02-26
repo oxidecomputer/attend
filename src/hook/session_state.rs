@@ -18,25 +18,29 @@ pub(super) fn session_cache_path(session_id: &SessionId) -> Option<Utf8PathBuf> 
     )
 }
 
-/// Path to the "session moved" notification marker for a given session.
-fn moved_marker_path(session_id: &SessionId) -> Option<Utf8PathBuf> {
-    Some(sessions_dir()?.join("moved").join(session_id.as_str()))
+/// Path to the "displaced" marker for a given session.
+///
+/// A displaced session is one that is no longer the active listener — either
+/// because another session took over or because narration was explicitly
+/// deactivated. Displaced sessions should not auto-reclaim narration.
+fn displaced_marker_path(session_id: &SessionId) -> Option<Utf8PathBuf> {
+    Some(sessions_dir()?.join("displaced").join(session_id.as_str()))
 }
 
-/// Check whether this session has already been notified of a session move.
-pub(super) fn session_moved_already_notified(session_id: &SessionId) -> bool {
-    moved_marker_path(session_id).is_some_and(|p| p.exists())
+/// Check whether this session has been displaced (stolen or deactivated).
+pub(super) fn session_displaced(session_id: &SessionId) -> bool {
+    displaced_marker_path(session_id).is_some_and(|p| p.exists())
 }
 
-/// Record that this session has been notified of a session move.
-pub(super) fn mark_session_moved_notified(session_id: &SessionId) {
-    if let Some(path) = moved_marker_path(session_id) {
+/// Record that this session has been displaced.
+pub(super) fn mark_session_displaced(session_id: &SessionId) {
+    if let Some(path) = displaced_marker_path(session_id) {
         let _ = fs::create_dir_all(path.parent().unwrap());
         let _ = fs::write(&path, "");
     }
 }
 
-/// Remove all marker files from the `sessions/moved/` and `sessions/activated/` directories.
+/// Remove all marker files from the `sessions/displaced/` and `sessions/activated/` directories.
 ///
 /// Called on session start to prevent unbounded accumulation of
 /// marker files from old sessions.
@@ -44,7 +48,7 @@ pub(super) fn clean_session_markers() {
     let Some(sessions) = sessions_dir() else {
         return;
     };
-    for subdir in ["moved", "activated"] {
+    for subdir in ["displaced", "moved", "activated"] {
         let dir = sessions.join(subdir);
         let Ok(entries) = fs::read_dir(&dir) else {
             continue;
@@ -57,7 +61,7 @@ pub(super) fn clean_session_markers() {
     clean_legacy_session_files();
 }
 
-/// Remove legacy `cache-*`, `moved-*`, and `activated-*` files from the cache root.
+/// Remove legacy `cache-*`, `moved-*`, `displaced-*`, and `activated-*` files from the cache root.
 ///
 /// These were written by versions prior to the `sessions/` subdirectory layout.
 /// Runs once per session start; harmless when no legacy files remain.
@@ -71,6 +75,7 @@ fn clean_legacy_session_files() {
     for entry in entries.flatten() {
         if let Some(name) = entry.file_name().to_str()
             && (name.starts_with("cache-")
+                || name.starts_with("displaced-")
                 || name.starts_with("moved-")
                 || name.starts_with("activated-"))
         {
@@ -79,9 +84,9 @@ fn clean_legacy_session_files() {
     }
 }
 
-/// Clear the "session moved" marker, e.g. when `/attend` re-activates.
-pub(crate) fn clear_session_moved_marker(session_id: &SessionId) {
-    if let Some(path) = moved_marker_path(session_id) {
+/// Clear the "displaced" marker, e.g. when `/attend` re-activates.
+pub(crate) fn clear_session_displaced(session_id: &SessionId) {
+    if let Some(path) = displaced_marker_path(session_id) {
         let _ = fs::remove_file(&path); // Best-effort
     }
 }
