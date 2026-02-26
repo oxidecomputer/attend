@@ -155,10 +155,14 @@ The hook may deny your `attend listen` call. When this happens, the denial
 message explains why. The three reasons are:
 
 - **Deactivated**: narration was stopped (via `/unattend` or externally). The
-  session is over. Let the user know they can run `/attend` to reactivate.
+  session is over. Recovery requires the user to run `/attend` to create a new
+  session — you cannot reactivate narration by running `attend listen` yourself,
+  even if the user asks you to start listening. The skill must be re-invoked.
+  Let the user know they can run `/attend` to reactivate.
 - **Session moved**: narration is active in a different agent session. This
-  session is not the active listener. Let the user know they can run `/attend`
-  in this session to shift narration here.
+  session is not the active listener. The user must run `/attend` in this
+  session to shift narration here — you cannot reclaim the session by running
+  `attend listen` yourself.
 - **Listener already active**: another listener is already running for this
   session. It will deliver narration when it arrives.
 
