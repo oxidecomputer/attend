@@ -7,6 +7,11 @@
 //!   editor independently) and watches for content changes via mtime.
 //! - [`ext_capture`]: polls the platform accessibility API for selected text
 //!   in external applications (e.g. iTerm2, Safari).
+//!
+//! Clipboard polling is managed separately: the thread is killed on pause
+//! and a fresh one is spawned on resume. This avoids a race where clipboard
+//! changes made while paused (e.g. yank copying rendered narration) would
+//! be captured as events in the next recording period.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -27,18 +32,34 @@ pub(crate) struct CaptureHandle {
     editor_thread: Option<thread::JoinHandle<()>>,
     diff_thread: Option<thread::JoinHandle<()>>,
     ext_thread: Option<thread::JoinHandle<()>>,
+
+    // Clipboard thread has its own lifecycle: killed on pause, respawned on
+    // resume, so that each recording period seeds from the current clipboard
+    // and never observes changes made while paused.
+    clipboard_stop: Arc<AtomicBool>,
     clipboard_thread: Option<thread::JoinHandle<()>>,
+    clipboard_enabled: bool,
+    clipboard_staging_dir: Utf8PathBuf,
 }
 
 impl CaptureHandle {
-    /// Pause all capture threads (skip polling, sleep at longer intervals).
-    pub fn pause(&self) {
+    /// Pause all capture threads.
+    ///
+    /// Editor, diff, and ext threads enter a sleep loop via the shared
+    /// paused flag. The clipboard thread is stopped outright and its join
+    /// handle released — a fresh thread is spawned on [`resume`](Self::resume).
+    pub fn pause(&mut self) {
         self.paused_flag.store(true, Ordering::Relaxed);
+        self.stop_clipboard();
     }
 
     /// Resume all capture threads.
-    pub fn resume(&self) {
+    ///
+    /// Clears the shared paused flag for editor/diff/ext and spawns a
+    /// fresh clipboard polling thread that seeds from the current clipboard.
+    pub fn resume(&mut self) {
         self.paused_flag.store(false, Ordering::Relaxed);
+        self.spawn_clipboard();
     }
 
     /// Drain accumulated events without stopping threads.
@@ -53,6 +74,7 @@ impl CaptureHandle {
     /// Signal stop and collect remaining results.
     pub fn collect(mut self) -> (Vec<Event>, Vec<Event>, Vec<Event>, Vec<Event>) {
         self.stop_flag.store(true, Ordering::Relaxed);
+        self.stop_clipboard();
 
         // Intentionally ignored: thread panics are non-recoverable here.
         if let Some(h) = self.editor_thread.take() {
@@ -64,11 +86,30 @@ impl CaptureHandle {
         if let Some(h) = self.ext_thread.take() {
             let _ = h.join();
         }
+
+        self.drain()
+    }
+
+    /// Stop the clipboard polling thread and join it.
+    fn stop_clipboard(&mut self) {
+        self.clipboard_stop.store(true, Ordering::Relaxed);
         if let Some(h) = self.clipboard_thread.take() {
             let _ = h.join();
         }
+    }
 
-        self.drain()
+    /// Spawn a fresh clipboard polling thread with a new stop flag.
+    fn spawn_clipboard(&mut self) {
+        if !self.clipboard_enabled {
+            return;
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        self.clipboard_stop = Arc::clone(&stop);
+        self.clipboard_thread = super::clipboard_capture::spawn(
+            stop,
+            Arc::clone(&self.clipboard_events),
+            self.clipboard_staging_dir.clone(),
+        );
     }
 }
 
@@ -119,12 +160,12 @@ pub(crate) fn start(
         ext_ignore_apps,
     );
 
+    let clipboard_stop = Arc::new(AtomicBool::new(false));
     let clipboard_thread = if clipboard_capture {
         super::clipboard_capture::spawn(
-            Arc::clone(&stop_flag),
-            Arc::clone(&paused_flag),
+            Arc::clone(&clipboard_stop),
             Arc::clone(&clipboard_events),
-            clipboard_staging_dir,
+            clipboard_staging_dir.clone(),
         )
     } else {
         None
@@ -140,6 +181,9 @@ pub(crate) fn start(
         editor_thread: Some(editor_thread),
         diff_thread: Some(diff_thread),
         ext_thread,
+        clipboard_stop,
         clipboard_thread,
+        clipboard_enabled: clipboard_capture,
+        clipboard_staging_dir,
     })
 }

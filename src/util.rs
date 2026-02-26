@@ -67,6 +67,22 @@ pub fn utc_now_nanos() -> String {
     Utc::now().format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string()
 }
 
+/// XDG config home: `$XDG_CONFIG_HOME` if set, otherwise `~/.config`.
+///
+/// `dirs::config_dir()` returns `~/Library/Application Support` on macOS,
+/// which is the platform-native convention but not what we want: attend
+/// uses `~/.config/attend/` on all platforms for consistency.
+pub(crate) fn xdg_config_home() -> Option<Utf8PathBuf> {
+    if let Ok(val) = std::env::var("XDG_CONFIG_HOME")
+        && !val.is_empty()
+    {
+        return Some(Utf8PathBuf::from(val));
+    }
+    let home = dirs::home_dir()?;
+    let home = Utf8PathBuf::try_from(home).ok()?;
+    Some(home.join(".config"))
+}
+
 /// Check if a path is under `cwd` or any of the `include_dirs`.
 pub(crate) fn path_included(path: &str, cwd: &Utf8Path, include_dirs: &[Utf8PathBuf]) -> bool {
     let p = Utf8Path::new(path);

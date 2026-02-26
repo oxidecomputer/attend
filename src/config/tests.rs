@@ -119,6 +119,7 @@ fn merge_semantics() {
         archive_retention: None,
         ext_ignore_apps: vec!["Zed".into()],
         clipboard_capture: None,
+        daemon_idle_timeout: None,
     };
     let other = Config {
         include_dirs: vec![Utf8PathBuf::from("/b")],
@@ -128,6 +129,7 @@ fn merge_semantics() {
         archive_retention: Some("30d".to_string()),
         ext_ignore_apps: vec!["Slack".into()],
         clipboard_capture: Some(false),
+        daemon_idle_timeout: Some("10m".to_string()),
     };
     base.merge(other);
     assert_eq!(
@@ -142,6 +144,8 @@ fn merge_semantics() {
     assert_eq!(base.archive_retention, Some("30d".to_string()));
     // Arrays are concatenated
     assert_eq!(base.ext_ignore_apps, vec!["Zed", "Slack"]);
+    // None is filled from other
+    assert_eq!(base.daemon_idle_timeout, Some("10m".to_string()));
 }
 
 /// retention_duration parses human-friendly strings and defaults to 7 days.
@@ -172,6 +176,30 @@ fn retention_duration_parsing() {
         ..Config::default()
     };
     assert_eq!(config.retention_duration(), None);
+}
+
+/// idle_timeout parses human-friendly strings and defaults to 5 minutes.
+#[test]
+fn idle_timeout_parsing() {
+    use std::time::Duration;
+
+    // Default (None) → 5 minutes
+    let config = Config::default();
+    assert_eq!(config.idle_timeout(), Some(Duration::from_secs(5 * 60)));
+
+    // Explicit duration
+    let config = Config {
+        daemon_idle_timeout: Some("10m".to_string()),
+        ..Config::default()
+    };
+    assert_eq!(config.idle_timeout(), Some(Duration::from_secs(10 * 60)));
+
+    // "forever" → None (never auto-exit)
+    let config = Config {
+        daemon_idle_timeout: Some("forever".to_string()),
+        ..Config::default()
+    };
+    assert_eq!(config.idle_timeout(), None);
 }
 
 /// A default Config has clipboard_capture effectively true (None = default on).

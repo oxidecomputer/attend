@@ -139,26 +139,32 @@ fn install(
         sh.install_completions(&bin_cmd)?;
     }
 
-    // Track project paths: preserve existing, append new (deduplicated).
-    let mut project_paths = crate::state::installed_meta()
-        .map(|m| m.project_paths)
-        .unwrap_or_default();
+    // Merge with existing metadata so partial reinstalls don't clobber
+    // previously installed integrations.
+    let mut meta = crate::state::installed_meta().unwrap_or_default();
+    meta.version = env!("CARGO_PKG_VERSION").to_string();
+    meta.dev = dev;
+    merge_unique(&mut meta.agents, agent);
+    merge_unique(&mut meta.editors, editor);
+    merge_unique(&mut meta.browsers, browser);
+    merge_unique(&mut meta.shells, shell);
     if let Some(ref p) = project
-        && !project_paths.contains(p)
+        && !meta.project_paths.contains(p)
     {
-        project_paths.push(p.clone());
+        meta.project_paths.push(p.clone());
     }
 
-    crate::state::save_install_meta(&crate::state::InstallMeta {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        agents: agent,
-        editors: editor,
-        browsers: browser,
-        shells: shell,
-        dev,
-        project_paths,
-    });
+    crate::state::save_install_meta(&meta);
     Ok(())
+}
+
+/// Merge `new` items into `existing`, skipping duplicates.
+fn merge_unique(existing: &mut Vec<String>, new: Vec<String>) {
+    for item in new {
+        if !existing.contains(&item) {
+            existing.push(item);
+        }
+    }
 }
 
 /// Create a wrapper script that invokes `attend browser-bridge`.

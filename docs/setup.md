@@ -46,10 +46,10 @@ these are bound to hotkeys accessible without leaving your editor.
 
 | Command | Purpose |
 |---------|---------|
-| `attend narrate toggle` | Start narration, or send and stop |
-| `attend narrate start` | Start narration, or send and keep recording |
+| `attend narrate toggle` | Start if idle, or send and stop if recording |
+| `attend narrate start` | Start if idle, or send and keep recording |
 | `attend narrate pause` | Pause/resume recording |
-| `attend narrate yank` | Stop and copy narration to clipboard |
+| `attend narrate yank` | Stop, exit daemon, and copy narration to clipboard |
 
 ### Zed
 
@@ -147,6 +147,7 @@ model = "/path/to/custom/model"            # custom model path (auto-downloaded 
 include_dirs = ["/path/to/other/project"]  # additional dirs visible to the agent
 archive_retention = "7d"                   # auto-prune old narrations ("forever" to disable)
 clipboard_capture = true                   # capture clipboard changes (text and images)
+daemon_idle_timeout = "5m"                 # how long daemon idles before auto-exit ("forever" to disable)
 ```
 
 ## Troubleshooting

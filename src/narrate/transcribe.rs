@@ -88,10 +88,12 @@ impl Engine {
         self.ensure_model(path)?;
         let t0 = std::time::Instant::now();
         let transcriber = match self {
-            Engine::Whisper => Ok(Box::new(whisper::WhisperTranscriber::load(path)?)
-                as Box<dyn Transcriber>),
-            Engine::Parakeet => Ok(Box::new(parakeet::ParakeetTranscriber::load(path)?)
-                as Box<dyn Transcriber>),
+            Engine::Whisper => {
+                Ok(Box::new(whisper::WhisperTranscriber::load(path)?) as Box<dyn Transcriber>)
+            }
+            Engine::Parakeet => {
+                Ok(Box::new(parakeet::ParakeetTranscriber::load(path)?) as Box<dyn Transcriber>)
+            }
         };
         let elapsed = t0.elapsed();
         tracing::info!(

@@ -89,12 +89,18 @@ See [Narration hotkeys](setup.md#narration-hotkeys) for the commands and how to
 bind them. You can also run them directly in a terminal:
 
 ```bash
-attend narrate toggle   # start, or send and stop
-attend narrate start    # start, or send and keep recording
+attend narrate toggle   # start if idle, or send and stop if recording
+attend narrate start    # start if idle, or send and keep recording
 attend narrate stop     # send and stop (no toggle)
 attend narrate pause    # pause/resume
-attend narrate yank     # stop and copy to clipboard
+attend narrate yank     # stop, exit daemon, and copy to clipboard
 ```
+
+The recording daemon is **persistent**: when you stop recording, the daemon
+flushes content and enters an idle state with the transcription model still
+loaded. The next `toggle` or `start` resumes instantly without reloading the
+model or spawning a new process. The daemon auto-exits after an idle timeout
+(default 5 minutes; configurable via `daemon_idle_timeout`).
 
 ## Agent integration
 

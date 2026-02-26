@@ -3,19 +3,9 @@ use camino::Utf8PathBuf;
 mod fish;
 mod zsh;
 
-/// XDG config home: `$XDG_CONFIG_HOME` if set, otherwise `~/.config`.
-///
-/// Fish and zsh both use XDG paths, and `dirs::config_dir()` returns
-/// `~/Library/Application Support` on macOS — wrong for shell config.
+/// XDG config home: delegates to [`crate::util::xdg_config_home`].
 fn xdg_config_home() -> Option<Utf8PathBuf> {
-    if let Ok(val) = std::env::var("XDG_CONFIG_HOME")
-        && !val.is_empty()
-    {
-        return Some(Utf8PathBuf::from(val));
-    }
-    let home = dirs::home_dir()?;
-    let home = Utf8PathBuf::try_from(home).ok()?;
-    Some(home.join(".config"))
+    crate::util::xdg_config_home()
 }
 
 /// A shell integration that can install/uninstall hooks and completions.

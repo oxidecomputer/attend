@@ -125,7 +125,7 @@ pub(crate) fn version_path() -> Option<Utf8PathBuf> {
 }
 
 /// Metadata about the most recent hook install.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub(crate) struct InstallMeta {
     pub version: String,
     pub agents: Vec<String>,

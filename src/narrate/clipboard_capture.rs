@@ -131,17 +131,19 @@ fn hash_image_data(img: &ImageData) -> u64 {
 /// How often to poll the clipboard for changes (ms).
 const CLIPBOARD_POLL_MS: u64 = 500;
 
-/// Sleep interval when paused (ms).
-const PAUSED_POLL_MS: u64 = 500;
-
 /// Spawn the clipboard polling thread.
 ///
 /// Returns the join handle, or `None` if the clipboard cannot be accessed
 /// (e.g. headless environment). The thread pushes `ClipboardSelection`
 /// events into `events` until `stop` is set.
+///
+/// Unlike other capture threads, clipboard polling has no paused state.
+/// Instead, the thread is killed on pause and a fresh one is spawned on
+/// resume. This avoids a race where clipboard changes made while paused
+/// (e.g. yank copying rendered narration) would be captured as events
+/// in the next recording period.
 pub(super) fn spawn(
     stop: Arc<AtomicBool>,
-    paused: Arc<AtomicBool>,
     events: Arc<Mutex<Vec<Event>>>,
     staging_dir: camino::Utf8PathBuf,
 ) -> Option<thread::JoinHandle<()>> {
@@ -164,11 +166,6 @@ pub(super) fn spawn(
 
     Some(thread::spawn(move || {
         while !stop.load(Ordering::Relaxed) {
-            if paused.load(Ordering::Relaxed) {
-                thread::sleep(Duration::from_millis(PAUSED_POLL_MS));
-                continue;
-            }
-
             thread::sleep(Duration::from_millis(CLIPBOARD_POLL_MS));
 
             // Try text first, then image. First success wins.

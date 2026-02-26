@@ -79,9 +79,9 @@ impl Config {
         }
 
         // Global config
-        if let Some(global_dir) = dirs::config_dir() {
+        if let Some(global_dir) = crate::util::xdg_config_home() {
             let cfg_path = global_dir.join("attend").join("config.toml");
-            if let Some(layer) = load_file(&cfg_path) {
+            if let Some(layer) = load_file(cfg_path.as_std_path()) {
                 result.merge(layer);
             }
         }

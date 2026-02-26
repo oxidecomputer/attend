@@ -3,10 +3,17 @@
 use std::fs;
 
 use camino::Utf8PathBuf;
+use native_messaging::install::{manifest, paths::Scope};
 
 use super::transcribe::Engine;
 use super::{pause_sentinel_path, pending_dir, process_alive, receive_lock_path, record_lock_path};
 use crate::config::Config;
+
+/// Column width for label alignment (accommodates "Accessibility:").
+const COL: usize = 16;
+
+/// Column width for label alignment in the Paths sub-section.
+const PATH_COL: usize = 12;
 
 /// Show recording and system status.
 pub(crate) fn status() -> anyhow::Result<()> {
@@ -22,7 +29,7 @@ pub(crate) fn status() -> anyhow::Result<()> {
         {
             if process_alive(pid) {
                 if pause_sentinel_path().exists() {
-                    "paused"
+                    "idle (daemon resident)"
                 } else {
                     "recording"
                 }
@@ -30,14 +37,14 @@ pub(crate) fn status() -> anyhow::Result<()> {
                 "stale lock (daemon not running): run `attend narrate toggle` to clean up"
             }
         } else if pause_sentinel_path().exists() {
-            "paused"
+            "idle (daemon resident)"
         } else {
             "recording"
         }
     } else {
-        "idle"
+        "stopped"
     };
-    println!("Recording:  {recording}");
+    println!("{:<COL$}{recording}", "Recording:");
 
     // Engine / model status (from config, not hardcoded)
     let engine = config.engine.unwrap_or(Engine::Parakeet);
@@ -51,14 +58,24 @@ pub(crate) fn status() -> anyhow::Result<()> {
         "not downloaded"
     };
     println!(
-        "Engine:     {} (model {model_status})",
+        "{:<COL$}{} (model {model_status})",
+        "Engine:",
         engine.display_name()
     );
+
+    // Idle timeout
+    let idle_timeout = match config.daemon_idle_timeout.as_deref() {
+        Some("forever") => "forever".to_string(),
+        Some(s) => s.to_string(),
+        None => "5m (default)".to_string(),
+    };
+    println!("{:<COL$}{idle_timeout}", "Idle timeout:");
 
     // Session
     let session = crate::state::listening_session();
     println!(
-        "Session:    {}",
+        "{:<COL$}{}",
+        "Session:",
         session.as_ref().map_or("none", |s| s.as_str())
     );
 
@@ -81,31 +98,74 @@ pub(crate) fn status() -> anyhow::Result<()> {
     } else {
         "inactive"
     };
-    println!("Listener:   {listener}");
+    println!("{:<COL$}{listener}", "Listener:");
 
     // Editor integration health
+    let mut editor_parts: Vec<String> = Vec::new();
     for editor in crate::editor::EDITORS {
         let warnings = editor.check_narration()?;
         if warnings.is_empty() {
-            println!("Editor:     {} (ok)", editor.name());
+            editor_parts.push(format!("{} (ok)", editor.name()));
         } else {
-            println!("Editor:     {} ({})", editor.name(), warnings.join("; "));
+            editor_parts.push(format!("{} ({})", editor.name(), warnings.join("; ")));
         }
+    }
+    if !editor_parts.is_empty() {
+        println!("{:<COL$}{}", "Editors:", editor_parts.join(", "));
     }
 
     // Shell integration health
-    if let Some(meta) = crate::state::installed_meta() {
+    let meta = crate::state::installed_meta();
+    let mut shell_parts: Vec<String> = Vec::new();
+    if let Some(ref meta) = meta {
         for name in &meta.shells {
             if let Some(sh) = crate::shell::shell_by_name(name) {
                 let warnings = sh.check()?;
                 if warnings.is_empty() {
-                    println!("Shell:      {name} (ok)");
+                    shell_parts.push(format!("{name} (ok)"));
                 } else {
-                    println!("Shell:      {name} ({})", warnings.join("; "));
+                    shell_parts.push(format!("{name} ({})", warnings.join("; ")));
                 }
             }
         }
     }
+    if !shell_parts.is_empty() {
+        println!("{:<COL$}{}", "Shells:", shell_parts.join(", "));
+    }
+
+    // Browser integration health (only show browsers with manifests installed)
+    let mut browser_parts: Vec<String> = Vec::new();
+    for browser in crate::browser::BROWSERS {
+        let name = browser.name();
+        let manifest_ok =
+            manifest::verify_installed("attend", Some(&[name]), Scope::User).unwrap_or(false);
+        if manifest_ok {
+            browser_parts.push(format!("{name} (ok)"));
+        }
+    }
+    if !browser_parts.is_empty() {
+        println!("{:<COL$}{}", "Browsers:", browser_parts.join(", "));
+    }
+
+    // Accessibility (external selection capture)
+    let accessibility = if let Some(source) = super::ext_capture::platform_source() {
+        if source.is_available() {
+            "ok"
+        } else {
+            "permission not granted (System Settings > Privacy & Security > Accessibility)"
+        }
+    } else {
+        "not available (no platform backend)"
+    };
+    println!("{:<COL$}{accessibility}", "Accessibility:");
+
+    // Clipboard capture
+    let clipboard = if config.clipboard_capture.unwrap_or(true) {
+        "enabled"
+    } else {
+        "disabled"
+    };
+    println!("{:<COL$}{clipboard}", "Clipboard:");
 
     // Pending narration count (session + _local)
     let count_json = |dir: camino::Utf8PathBuf| -> usize {
@@ -124,7 +184,26 @@ pub(crate) fn status() -> anyhow::Result<()> {
         .unwrap_or(0);
     let local_count = count_json(pending_dir(None));
     let count = session_count + local_count;
-    println!("Pending:    {count} narration(s)");
+    println!("{:<COL$}{count} narration(s)", "Pending:");
+
+    // Archive size
+    let archive_root = super::cache_dir().join("archive");
+    let archive_size = dir_size_bytes(archive_root.as_std_path());
+    println!("{:<COL$}{}", "Archive:", format_size(archive_size));
+
+    // Useful paths
+    println!();
+    println!("Paths:");
+    println!("  {:<PATH_COL$}{}", "Cache:", super::cache_dir());
+    println!("  {:<PATH_COL$}{archive_root}", "Archive:");
+    println!("  {:<PATH_COL$}{lock_path}", "Lock:");
+    if let Some(global_dir) = crate::util::xdg_config_home() {
+        println!(
+            "  {:<PATH_COL$}{}",
+            "Config:",
+            global_dir.join("attend").join("config.toml")
+        );
+    }
 
     // Config validation
     let mut warnings = Vec::new();
@@ -166,4 +245,36 @@ pub(crate) fn status() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Recursively compute total size of a directory in bytes.
+fn dir_size_bytes(path: &std::path::Path) -> u64 {
+    let mut total = 0u64;
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let ft = entry.file_type();
+            if ft.as_ref().is_ok_and(|t| t.is_dir()) {
+                total += dir_size_bytes(&entry.path());
+            } else if ft.as_ref().is_ok_and(|t| t.is_file()) {
+                total += entry.metadata().map(|m| m.len()).unwrap_or(0);
+            }
+        }
+    }
+    total
+}
+
+/// Format a byte count as a human-readable size string.
+fn format_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{bytes} B")
+    }
 }
