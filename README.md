@@ -14,26 +14,23 @@ so your coding agent knows what's in front of you.
 A narration weaves together up to seven sources of context, interleaved
 chronologically:
 
-- **Voice**: your speech, transcribed to text via a local model. Always
-  available when recording.
+- **Voice**: your speech, transcribed to text via a local model.
 - **Editor snapshots**: the code around your cursor or selection, with file
-  path and language. Captured whenever you navigate or select. Requires editor
-  integration.
-- **File diffs**: the net change to files you edited while speaking. Requires
-  editor integration.
+  path and language (requires editor integration, installable from the CLI).
+- **File diffs**: the net change to files you edited while speaking (requires
+  editor integration, installable from the CLI).
 - **External selections**: text you highlighted in any application, captured
-  via the accessibility API. macOS only; requires granting the accessibility
-  permission.
+  via the accessibility API (macOS only; requires granting the accessibility
+  permission).
 - **Browser selections**: rich text you selected on a web page, with the page
-  URL and title. Requires a browser extension.
-- **Clipboard**: text *or images* you copied (Cmd+C) during recording. Text
-  that duplicates a richer source (browser or external selection) is
-  automatically dropped.
+  URL and title (requires a browser extension, installable from the CLI).
+- **Clipboard**: text *or images* you copied during recording.
 - **Shell commands**: commands you ran, with exit status and duration. Requires
-  shell hook integration.
+  shell hook integration (installable from the CLI).
 
 Editor snapshots, file diffs, and shell commands are scoped to the agent's
-working directory; those from outside it are marked as redacted.
+working directory; those from outside it are marked as redacted to prevent
+unintended disclosure.
 
 Personally, I've found "pair programming" using `attend`'s voice narration is
 a rather different experience from typing my thoughts to a coding agent. There's
@@ -56,7 +53,7 @@ The architecture supports adding new editors, agents, shells, and browsers
 independently of one another. See the [extending guide](docs/extending.md)
 for how to add new integrations. Contributions welcome!
 
-## Quick start
+## Installing
 
 To install `attend`, you'll need
 [Rust](https://rust-lang.org/learn/get-started/); then, you should:
@@ -67,7 +64,7 @@ attend install --agent claude --editor zed    # for example
 ```
 
 This installs the hooks that provide editor context to Claude Code, plus
-keybindings for narration control (toggle, start, pause, yank) from within
+keybindings for narration control (start, pause, toggle, yank) from within
 Zed. See [Narration hotkeys](docs/setup.md#narration-hotkeys) for the full
 list.
 

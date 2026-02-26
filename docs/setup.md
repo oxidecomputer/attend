@@ -4,6 +4,85 @@ This guide covers optional integrations, configuration, and troubleshooting. For
 initial installation, see the [quickstart in the
 README](../README.md#quick-start).
 
+## Agent integration
+
+For the agent to receive your narration, ask it to attend.
+
+In Claude Code, this is done with the `/attend` slash-command. If you use
+multiple Claude Code sessions, you can move narration from one session to
+another by invoking `/attend` in whichever session you'd like to switch to.
+
+To stop narration being delivered to this agent, use the `/unattend`
+slash-command, or ask the agent to stop listening (it will run `attend listen
+--stop` on your behalf). The running background listener detects the change and
+exits naturally.
+
+You can narrate responses to the agent without leaving your editor — the only
+time you need to switch is when the agent asks for keyboard input (plan
+approval, multiple-choice questions, or permission prompts).
+
+As a security precaution, the agent only sees editor context (cursors,
+selections, file contents, diffs) from within its own working directory. If you
+navigate to files elsewhere in your editor, the agent won't be able to follow
+along. You can expand this with `include_dirs` in the config file (see
+[Configuration](#configuration)).
+
+## Narration hotkeys
+
+Narration is controlled by four commands. You'll have the best experience if
+these are bound to hotkeys accessible without leaving your editor (or other
+applications of interest, like [browsers](#browser-integration), etc.).
+
+| Command                 | Purpose                                            |
+|-------------------------|----------------------------------------------------|
+| `attend narrate toggle` | Start if idle, or send and stop if recording       |
+| `attend narrate start`  | Start if idle, or send and keep recording          |
+| `attend narrate pause`  | Pause/resume recording                             |
+| `attend narrate yank`   | Stop, exit daemon, and copy narration to clipboard |
+
+### Zed
+
+`attend install --editor zed` installs keybindings and tasks automatically:
+
+| macOS  | Linux     | Task                     |
+|--------|-----------|--------------------------|
+| `⌘ ;` | `Super ;` | attend: toggle narration |
+| `⌘ :` | `Super :` | attend: start narration  |
+| `⌘ {` | `Super {` | attend: pause narration  |
+| `⌘ }` | `Super }` | attend: yank narration   |
+
+Reinstallation respects any keybinding changes you've made within Zed.
+
+### Global hotkeys (macOS / Linux)
+
+If you use a hotkey manager that can assign commands to keys, you can bind
+*global* hotkeys to the narrate subcommands. On macOS, you can [bind a global
+keyboard shortcut to a script using the Shortcuts
+app](https://support.apple.com/guide/shortcuts-mac/launch-a-shortcut-from-another-app-apd163eb9f95/mac).
+Your favorite Linux distribution almost certainly has some way to do this too.
+
+### iTerm2
+
+iTerm2 does not pick up macOS global hotkeys set using the above technique. To
+use the same keybindings from iTerm2, add key mappings under Settings > Keys >
+Key Bindings:
+
+1. Click **+** to add a new binding.
+2. Set the shortcut, action **Run Coprocess**, and the corresponding command.
+3. Ensure it is marked as "Apply to current session" (the default).
+4. Repeat for each shortcut you want.
+
+| Shortcut | Command                              |
+|----------|--------------------------------------|
+| `⌘ ;`   | `~/.cargo/bin/attend narrate toggle` |
+| `⌘ :`   | `~/.cargo/bin/attend narrate start`  |
+| `⌘ {`   | `~/.cargo/bin/attend narrate pause`  |
+| `⌘ }`   | `~/.cargo/bin/attend narrate yank`   |
+
+Use the full path (`~/.cargo/bin/attend`) because iTerm2 coprocesses run under
+`/bin/sh`, which does not have `~/.cargo/bin` (and thereby `attend`) in its
+`$PATH`.
+
 ## Browser integration
 
 To capture text selections from your browser and deliver them as narration
@@ -38,81 +117,6 @@ attend install --shell fish   # or: --shell zsh
 This installs hooks that fire on every command. When narration is active,
 commands you run in that shell are captured and delivered alongside speech and
 editor context, so the agent can see what you executed.
-
-## Narration hotkeys
-
-Narration is controlled by four commands. You'll have the best experience if
-these are bound to hotkeys accessible without leaving your editor.
-
-| Command | Purpose |
-|---------|---------|
-| `attend narrate toggle` | Start if idle, or send and stop if recording |
-| `attend narrate start` | Start if idle, or send and keep recording |
-| `attend narrate pause` | Pause/resume recording |
-| `attend narrate yank` | Stop, exit daemon, and copy narration to clipboard |
-
-### Zed
-
-`attend install --editor zed` installs keybindings and tasks automatically:
-
-| macOS | Linux | Task |
-|-------|-------|------|
-| `⌘ ;` | `Super ;` | attend: toggle narration |
-| `⌘ :` | `Super :` | attend: start narration |
-| `⌘ {` | `Super {` | attend: pause narration |
-| `⌘ }` | `Super }` | attend: yank narration |
-
-Reinstallation respects any keybinding changes you've made in Zed.
-
-### Global hotkeys (macOS / Linux)
-
-If you use a hotkey manager that can assign commands to keys, you can bind
-*global* hotkeys to the narrate subcommands. On macOS, you can [bind a global
-keyboard shortcut to a script using the Shortcuts
-app](https://support.apple.com/guide/shortcuts-mac/launch-a-shortcut-from-another-app-apd163eb9f95/mac).
-Your favorite Linux distribution almost certainly has some way to do this too.
-
-### iTerm2
-
-iTerm2 does not pick up macOS global hotkeys. To use the same keybindings from
-iTerm2, add key mappings under Settings > Keys > Key Bindings:
-
-1. Click **+** to add a new binding.
-2. Set the shortcut, action **Run Coprocess**, and the corresponding command.
-3. Ensure it is marked as "Apply to current session".
-4. Repeat for each shortcut you want.
-
-| Shortcut | Command |
-|----------|---------|
-| `⌘;` | `~/.cargo/bin/attend narrate toggle` |
-| `⌘:` | `~/.cargo/bin/attend narrate start`  |
-| `⌘{` | `~/.cargo/bin/attend narrate pause`  |
-| `⌘}` | `~/.cargo/bin/attend narrate yank`   |
-
-Use the full path (`~/.cargo/bin/attend`) because iTerm2 coprocesses run under
-`/bin/sh`, which does not have `~/.cargo/bin` in its PATH.
-
-## Agent integration
-
-For the agent to receive your narration, ask it to attend.
-
-In Claude Code, this is done with the `/attend` slash-command. If you use
-multiple Claude Code sessions, you can move narration from one session to
-another by invoking `/attend` in whichever session you'd like to switch to.
-
-To stop narration, use the `/unattend` slash-command, or ask the agent to
-stop listening (it will run `attend listen --stop` on your behalf). The
-running background listener detects the change and exits naturally.
-
-You can narrate responses to the agent without leaving your editor — the only
-time you need to switch is when the agent asks for keyboard input (plan
-approval, multiple-choice questions, or permission prompts).
-
-As a security precaution, the agent only sees editor context (cursors,
-selections, file contents, diffs) from within its own working directory. If you
-navigate to files elsewhere in your editor, the agent won't be able to follow
-along. You can expand this with `include_dirs` in the config file (see
-[Configuration](#configuration)).
 
 ## Transcription model
 
@@ -152,16 +156,37 @@ daemon_idle_timeout = "5m"                 # how long daemon idles before auto-e
 ## Troubleshooting
 
 Run `attend narrate status` to check that everything is wired up correctly. It
-shows whether narration is recording, which engine and session are active,
-whether the editor integration is healthy, and whether any narration is pending.
+will report something like this:
 
-### Microphone permissions (macOS)
+```
+Recording:      recording
+Engine:         Parakeet TDT (model downloaded)
+Idle timeout:   5m (default)
+Session:        a33c5803-8369-430d-9acf-70f24a5ba2d4
+Listener:       active
+Editors:        zed (ok)
+Shells:         fish (ok)
+Browsers:       firefox (ok)
+Accessibility:  ok
+Clipboard:      enabled
+Pending:        0 narration(s)
+Archive:        424.0 KB
+
+Paths:
+  Cache:      ~/Library/Caches/attend
+  Archive:    ~/Library/Caches/attend/narration/archive
+  Lock:       ~/Library/Caches/attend/daemon/lock
+  Config:     ~/.config/attend/config.toml
+```
+
+### Microphone and accessibility permissions (macOS)
 
 The recording daemon needs microphone access. macOS prompts for permission the
 first time the daemon is launched from a given parent process. If narration
 starts but produces no speech, check **System Settings > Privacy & Security >
 Microphone** and ensure the **focused app** has microphone permissions, because
-the keyboard shortcut is triggering the script from within that app's context.
+the keyboard shortcut is triggering the script from within that app's context. A
+similar dance may be necessary to grant *accessibility* permissions as well.
 
 If the permission prompt never appeared, the daemon may have been blocked
 silently. Try running `attend narrate toggle` directly in a terminal to trigger
