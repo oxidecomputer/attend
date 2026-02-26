@@ -237,7 +237,7 @@ be performed as specified, please do it.
 - [x] 19.23 Implement clipboard subsumption (one-directional)
 - [x] 19.24 Implement render
 - [x] 19.25 Implement filter pass-through
-- [ ] 19.26 Browser extension: emit `plain_text` (deferred: extension-side change)
+- [x] 19.26 Browser extension: emit `plain_text`
 #### D: Wiring + docs
 - [x] 19.27 Implement `clipboard_capture::spawn()` polling thread
 - [x] 19.28 Wire into `CaptureHandle` as fourth thread
