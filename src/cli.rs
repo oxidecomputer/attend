@@ -170,7 +170,8 @@ pub enum Command {
         session: Option<String>,
 
         /// Deactivate narration: remove the listening file and exit.
-        #[arg(long)]
+        /// With --session, only deactivate if the active session matches.
+        #[arg(long, conflicts_with = "check")]
         stop: bool,
     },
     /// Respond to agent lifecycle events (used by installed hooks).
