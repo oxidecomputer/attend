@@ -23,6 +23,10 @@ use crate::util;
 struct BridgeMessage {
     /// The selected content as an HTML fragment.
     html: String,
+    /// Plain-text rendering of the selection (`selection.toString()` from
+    /// the browser). Used for dedup against clipboard and external selections.
+    #[serde(default)]
+    plain_text: String,
     /// Page URL.
     url: String,
     /// Page title.
@@ -79,7 +83,7 @@ pub(super) fn run() -> anyhow::Result<()> {
         last_seen: now,
         url: msg.url,
         title: msg.title,
-        plain_text: String::new(), // TODO (Phase 19): populate from extension's plain_text field
+        plain_text: msg.plain_text,
         text,
     }];
 
@@ -102,7 +106,7 @@ pub(super) fn run() -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
-    /// BridgeMessage deserializes correctly from extension JSON.
+    /// BridgeMessage deserializes correctly from extension JSON (without plain_text).
     #[test]
     fn deserialize_bridge_message() {
         let json = r#"{
@@ -114,6 +118,20 @@ mod tests {
         assert_eq!(msg.html, "<code>pub fn spawn(&amp;mut self)</code>");
         assert_eq!(msg.url, "https://docs.rs/tokio/latest/tokio/process/");
         assert_eq!(msg.title, "tokio::process - Rust");
+        assert_eq!(msg.plain_text, "", "missing plain_text defaults to empty");
+    }
+
+    /// BridgeMessage deserializes plain_text when present.
+    #[test]
+    fn deserialize_bridge_message_with_plain_text() {
+        let json = r#"{
+            "html": "<strong>bold</strong> text",
+            "plain_text": "bold text",
+            "url": "https://example.com",
+            "title": "Example"
+        }"#;
+        let msg: BridgeMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.plain_text, "bold text");
     }
 
     /// HTML is converted to markdown by the bridge.

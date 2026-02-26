@@ -41,6 +41,7 @@ function onSelectionComplete() {
   browser.runtime.sendMessage({
     type: "selection",
     html: html,
+    plain_text: text,
     url: location.href,
     title: document.title,
   });

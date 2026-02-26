@@ -12,6 +12,7 @@ browser.runtime.onMessage.addListener((msg) => {
   browser.runtime
     .sendNativeMessage("attend", {
       html: msg.html,
+      plain_text: msg.plain_text,
       url: msg.url,
       title: msg.title,
     })
