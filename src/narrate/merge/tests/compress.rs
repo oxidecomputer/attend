@@ -970,3 +970,45 @@ fn preexec_only_survives() {
         .count();
     assert_eq!(cmd_count, 1, "preexec survives without postexec");
 }
+
+/// Postexec dedup preserves the preexec's cwd, not the postexec's.
+///
+/// Directory-changing commands (e.g. `cd ..`) have different cwds at
+/// preexec and postexec time. The preexec cwd is the command's actual
+/// working directory; the postexec cwd reflects the destination.
+#[test]
+fn preexec_postexec_dedup_preserves_preexec_cwd() {
+    let mut events = vec![
+        Event::ShellCommand {
+            timestamp: ts(1.0),
+            shell: "fish".to_string(),
+            command: "cd ..".to_string(),
+            cwd: "/home/user/project".to_string(),
+            exit_status: None,
+            duration_secs: None,
+        },
+        Event::ShellCommand {
+            timestamp: ts(1.1),
+            shell: "fish".to_string(),
+            command: "cd ..".to_string(),
+            cwd: "/home/user".to_string(),
+            exit_status: Some(0),
+            duration_secs: Some(0.01),
+        },
+    ];
+    compress_and_merge(&mut events);
+    assert_eq!(events.len(), 1, "merged into one event");
+    if let Event::ShellCommand {
+        cwd,
+        exit_status,
+        duration_secs,
+        ..
+    } = &events[0]
+    {
+        assert_eq!(cwd, "/home/user/project", "cwd should be from preexec");
+        assert_eq!(*exit_status, Some(0), "exit status should be from postexec");
+        assert!(duration_secs.is_some(), "duration should be from postexec");
+    } else {
+        panic!("expected ShellCommand");
+    }
+}

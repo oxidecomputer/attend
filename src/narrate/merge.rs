@@ -366,10 +366,25 @@ fn collapse_ext_selections(selections: Vec<Event>) -> Vec<Event> {
                 exit_status,
                 ..
             } => {
-                // Preexec/postexec dedup: if earlier preexec(s) (exit_status=None)
-                // for the same command text exist, remove them all and push the
-                // postexec (which has richer data: exit status + duration).
+                // Preexec/postexec dedup: merge preexec + postexec into one
+                // event with the preexec's cwd (the command's actual working
+                // directory) and the postexec's exit status + duration.
+                //
+                // The preexec cwd is correct because it captures where the
+                // user was when they typed the command. The postexec cwd may
+                // differ for directory-changing commands (e.g. `cd ..`).
                 if exit_status.is_some() {
+                    let cmd = command.clone();
+                    // Find the preexec's cwd before removing it.
+                    let preexec_cwd = result.iter().find_map(|e| match e {
+                        Event::ShellCommand {
+                            command: c,
+                            exit_status: None,
+                            cwd,
+                            ..
+                        } if *c == cmd => Some(cwd.clone()),
+                        _ => None,
+                    });
                     result.retain(|e| {
                         !matches!(
                             e,
@@ -377,9 +392,19 @@ fn collapse_ext_selections(selections: Vec<Event>) -> Vec<Event> {
                                 command: c,
                                 exit_status: None,
                                 ..
-                            } if c == command
+                            } if *c == cmd
                         )
                     });
+                    // If we found a preexec, use its cwd on the merged event.
+                    let mut event = event;
+                    if let Some(cwd) = preexec_cwd
+                        && let Event::ShellCommand {
+                            cwd: ref mut event_cwd,
+                            ..
+                        } = event
+                    {
+                        *event_cwd = cwd;
+                    }
                     result.push(event);
                 } else {
                     result.push(event);
