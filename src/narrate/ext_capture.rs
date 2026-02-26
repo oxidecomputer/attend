@@ -78,6 +78,17 @@ pub(crate) struct ExtDwellTracker {
     prev_text: Option<String>,
 }
 
+/// Result of processing an external snapshot through the dwell tracker.
+#[derive(Debug)]
+pub(crate) enum ExtUpdate {
+    /// New selection text: push a new event.
+    New(ExternalSnapshot),
+    /// Same text as last emission: extend last event's `last_seen`.
+    Extend,
+    /// No text selected or nothing to report.
+    None,
+}
+
 impl ExtDwellTracker {
     /// Create a new tracker.
     pub fn new() -> Self {
@@ -86,27 +97,24 @@ impl ExtDwellTracker {
 
     /// Process a new external snapshot.
     ///
-    /// Returns `Some(snapshot)` immediately if the selected text changed.
-    /// Returns `None` if unchanged (exact-match dedup) or empty.
-    pub fn update(
-        &mut self,
-        snapshot: ExternalSnapshot,
-        _now: Instant,
-    ) -> Option<ExternalSnapshot> {
+    /// Returns `New(snapshot)` immediately if the selected text changed.
+    /// Returns `Extend` if unchanged (same text, for `last_seen` update).
+    /// Returns `None` if no text is selected.
+    pub fn update(&mut self, snapshot: ExternalSnapshot, _now: Instant) -> ExtUpdate {
         let current_text = snapshot.selected_text.as_deref();
 
         // No text selected: nothing to emit.
         if current_text.is_none() || current_text == Some("") {
-            return None;
+            return ExtUpdate::None;
         }
 
-        // Deduplicate: same text as the last emission, skip.
+        // Same text as the last emission: extend last_seen.
         if current_text == self.prev_text.as_deref() {
-            return None;
+            return ExtUpdate::Extend;
         }
 
         self.prev_text = snapshot.selected_text.clone();
-        Some(snapshot)
+        ExtUpdate::New(snapshot)
     }
 }
 
@@ -157,15 +165,27 @@ pub(super) fn spawn(
                 continue;
             }
 
-            // Emit immediately on change with UTC timestamp.
-            if let Some(snapshot) = tracker.update(snapshot, now) {
-                let timestamp = chrono::Utc::now();
-                events.lock().unwrap().push(Event::ExternalSelection {
-                    timestamp,
-                    app: snapshot.app,
-                    window_title: snapshot.window_title,
-                    text: snapshot.selected_text.unwrap_or_default(),
-                });
+            // Emit or extend based on tracker result.
+            match tracker.update(snapshot, now) {
+                ExtUpdate::New(snapshot) => {
+                    let timestamp = chrono::Utc::now();
+                    events.lock().unwrap().push(Event::ExternalSelection {
+                        timestamp,
+                        last_seen: timestamp,
+                        app: snapshot.app,
+                        window_title: snapshot.window_title,
+                        text: snapshot.selected_text.unwrap_or_default(),
+                    });
+                }
+                ExtUpdate::Extend => {
+                    // Extend the last event's last_seen timestamp.
+                    let now_utc = chrono::Utc::now();
+                    let mut guard = events.lock().unwrap();
+                    if let Some(Event::ExternalSelection { last_seen, .. }) = guard.last_mut() {
+                        *last_seen = now_utc;
+                    }
+                }
+                ExtUpdate::None => {}
             }
         }
     }))

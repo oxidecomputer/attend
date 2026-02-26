@@ -609,6 +609,7 @@ fn yank_with_session_filters_by_cwd() {
         },
         super::merge::Event::EditorSnapshot {
             timestamp: chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(100),
+            last_seen: chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(100),
             files: vec![],
             regions: vec![
                 super::merge::CapturedRegion {
@@ -666,6 +667,7 @@ fn yank_without_session_includes_all_content() {
         },
         super::merge::Event::EditorSnapshot {
             timestamp: chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(100),
+            last_seen: chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(100),
             files: vec![],
             regions: vec![
                 super::merge::CapturedRegion {

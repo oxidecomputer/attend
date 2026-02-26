@@ -221,8 +221,15 @@ fn collect_staging(
             for mut event in file_events {
                 // Assign the file's UTC timestamp to all event types.
                 match &mut event {
-                    merge::Event::BrowserSelection { timestamp: ts, .. }
-                    | merge::Event::ShellCommand { timestamp: ts, .. } => *ts = timestamp,
+                    merge::Event::BrowserSelection {
+                        timestamp: ts,
+                        last_seen: ls,
+                        ..
+                    } => {
+                        *ts = timestamp;
+                        *ls = timestamp;
+                    }
+                    merge::Event::ShellCommand { timestamp: ts, .. } => *ts = timestamp,
                     _ => {}
                 }
                 events.push(event);

@@ -71,10 +71,12 @@ pub(super) fn run() -> anyhow::Result<()> {
     // Browser selections are not delivered directly to the agent; they
     // accumulate in a staging directory and are included when the user
     // manually concludes narration (stop/flush).
+    let now = chrono::Utc::now();
     let events = vec![Event::BrowserSelection {
         // Placeholder: the recording daemon overwrites this with the
         // UTC timestamp parsed from the staging filename.
-        timestamp: chrono::Utc::now(),
+        timestamp: now,
+        last_seen: now,
         url: msg.url,
         title: msg.title,
         text,

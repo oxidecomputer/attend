@@ -64,6 +64,7 @@ fn read_pending_filters_by_cwd() {
         },
         Event::EditorSnapshot {
             timestamp: ts(1.0),
+            last_seen: ts(1.0),
             files: vec![],
             regions: vec![
                 CapturedRegion {
@@ -109,6 +110,7 @@ fn read_pending_includes_extra_dirs() {
         },
         Event::EditorSnapshot {
             timestamp: ts(1.0),
+            last_seen: ts(1.0),
             files: vec![],
             regions: vec![CapturedRegion {
                 path: "/shared/utils.rs".to_string(),
@@ -176,6 +178,7 @@ fn filter_events_keeps_ext_selection() {
     let cwd = Utf8Path::new("/project");
     let mut events = vec![Event::ExternalSelection {
         timestamp: ts(0.0),
+        last_seen: ts(0.0),
         app: "iTerm2".to_string(),
         window_title: "~/other-project".to_string(),
         text: "error message".to_string(),
@@ -190,6 +193,7 @@ fn filter_events_keeps_browser_selection() {
     let cwd = Utf8Path::new("/project");
     let mut events = vec![Event::BrowserSelection {
         timestamp: ts(0.0),
+        last_seen: ts(0.0),
         url: "https://example.com".to_string(),
         title: "Example Page".to_string(),
         text: "some text".to_string(),
@@ -205,6 +209,7 @@ fn relativize_events_strips_prefix() {
     let mut events = vec![
         Event::EditorSnapshot {
             timestamp: ts(0.0),
+            last_seen: ts(0.0),
             files: vec![],
             regions: vec![CapturedRegion {
                 path: "/project/src/lib.rs".to_string(),
@@ -250,6 +255,7 @@ fn read_pending_merges_multiple_files() {
         },
         Event::EditorSnapshot {
             timestamp: ts(1.0),
+            last_seen: ts(1.0),
             files: vec![],
             regions: vec![CapturedRegion {
                 path: "/project/src/main.rs".to_string(),
@@ -594,6 +600,7 @@ fn filter_events_partial_editor_snapshot_redaction() {
     let cwd = Utf8Path::new("/project");
     let mut events = vec![Event::EditorSnapshot {
         timestamp: ts(0.0),
+        last_seen: ts(0.0),
         files: vec![],
         regions: vec![
             CapturedRegion {
@@ -689,6 +696,7 @@ fn collapse_redacted_reorders_interleaved_kinds() {
     let mut events = vec![
         Event::EditorSnapshot {
             timestamp: ts(0.0),
+            last_seen: ts(0.0),
             files: vec![],
             regions: vec![CapturedRegion {
                 path: "/other/a.rs".to_string(),
@@ -708,6 +716,7 @@ fn collapse_redacted_reorders_interleaved_kinds() {
         },
         Event::EditorSnapshot {
             timestamp: ts(2.0),
+            last_seen: ts(2.0),
             files: vec![],
             regions: vec![CapturedRegion {
                 path: "/other/b.rs".to_string(),

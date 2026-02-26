@@ -20,6 +20,7 @@ fn cursor_snap(t: f64, path: &str) -> Event {
     };
     Event::EditorSnapshot {
         timestamp: ts(t),
+        last_seen: ts(t),
         files: vec![FileEntry {
             path: path.into(),
             selections: vec![sel],
@@ -51,6 +52,7 @@ fn selection_snap_with(t: f64, path: &str, content: &str) -> Event {
     let sel = Selection { start, end };
     Event::EditorSnapshot {
         timestamp: ts(t),
+        last_seen: ts(t),
         files: vec![FileEntry {
             path: path.into(),
             selections: vec![sel],
@@ -499,6 +501,7 @@ fn out_of_order_sorted_before_merge() {
 fn ext_sel(t: f64, app: &str, text: &str) -> Event {
     Event::ExternalSelection {
         timestamp: ts(t),
+        last_seen: ts(t),
         app: app.to_string(),
         window_title: "window".to_string(),
         text: text.to_string(),
@@ -596,6 +599,7 @@ fn ext_selection_renders_blockquote() {
 fn ext_selection_empty_window_title() {
     let mut events = vec![Event::ExternalSelection {
         timestamp: ts(1.0),
+        last_seen: ts(1.0),
         app: "Safari".to_string(),
         window_title: String::new(),
         text: "some text".to_string(),
@@ -664,6 +668,7 @@ fn ext_selection_different_source_no_merge() {
         ext_sel(1.0, "iTerm2", "error"),
         Event::ExternalSelection {
             timestamp: ts(2.0),
+            last_seen: ts(2.0),
             app: "iTerm2".to_string(),
             window_title: "other window".to_string(),
             text: "error[E0308]".to_string(),
@@ -708,6 +713,7 @@ fn ext_selection_two_progressive_same_text() {
 fn browser_sel(t: f64, url: &str, text: &str) -> Event {
     Event::BrowserSelection {
         timestamp: ts(t),
+        last_seen: ts(t),
         url: url.to_string(),
         title: "Page Title".to_string(),
         text: text.to_string(),
@@ -793,6 +799,7 @@ fn browser_selection_renders_markdown() {
 fn browser_selection_empty_title() {
     let mut events = vec![Event::BrowserSelection {
         timestamp: ts(1.0),
+        last_seen: ts(1.0),
         url: "https://example.com".to_string(),
         title: String::new(),
         text: "hello".to_string(),
@@ -1056,6 +1063,7 @@ fn ext_selection_cross_run_different_source() {
         },
         Event::ExternalSelection {
             timestamp: ts(2.5),
+            last_seen: ts(2.5),
             app: "Safari".to_string(),
             window_title: "window".to_string(),
             text: "error[E0308]".to_string(),
@@ -1184,6 +1192,7 @@ fn editor_snapshot_cross_run_partial_coverage() {
     let sel = Selection { start, end };
     let snap_ab = Event::EditorSnapshot {
         timestamp: ts(1.0),
+        last_seen: ts(1.0),
         files: vec![
             FileEntry {
                 path: "a.rs".into(),
@@ -1303,4 +1312,146 @@ fn preexec_postexec_dedup_preserves_preexec_cwd() {
     } else {
         panic!("expected ShellCommand");
     }
+}
+
+// ── last_seen-based subsumption ────────────────────────────────────────────
+
+/// External selection held for 10s (last_seen = timestamp + 10), next
+/// progressive selection at last_seen + 0.5s. The subsumption window is 2s.
+/// Without last_seen, the gap would be 10.5s (> 2s) and both would survive.
+/// With last_seen, the gap is 0.5s and the earlier is subsumed.
+#[test]
+fn ext_selection_cross_run_held_then_subsumed() {
+    let mut events = vec![
+        Event::ExternalSelection {
+            timestamp: ts(1.0),
+            // Selection held for 10 seconds (continuously observed).
+            last_seen: ts(11.0),
+            app: "iTerm2".to_string(),
+            window_title: "window".to_string(),
+            text: "error".to_string(),
+        },
+        Event::Words {
+            timestamp: ts(5.0),
+            text: "look at this".to_string(),
+        },
+        Event::ExternalSelection {
+            timestamp: ts(11.5),
+            last_seen: ts(11.5),
+            app: "iTerm2".to_string(),
+            window_title: "window".to_string(),
+            text: "error[E0308]: mismatched types".to_string(),
+        },
+    ];
+    compress_and_merge(&mut events);
+    let ext: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, Event::ExternalSelection { .. }))
+        .collect();
+    assert_eq!(ext.len(), 1, "held selection subsumed via last_seen gap");
+    assert!(matches!(
+        ext[0],
+        Event::ExternalSelection { text, .. } if text == "error[E0308]: mismatched types"
+    ));
+}
+
+/// Editor snapshot held for 10s, then wider snapshot arrives 0.5s after
+/// last_seen. Subsumed via last_seen gap.
+#[test]
+fn editor_snapshot_cross_run_held_then_subsumed() {
+    let mut events = vec![
+        Event::EditorSnapshot {
+            timestamp: ts(1.0),
+            last_seen: ts(11.0),
+            files: vec![FileEntry {
+                path: "src/main.rs".into(),
+                selections: vec![Selection {
+                    start: Position {
+                        line: Line::new(1).unwrap(),
+                        col: Col::new(1).unwrap(),
+                    },
+                    end: Position {
+                        line: Line::new(5).unwrap(),
+                        col: Col::new(10).unwrap(),
+                    },
+                }],
+            }],
+            regions: vec![CapturedRegion {
+                path: "src/main.rs".to_string(),
+                content: "fn main".to_string(),
+                first_line: 1,
+                selections: vec![Selection {
+                    start: Position {
+                        line: Line::new(1).unwrap(),
+                        col: Col::new(1).unwrap(),
+                    },
+                    end: Position {
+                        line: Line::new(5).unwrap(),
+                        col: Col::new(10).unwrap(),
+                    },
+                }],
+                language: None,
+            }],
+        },
+        Event::Words {
+            timestamp: ts(5.0),
+            text: "look".to_string(),
+        },
+        selection_snap_with(
+            11.5,
+            "src/main.rs",
+            "fn main() {\n    println!(\"hello\");\n}",
+        ),
+    ];
+    compress_and_merge(&mut events);
+    let snaps: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, Event::EditorSnapshot { .. }))
+        .collect();
+    assert_eq!(snaps.len(), 1, "held snapshot subsumed via last_seen gap");
+    if let Event::EditorSnapshot { regions, .. } = snaps[0] {
+        assert!(regions[0].content.contains("println"));
+    } else {
+        panic!("expected EditorSnapshot");
+    }
+}
+
+/// Browser selection held for 10s, then wider selection arrives 0.5s after
+/// last_seen. Subsumed via last_seen gap.
+#[test]
+fn browser_selection_cross_run_held_then_subsumed() {
+    let mut events = vec![
+        Event::BrowserSelection {
+            timestamp: ts(1.0),
+            last_seen: ts(11.0),
+            url: "https://docs.rs/tokio".to_string(),
+            title: "Page".to_string(),
+            text: "spawn".to_string(),
+        },
+        Event::Words {
+            timestamp: ts(5.0),
+            text: "here".to_string(),
+        },
+        Event::BrowserSelection {
+            timestamp: ts(11.5),
+            last_seen: ts(11.5),
+            url: "https://docs.rs/tokio".to_string(),
+            title: "Page".to_string(),
+            text: "spawn a task".to_string(),
+        },
+    ];
+    compress_and_merge(&mut events);
+    let bs: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, Event::BrowserSelection { .. }))
+        .collect();
+    assert_eq!(
+        bs.len(),
+        1,
+        "held browser selection subsumed via last_seen gap"
+    );
+    assert!(matches!(
+        bs[0],
+        Event::BrowserSelection { text, .. } if text == "spawn a task"
+    ));
 }

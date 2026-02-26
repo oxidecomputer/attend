@@ -41,6 +41,7 @@ fn arb_cursor_snapshot() -> impl Strategy<Value = Event> {
         };
         Event::EditorSnapshot {
             timestamp: ts(t),
+            last_seen: ts(t),
             files: vec![FileEntry {
                 path: path.clone().into(),
                 selections: vec![sel],
@@ -69,6 +70,7 @@ fn arb_selection_snapshot() -> impl Strategy<Value = Event> {
         let sel = Selection { start, end };
         Event::EditorSnapshot {
             timestamp: ts(t),
+            last_seen: ts(t),
             files: vec![FileEntry {
                 path: path.clone().into(),
                 selections: vec![sel],
@@ -108,6 +110,7 @@ fn arb_ext_selection() -> impl Strategy<Value = Event> {
     )
         .prop_map(|(t, app, title, text)| Event::ExternalSelection {
             timestamp: ts(t),
+            last_seen: ts(t),
             app,
             window_title: title,
             text,
@@ -127,6 +130,7 @@ fn arb_browser_selection() -> impl Strategy<Value = Event> {
     )
         .prop_map(|(t, url, title, text)| Event::BrowserSelection {
             timestamp: ts(t),
+            last_seen: ts(t),
             url,
             title,
             text,
@@ -196,6 +200,7 @@ fn arb_cross_run_ext() -> impl Strategy<Value = Vec<Event>> {
             vec![
                 Event::ExternalSelection {
                     timestamp: ts(t),
+                    last_seen: ts(t),
                     app: app.clone(),
                     window_title: "window".to_string(),
                     text: prefix,
@@ -206,6 +211,7 @@ fn arb_cross_run_ext() -> impl Strategy<Value = Vec<Event>> {
                 },
                 Event::ExternalSelection {
                     timestamp: ts(t_wide),
+                    last_seen: ts(t_wide),
                     app,
                     window_title: "window".to_string(),
                     text: wide,
@@ -236,6 +242,7 @@ fn arb_cross_run_browser() -> impl Strategy<Value = Vec<Event>> {
             vec![
                 Event::BrowserSelection {
                     timestamp: ts(t),
+                    last_seen: ts(t),
                     url: url.clone(),
                     title: "Page".to_string(),
                     text: prefix,
@@ -246,6 +253,7 @@ fn arb_cross_run_browser() -> impl Strategy<Value = Vec<Event>> {
                 },
                 Event::BrowserSelection {
                     timestamp: ts(t_wide),
+                    last_seen: ts(t_wide),
                     url,
                     title: "Page".to_string(),
                     text: wide,
@@ -282,6 +290,7 @@ fn arb_cross_run_snapshot() -> impl Strategy<Value = Vec<Event>> {
                 let sel = Selection { start, end };
                 let make_snap = |ts_val: f64, content: String| Event::EditorSnapshot {
                     timestamp: ts(ts_val),
+                    last_seen: ts(ts_val),
                     files: vec![FileEntry {
                         path: path.clone().into(),
                         selections: vec![sel],
@@ -306,12 +315,53 @@ fn arb_cross_run_snapshot() -> impl Strategy<Value = Vec<Event>> {
         )
 }
 
+/// Held ExternalSelection: selection persists (last_seen near wider's timestamp).
+/// Exercises the last_seen-based gap calculation in subsumption.
+fn arb_cross_run_ext_held() -> impl Strategy<Value = Vec<Event>> {
+    (
+        0.0..90.0f64,
+        1.0..5.0f64,
+        0.2..1.0f64,
+        prop_oneof!["iTerm2", "Safari", "Firefox"],
+        "[a-z ]{1,15}",
+        "[a-z ]{1,15}",
+        "[a-z ]{1,20}",
+    )
+        .prop_map(|(t, hold_dur, dt_wide, app, prefix, suffix, speech)| {
+            let t_word = t + hold_dur * 0.5;
+            let t_last_seen = t + hold_dur;
+            let t_wide = t_last_seen + dt_wide;
+            let wide = format!("{prefix}{suffix}");
+            vec![
+                Event::ExternalSelection {
+                    timestamp: ts(t),
+                    last_seen: ts(t_last_seen),
+                    app: app.clone(),
+                    window_title: "window".to_string(),
+                    text: prefix,
+                },
+                Event::Words {
+                    timestamp: ts(t_word),
+                    text: speech,
+                },
+                Event::ExternalSelection {
+                    timestamp: ts(t_wide),
+                    last_seen: ts(t_wide),
+                    app,
+                    window_title: "window".to_string(),
+                    text: wide,
+                },
+            ]
+        })
+}
+
 fn arb_events() -> impl Strategy<Value = Vec<Event>> {
     (
         proptest::collection::vec(arb_event(), 0..15),
         proptest::collection::vec(
             prop_oneof![
                 arb_cross_run_ext(),
+                arb_cross_run_ext_held(),
                 arb_cross_run_browser(),
                 arb_cross_run_snapshot(),
             ],

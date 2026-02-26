@@ -24,6 +24,7 @@ pub(super) fn filter_events(events: &mut Vec<Event>, cwd: &Utf8Path, include_dir
             | Event::Redacted { .. } => filtered.push(event),
             Event::EditorSnapshot {
                 timestamp,
+                last_seen,
                 mut files,
                 mut regions,
             } => {
@@ -37,6 +38,7 @@ pub(super) fn filter_events(events: &mut Vec<Event>, cwd: &Utf8Path, include_dir
                 if !regions.is_empty() {
                     filtered.push(Event::EditorSnapshot {
                         timestamp,
+                        last_seen,
                         files,
                         regions,
                     });

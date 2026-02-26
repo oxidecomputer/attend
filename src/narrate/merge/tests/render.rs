@@ -34,6 +34,7 @@ fn words_with_code() {
         },
         Event::EditorSnapshot {
             timestamp: ts(1.0),
+            last_seen: ts(1.0),
             files: vec![],
             regions: vec![CapturedRegion {
                 path: "src/main.rs".to_string(),
@@ -133,6 +134,7 @@ fn empty_events() {
 fn code_only_no_prose() {
     let mut events = vec![Event::EditorSnapshot {
         timestamp: ts(0.0),
+        last_seen: ts(0.0),
         files: vec![],
         regions: vec![CapturedRegion {
             path: "src/lib.rs".to_string(),
@@ -153,6 +155,7 @@ fn code_only_no_prose() {
 fn multiple_files_in_snapshot() {
     let mut events = vec![Event::EditorSnapshot {
         timestamp: ts(0.0),
+        last_seen: ts(0.0),
         files: vec![],
         regions: vec![
             CapturedRegion {
@@ -186,6 +189,7 @@ fn full_scenario_snapshot() {
             },
             Event::EditorSnapshot {
                 timestamp: ts(1.5),
+                last_seen: ts(1.5),
                 files: vec![],
                 regions: vec![CapturedRegion {
                     path: "src/main.rs".to_string(),
@@ -201,6 +205,7 @@ fn full_scenario_snapshot() {
             },
             Event::EditorSnapshot {
                 timestamp: ts(4.0),
+                last_seen: ts(4.0),
                 files: vec![],
                 regions: vec![CapturedRegion {
                     path: "src/lib.rs".to_string(),
@@ -254,6 +259,7 @@ fn prose_after_diff() {
 fn content_without_trailing_newline() {
     let mut events = vec![Event::EditorSnapshot {
         timestamp: ts(0.0),
+        last_seen: ts(0.0),
         files: vec![],
         regions: vec![CapturedRegion {
             path: "f.rs".to_string(),
@@ -338,6 +344,7 @@ fn snip_applied_to_code_block() {
     let content: String = (1..=25).map(|i| format!("line {i}\n")).collect();
     let mut events = vec![Event::EditorSnapshot {
         timestamp: ts(0.0),
+        last_seen: ts(0.0),
         files: vec![],
         regions: vec![CapturedRegion {
             path: "big.rs".to_string(),
@@ -380,6 +387,7 @@ fn code_only_scenario_snapshot() {
     let mut events = vec![
         Event::EditorSnapshot {
             timestamp: ts(0.0),
+            last_seen: ts(0.0),
             files: vec![],
             regions: vec![CapturedRegion {
                 path: "src/config.rs".to_string(),
@@ -440,6 +448,7 @@ fn snip_disabled_with_large_threshold() {
     };
     let mut events = vec![Event::EditorSnapshot {
         timestamp: ts(0.0),
+        last_seen: ts(0.0),
         files: vec![],
         regions: vec![CapturedRegion {
             path: "big.rs".to_string(),
@@ -461,6 +470,7 @@ fn snip_disabled_with_large_threshold() {
 fn language_tag_in_fence() {
     let mut events = vec![Event::EditorSnapshot {
         timestamp: ts(0.0),
+        last_seen: ts(0.0),
         files: vec![],
         regions: vec![CapturedRegion {
             path: "src/main.rs".to_string(),
@@ -623,6 +633,7 @@ fn shell_command_interleaved_with_speech() {
 fn bare_fence_when_no_language() {
     let mut events = vec![Event::EditorSnapshot {
         timestamp: ts(0.0),
+        last_seen: ts(0.0),
         files: vec![],
         regions: vec![CapturedRegion {
             path: "src/main.rs".to_string(),

@@ -1,26 +1,35 @@
-//! Chronological merge of transcription, editor snapshots, and file diffs.
+//! Chronological merge and compression of narration events.
 //!
-//! # Event stream format
+//! # Event sources
 //!
-//! Three capture streams produce [`Event`]s during a narration session:
+//! Six event types arrive from five capture sources during a narration
+//! session:
 //!
-//! - **Words**: transcribed speech segments from the Whisper model, each
-//!   carrying the text and a wall-clock offset. These are the "speech
-//!   boundaries" that separate non-speech runs.
+//! - **Words**: transcribed speech segments from the Whisper model. These
+//!   are the "speech boundaries" that separate non-speech runs.
 //!
-//! - **EditorSnapshot**: captured whenever the user's cursor or selection
-//!   changes. Contains both the raw `FileEntry` list (for archiving) and
-//!   a list of [`CapturedRegion`]s with raw file content and selection
-//!   positions. Marker annotation is deferred to render time. A snapshot
-//!   is "cursor-only" when every selection is a zero-width cursor; it is a
-//!   "selection snapshot" when any selection spans a range (a highlight the
-//!   user is pointing at).
+//! - **EditorSnapshot**: polled from the editor whenever the cursor or
+//!   selection changes. Contains a `FileEntry` list (for archiving) and
+//!   [`CapturedRegion`]s with raw file content. A snapshot is "cursor-only"
+//!   when every selection is a zero-width cursor; it is a "selection
+//!   snapshot" when any selection spans a range.
 //!
 //! - **FileDiff**: captured when a watched file's content changes on disk.
-//!   Carries the full `old` and `new` content so the merge pipeline can
-//!   compute net changes across multiple edits.
+//!   Carries full `old` and `new` content for net-change computation.
 //!
-//! All events share an `timestamp` field: seconds from recording start.
+//! - **ExternalSelection**: polled from the focused application via
+//!   platform accessibility APIs (macOS AX). Carries app name, window
+//!   title, and selected text.
+//!
+//! - **BrowserSelection**: pushed from the browser extension via native
+//!   messaging. Carries URL, page title, and HTML-to-markdown content.
+//!
+//! - **ShellCommand**: pushed from shell hook integration (preexec/postexec).
+//!   Carries command text, cwd, exit status, and duration.
+//!
+//! All events carry a UTC wall-clock `timestamp` and selection-bearing
+//! types also carry a `last_seen` timestamp (the last time the selection
+//! was observed unchanged by the capture layer).
 //!
 //! # Merge pipeline
 //!
@@ -29,50 +38,58 @@
 //! 1. **Chronological sort** by `timestamp`.
 //!
 //! 2. **Global progressive selection subsumption**
-//!    ([`subsume_progressive_selections`]): drops earlier, narrower selections
-//!    when a later, wider selection from the same source arrives within a 2s
-//!    tolerance window. Applies to `ExternalSelection` (keyed on app +
-//!    window_title), `BrowserSelection` (keyed on url), and `EditorSnapshot`
-//!    (keyed on region paths with per-path content containment). Runs before
-//!    run-splitting so intermediate events serve as temporal bridges for chain
-//!    subsumption.
+//!    ([`subsume_progressive_selections`]): drops earlier, narrower
+//!    selections when a later, wider selection from the same source
+//!    arrives within 2s of the earlier event's `last_seen`. The gap is
+//!    measured from `last_seen` (not `timestamp`), giving temporal
+//!    continuity when a selection is held across poll ticks. Runs before
+//!    run-splitting so intermediate events serve as temporal bridges for
+//!    chain subsumption (A ⊂ B ⊂ C each within tolerance).
 //!
 //! 3. **Single-pass run processing**: the sorted list is split into
 //!    alternating `Words` events and non-speech "runs" (maximal sequences
-//!    of `EditorSnapshot` / `FileDiff` with no `Words` between them). Each
-//!    run is processed through three composable transformations:
+//!    with no `Words` between them). Each run is processed through
+//!    composable transformations:
 //!
 //!    - **Cursor compression** ([`collapse_cursor_only`]): removes all
-//!      cursor-only snapshots except the last in each run. Rapid navigation
-//!      (opening files, scrolling) generates many cursor events; only the
-//!      final position before the next utterance matters. Selection snapshots
-//!      (highlights) are never removed because they represent deliberate
-//!      pointing at code.
+//!      cursor-only snapshots except the last in each run.
 //!
-//!    - **Snapshot union** ([`union_snapshots`]): folds the surviving
-//!      snapshots into a single snapshot whose region list is the
-//!      deduplicated union of every region. This ensures every file the user
-//!      looked at between two utterances appears in one cohesive code block.
+//!    - **Snapshot union** ([`union_snapshots`]): folds surviving snapshots
+//!      into a single snapshot with the deduplicated union of all regions.
 //!
-//!    - **Diff net-change** ([`net_change_diffs`]): groups diffs by file
-//!      path and keeps only the first `old` and last `new`. If a file
-//!      changed A→B→C between two utterances, the rendered diff shows A→C
-//!      (the net change). If the file was changed and then reverted (A→B→A),
-//!      the net diff is empty and the event is dropped at render time.
+//!    - **Diff net-change** ([`net_change_diffs`]): groups diffs by path,
+//!      keeps first `old` and last `new`. Reverted changes (A→B→A) produce
+//!      an empty diff dropped at render time.
+//!
+//!    - **Selection/command collapse** ([`collapse_ext_selections`]):
+//!      forward-merges progressive ExternalSelections, deduplicates
+//!      BrowserSelections by (url, text), and merges preexec/postexec
+//!      ShellCommands.
+//!
+//!    - **Cross-type dedup** ([`dedup_browser_vs_external`]): drops
+//!      ExternalSelections superseded by a nearby BrowserSelection with
+//!      matching text.
 //!
 //! 4. **Trailing cursor drop**: if speech is present, a final cursor-only
-//!    snapshot is removed because the stop hook provides more up-to-date
-//!    editor context. Code-only narrations (no speech at all) keep
-//!    everything.
+//!    snapshot is removed (the stop hook provides fresher editor context).
+//!    Code-only narrations keep everything.
 //!
 //! The actual markdown rendering lives in [`super::render`].
 
 use std::collections::HashSet;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::state::FileEntry;
 pub use crate::view::CapturedRegion;
+
+/// Default value for `last_seen` when deserializing old archives that
+/// lack the field. Downstream code treats epoch as "no data" and falls
+/// back to `timestamp`.
+fn epoch() -> DateTime<Utc> {
+    DateTime::UNIX_EPOCH
+}
 
 /// Window (ms) for cross-type dedup: BrowserSelection vs ExternalSelection.
 const CROSS_TYPE_DEDUP_WINDOW_MS: i64 = 500;
@@ -99,14 +116,19 @@ pub enum Event {
     /// A transcribed word or group of words.
     Words {
         /// UTC wall-clock time when the word was spoken.
-        timestamp: chrono::DateTime<chrono::Utc>,
+        timestamp: DateTime<Utc>,
         /// The transcribed text.
         text: String,
     },
     /// An editor state snapshot captured when selections changed.
     EditorSnapshot {
         /// UTC wall-clock time of capture.
-        timestamp: chrono::DateTime<chrono::Utc>,
+        timestamp: DateTime<Utc>,
+        /// UTC wall-clock time when this selection was last observed unchanged.
+        /// Set equal to `timestamp` on creation; extended by the capture layer
+        /// when the selection persists across poll ticks.
+        #[serde(default = "epoch")]
+        last_seen: DateTime<Utc>,
         /// Files with their selections at this point (retained for debugging/archive).
         #[allow(dead_code)]
         files: Vec<FileEntry>,
@@ -116,7 +138,7 @@ pub enum Event {
     /// A file diff captured when file content changed.
     FileDiff {
         /// UTC wall-clock time of capture.
-        timestamp: chrono::DateTime<chrono::Utc>,
+        timestamp: DateTime<Utc>,
         /// Absolute path of the changed file.
         path: String,
         /// File content before the change.
@@ -127,7 +149,10 @@ pub enum Event {
     /// Text selected in an external application (via platform accessibility API).
     ExternalSelection {
         /// UTC wall-clock time of capture.
-        timestamp: chrono::DateTime<chrono::Utc>,
+        timestamp: DateTime<Utc>,
+        /// UTC wall-clock time when this selection was last observed unchanged.
+        #[serde(default = "epoch")]
+        last_seen: DateTime<Utc>,
         /// Application name (e.g. "Firefox", "iTerm2", "Safari").
         app: String,
         /// Window title (e.g. page title, terminal tab name).
@@ -139,7 +164,10 @@ pub enum Event {
     /// Delivered via a browser extension's native messaging bridge.
     BrowserSelection {
         /// UTC wall-clock time of capture.
-        timestamp: chrono::DateTime<chrono::Utc>,
+        timestamp: DateTime<Utc>,
+        /// UTC wall-clock time when this selection was last observed unchanged.
+        #[serde(default = "epoch")]
+        last_seen: DateTime<Utc>,
         /// Page URL.
         url: String,
         /// Page title.
@@ -151,7 +179,7 @@ pub enum Event {
     /// Delivered via the `attend shell-hook` CLI subcommand.
     ShellCommand {
         /// UTC wall-clock time when the command started.
-        timestamp: chrono::DateTime<chrono::Utc>,
+        timestamp: DateTime<Utc>,
         /// The shell (e.g. "fish", "zsh").
         shell: String,
         /// The command as typed by the user.
@@ -169,7 +197,7 @@ pub enum Event {
     /// directory and configured `include_dirs`. Never serialized to disk.
     Redacted {
         /// UTC wall-clock time of the original event.
-        timestamp: chrono::DateTime<chrono::Utc>,
+        timestamp: DateTime<Utc>,
         /// What kind of event was redacted.
         kind: RedactedKind,
         /// Identifiers for deduplication during collapse. For EditorSnapshot
@@ -180,7 +208,7 @@ pub enum Event {
 
 impl Event {
     /// Sort key: UTC timestamp.
-    pub fn timestamp(&self) -> chrono::DateTime<chrono::Utc> {
+    pub fn timestamp(&self) -> DateTime<Utc> {
         match self {
             Event::Words { timestamp, .. }
             | Event::EditorSnapshot { timestamp, .. }
@@ -189,6 +217,40 @@ impl Event {
             | Event::BrowserSelection { timestamp, .. }
             | Event::ShellCommand { timestamp, .. }
             | Event::Redacted { timestamp, .. } => *timestamp,
+        }
+    }
+
+    /// The last time this event's selection was observed unchanged.
+    ///
+    /// For selection-bearing types (`ExternalSelection`, `BrowserSelection`,
+    /// `EditorSnapshot`): returns `last_seen`, falling back to `timestamp`
+    /// when the value is epoch (old archives that lack the field).
+    ///
+    /// For all other types: returns `timestamp`.
+    pub fn last_seen(&self) -> DateTime<Utc> {
+        match self {
+            Event::ExternalSelection {
+                timestamp,
+                last_seen,
+                ..
+            }
+            | Event::BrowserSelection {
+                timestamp,
+                last_seen,
+                ..
+            }
+            | Event::EditorSnapshot {
+                timestamp,
+                last_seen,
+                ..
+            } => {
+                if *last_seen == DateTime::UNIX_EPOCH {
+                    *timestamp
+                } else {
+                    *last_seen
+                }
+            }
+            _ => self.timestamp(),
         }
     }
 }
@@ -216,10 +278,13 @@ pub fn unified_diff(old: &str, new: &str) -> String {
     out
 }
 
-// ── Composable run transformations ──────────────────────────────────────────
+// ── Global passes ───────────────────────────────────────────────────────────
+//
+// Transformations that operate on the full chronologically sorted event
+// list *before* run-splitting.
 
 /// Whether an editor snapshot contains only cursor positions (no real
-/// selections).  Cursor-only snapshots from navigation are compressible;
+/// selections). Cursor-only snapshots from navigation are compressible;
 /// snapshots with highlights are always kept because the user may be
 /// pointing at multiple things to talk about.
 fn is_cursor_only(event: &Event) -> bool {
@@ -230,6 +295,134 @@ fn is_cursor_only(event: &Event) -> bool {
         .iter()
         .all(|f| f.selections.iter().all(|s| s.is_cursor_like()))
 }
+
+/// Drop earlier, narrower selections when a later, wider selection from the
+/// same source arrives within [`SUBSUME_WINDOW_MS`].
+///
+/// The gap is measured from `last_seen` of the earlier event to `timestamp`
+/// of the later event, giving temporal continuity when a selection is held
+/// across multiple poll ticks. For old data without `last_seen`, the field
+/// defaults to `timestamp` (no behavior change).
+///
+/// Operates on the chronologically sorted event list before run-splitting, so
+/// intermediate events (including words) act as temporal bridges for chain
+/// subsumption: A ⊂ B ⊂ C each within tolerance even if A→C exceeds it.
+///
+/// Applies uniformly to `ExternalSelection` (keyed on app + window_title),
+/// `BrowserSelection` (keyed on url), and `EditorSnapshot` (keyed on region
+/// paths, where every region must be covered for subsumption).
+fn subsume_progressive_selections(events: &mut Vec<Event>) {
+    let tolerance = chrono::Duration::milliseconds(SUBSUME_WINDOW_MS);
+    let len = events.len();
+    let mut remove = vec![false; len];
+
+    for i in 0..len {
+        if remove[i] {
+            continue;
+        }
+        let ls_i = events[i].last_seen();
+
+        match &events[i] {
+            Event::ExternalSelection {
+                app,
+                window_title,
+                text,
+                ..
+            } => {
+                let app = app.clone();
+                let wt = window_title.clone();
+                let text = text.clone();
+                for later in &events[i + 1..] {
+                    if (later.timestamp() - ls_i) > tolerance {
+                        break;
+                    }
+                    if let Event::ExternalSelection {
+                        app: a,
+                        window_title: w,
+                        text: t,
+                        ..
+                    } = later
+                        && *a == app
+                        && *w == wt
+                        && t.contains(text.as_str())
+                    {
+                        remove[i] = true;
+                        break;
+                    }
+                }
+            }
+            Event::BrowserSelection { url, text, .. } => {
+                let url = url.clone();
+                let text = text.clone();
+                for later in &events[i + 1..] {
+                    if (later.timestamp() - ls_i) > tolerance {
+                        break;
+                    }
+                    if let Event::BrowserSelection {
+                        url: u, text: t, ..
+                    } = later
+                        && *u == url
+                        && t.contains(text.as_str())
+                    {
+                        remove[i] = true;
+                        break;
+                    }
+                }
+            }
+            Event::EditorSnapshot { regions, .. } => {
+                let regions_i: Vec<(&str, &str)> = regions
+                    .iter()
+                    .map(|r| (r.path.as_str(), r.content.as_str()))
+                    .collect();
+                if regions_i.is_empty() {
+                    continue;
+                }
+                for later in &events[i + 1..] {
+                    if (later.timestamp() - ls_i) > tolerance {
+                        break;
+                    }
+                    if let Event::EditorSnapshot {
+                        regions: regions_j, ..
+                    } = later
+                    {
+                        // Every region in i must have a matching region in j
+                        // (same path, content contains).
+                        let covered = regions_i.iter().all(|(path_i, content_i)| {
+                            regions_j
+                                .iter()
+                                .any(|rj| rj.path == *path_i && rj.content.contains(content_i))
+                        });
+                        if covered {
+                            remove[i] = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut idx = 0;
+    events.retain(|_| {
+        let keep = !remove[idx];
+        idx += 1;
+        keep
+    });
+}
+
+// ── Per-run transformations ─────────────────────────────────────────────────
+//
+// Each function below operates on a single non-Words run (a maximal
+// sequence of events between speech boundaries).
+
+/// Extracted fields from an `EditorSnapshot` for union processing.
+type SnapshotTuple = (
+    DateTime<Utc>,
+    DateTime<Utc>,
+    Vec<FileEntry>,
+    Vec<CapturedRegion>,
+);
 
 /// Remove all cursor-only snapshots from a run except the last one.
 ///
@@ -252,25 +445,15 @@ fn collapse_cursor_only(run: &mut Vec<Event>) {
 
 /// Fold all `EditorSnapshot`s into a single snapshot whose region list
 /// is the deduplicated union of every region. Uses the last snapshot's
-/// offset as the merged offset (chronologically latest).
+/// timestamps (chronologically latest).
 ///
 /// **Input**: snapshots extracted from a run, in chronological order.
-/// **Output**: a single `(offset, files, regions)` tuple, or `None` if
-/// the input was empty.
+/// **Output**: a single `(timestamp, last_seen, files, regions)` tuple,
+/// or `None` if the input was empty.
 ///
 /// **Invariant**: every unique `CapturedRegion` from the input appears in
 /// the output exactly once (dedup via `PartialEq`).
-fn union_snapshots(
-    snapshots: Vec<(
-        chrono::DateTime<chrono::Utc>,
-        Vec<FileEntry>,
-        Vec<CapturedRegion>,
-    )>,
-) -> Option<(
-    chrono::DateTime<chrono::Utc>,
-    Vec<FileEntry>,
-    Vec<CapturedRegion>,
-)> {
+fn union_snapshots(snapshots: Vec<SnapshotTuple>) -> Option<SnapshotTuple> {
     if snapshots.is_empty() {
         return None;
     }
@@ -280,9 +463,11 @@ fn union_snapshots(
     let mut merged_regions = Vec::new();
     let mut seen_regions = HashSet::new();
     let mut last_ts = snapshots[0].0;
+    let mut last_ls = snapshots[0].1;
 
-    for (ts, files, regions) in snapshots {
+    for (ts, ls, files, regions) in snapshots {
         last_ts = ts;
+        last_ls = ls;
         for f in files {
             if seen_files.insert(f.clone()) {
                 merged_files.push(f);
@@ -295,7 +480,7 @@ fn union_snapshots(
         }
     }
 
-    Some((last_ts, merged_files, merged_regions))
+    Some((last_ts, last_ls, merged_files, merged_regions))
 }
 
 /// Collapse same-path diffs into net-change events (first `old`, last `new`).
@@ -308,9 +493,9 @@ fn union_snapshots(
 /// **Invariant**: for each path, `old` is from the earliest diff and `new`
 /// is from the latest diff in the input.
 fn net_change_diffs(
-    diffs: Vec<(chrono::DateTime<chrono::Utc>, String, String, String)>,
-) -> Vec<(chrono::DateTime<chrono::Utc>, String, String, String)> {
-    let mut by_path: Vec<(chrono::DateTime<chrono::Utc>, String, String, String)> = Vec::new();
+    diffs: Vec<(DateTime<Utc>, String, String, String)>,
+) -> Vec<(DateTime<Utc>, String, String, String)> {
+    let mut by_path: Vec<(DateTime<Utc>, String, String, String)> = Vec::new();
 
     for (ts, path, old, new) in diffs {
         if let Some(entry) = by_path.iter_mut().find(|(_, p, ..)| p == &path) {
@@ -453,7 +638,7 @@ fn dedup_browser_vs_external(events: &mut Vec<Event>) {
     let dedup_window = chrono::Duration::milliseconds(CROSS_TYPE_DEDUP_WINDOW_MS);
 
     // Collect browser selection timestamps and texts for matching.
-    let browser_entries: Vec<(chrono::DateTime<chrono::Utc>, String)> = events
+    let browser_entries: Vec<(DateTime<Utc>, String)> = events
         .iter()
         .filter_map(|e| match e {
             Event::BrowserSelection {
@@ -482,122 +667,11 @@ fn dedup_browser_vs_external(events: &mut Vec<Event>) {
     });
 }
 
-// ── Global progressive selection subsumption ────────────────────────────────
+// ── Run orchestrator ─────────────────────────────────────────────────────────
 
-/// Drop earlier, narrower selections when a later, wider selection from the
-/// same source arrives within [`SUBSUME_WINDOW_MS`].
-///
-/// Operates on the chronologically sorted event list before run-splitting, so
-/// intermediate events (including words) act as temporal bridges for chain
-/// subsumption: A ⊂ B ⊂ C each within tolerance even if A→C exceeds it.
-///
-/// Applies uniformly to `ExternalSelection` (keyed on app + window_title),
-/// `BrowserSelection` (keyed on url), and `EditorSnapshot` (keyed on region
-/// paths, where every region must be covered for subsumption).
-fn subsume_progressive_selections(events: &mut Vec<Event>) {
-    let tolerance = chrono::Duration::milliseconds(SUBSUME_WINDOW_MS);
-    let len = events.len();
-    let mut remove = vec![false; len];
-
-    for i in 0..len {
-        if remove[i] {
-            continue;
-        }
-        let ts_i = events[i].timestamp();
-
-        match &events[i] {
-            Event::ExternalSelection {
-                app,
-                window_title,
-                text,
-                ..
-            } => {
-                let app = app.clone();
-                let wt = window_title.clone();
-                let text = text.clone();
-                for later in &events[i + 1..] {
-                    if (later.timestamp() - ts_i) > tolerance {
-                        break;
-                    }
-                    if let Event::ExternalSelection {
-                        app: a,
-                        window_title: w,
-                        text: t,
-                        ..
-                    } = later
-                        && *a == app
-                        && *w == wt
-                        && t.contains(text.as_str())
-                    {
-                        remove[i] = true;
-                        break;
-                    }
-                }
-            }
-            Event::BrowserSelection { url, text, .. } => {
-                let url = url.clone();
-                let text = text.clone();
-                for later in &events[i + 1..] {
-                    if (later.timestamp() - ts_i) > tolerance {
-                        break;
-                    }
-                    if let Event::BrowserSelection {
-                        url: u, text: t, ..
-                    } = later
-                        && *u == url
-                        && t.contains(text.as_str())
-                    {
-                        remove[i] = true;
-                        break;
-                    }
-                }
-            }
-            Event::EditorSnapshot { regions, .. } => {
-                let regions_i: Vec<(&str, &str)> = regions
-                    .iter()
-                    .map(|r| (r.path.as_str(), r.content.as_str()))
-                    .collect();
-                if regions_i.is_empty() {
-                    continue;
-                }
-                for later in &events[i + 1..] {
-                    if (later.timestamp() - ts_i) > tolerance {
-                        break;
-                    }
-                    if let Event::EditorSnapshot {
-                        regions: regions_j, ..
-                    } = later
-                    {
-                        // Every region in i must have a matching region in j
-                        // (same path, content contains).
-                        let covered = regions_i.iter().all(|(path_i, content_i)| {
-                            regions_j
-                                .iter()
-                                .any(|rj| rj.path == *path_i && rj.content.contains(content_i))
-                        });
-                        if covered {
-                            remove[i] = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut idx = 0;
-    events.retain(|_| {
-        let keep = !remove[idx];
-        idx += 1;
-        keep
-    });
-}
-
-// ── Run processing ──────────────────────────────────────────────────────────
-
-/// Process a single non-Words run through the three composable
-/// transformations: cursor compression, snapshot union, diff net-change.
+/// Process a single non-Words run through the composable per-run
+/// transformations: cursor compression, snapshot union, diff net-change,
+/// and selection/command collapse with cross-type dedup.
 ///
 /// **Input**: sorted non-Words events from a single run (between `Words`
 /// boundaries).
@@ -630,10 +704,11 @@ fn process_run(mut run: Vec<Event>) -> Vec<Event> {
         match event {
             Event::EditorSnapshot {
                 timestamp,
+                last_seen,
                 files,
                 regions,
             } => {
-                snapshots.push((timestamp, files, regions));
+                snapshots.push((timestamp, last_seen, files, regions));
             }
             Event::FileDiff {
                 timestamp,
@@ -664,11 +739,12 @@ fn process_run(mut run: Vec<Event>) -> Vec<Event> {
     // Reassemble in chronological order.
     let mut result = Vec::with_capacity(1 + merged_diffs.len() + merged_ext.len());
 
-    if let Some((timestamp, files, regions)) = merged_snap
+    if let Some((timestamp, last_seen, files, regions)) = merged_snap
         && !regions.is_empty()
     {
         result.push(Event::EditorSnapshot {
             timestamp,
+            last_seen,
             files,
             regions,
         });
@@ -692,13 +768,14 @@ fn process_run(mut run: Vec<Event>) -> Vec<Event> {
 
 // ── Public entry point ──────────────────────────────────────────────────────
 
-/// Sort events chronologically and process all non-speech runs in a single
-/// pass: compress cursor-only snapshots, union adjacent snapshots, and
-/// merge same-path diffs into net-change events.
+/// Sort events chronologically, apply global progressive selection
+/// subsumption, then process all non-speech runs in a single pass:
+/// compress cursor-only snapshots, union adjacent snapshots, merge
+/// same-path diffs into net-change events, collapse selections and
+/// commands, and drop trailing cursors when speech is present.
 ///
-/// This is the first phase of `format_markdown` — it mutates `events` in
-/// place and is path-format-agnostic (works with both absolute and relative
-/// paths).
+/// Mutates `events` in place. Path-format-agnostic (works with both
+/// absolute and relative paths).
 pub fn compress_and_merge(events: &mut Vec<Event>) {
     // Step 1: chronological sort.
     events.sort_by_key(|a| a.timestamp());
