@@ -83,6 +83,11 @@ There are exactly two situations where you should run `attend listen`:
 2. You are told "narration is ready." This means narration arrived while you
    were using other tools. Run `attend listen` to receive it.
 
+**Do not speculatively run multiple `attend listen` calls.** Each trigger
+warrants exactly one call. If that call delivers narration and the listener
+terminates with rendered output, you may run a second call to re-establish the
+listener — but never run them in parallel.
+
 In all other situations, do **not** restart the receiver:
 
 - After responding to narration — the listener is already running. Update your
