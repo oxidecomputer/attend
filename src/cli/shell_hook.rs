@@ -90,10 +90,11 @@ fn stage_event(
     }];
 
     let json = serde_json::to_string(&events)?;
-    let ts = util::utc_now().replace(':', "-");
+    let ts = util::utc_now_nanos().replace(':', "-");
+    let id = uuid::Uuid::new_v4();
     let dir = shell_staging_dir(session_id.as_ref());
     fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("{ts}.json"));
+    let path = dir.join(format!("{ts}-{id}.json"));
     util::atomic_write_str(&path, &json)?;
 
     Ok(())

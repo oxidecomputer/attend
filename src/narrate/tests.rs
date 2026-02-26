@@ -1,8 +1,9 @@
+use std::fs;
 use std::io::Write;
 
 use camino::Utf8PathBuf;
 
-use crate::state::SessionId;
+use crate::state::{CacheDirGuard, SessionId};
 
 use super::*;
 
@@ -258,8 +259,6 @@ fn yanked_dir_falls_back_to_local() {
 //
 // These use CacheDirGuard to redirect all filesystem state to a tempdir,
 // then exercise the real record::pause() function.
-
-use crate::state::CacheDirGuard;
 
 /// `record::pause()` when not recording prints an error and is a no-op.
 #[test]
@@ -769,4 +768,120 @@ fn yank_collects_from_session_and_local() {
     let content = super::receive::read_pending(&files, Some(cwd), &[]).unwrap();
     assert!(content.contains("session yank"));
     assert!(content.contains("local yank"));
+}
+
+// -- collect_staging timestamp parsing --
+
+/// Staging files with the same second-level timestamp but different UUID
+/// suffixes are both collected. This prevents preexec/postexec events
+/// from overwriting each other for fast commands like `cd`.
+#[test]
+fn collect_staging_uuid_suffix_prevents_collision() {
+    let guard = CacheDirGuard::new();
+    let session = SessionId::from("test-session");
+    let dir = shell_staging_dir(Some(&session));
+    fs::create_dir_all(&dir).unwrap();
+
+    let preexec = vec![merge::Event::ShellCommand {
+        timestamp: chrono::DateTime::UNIX_EPOCH,
+        shell: "fish".to_string(),
+        command: "cd ..".to_string(),
+        cwd: "/project".to_string(),
+        exit_status: None,
+        duration_secs: None,
+    }];
+    let postexec = vec![merge::Event::ShellCommand {
+        timestamp: chrono::DateTime::UNIX_EPOCH,
+        shell: "fish".to_string(),
+        command: "cd ..".to_string(),
+        cwd: "/other".to_string(),
+        exit_status: Some(0),
+        duration_secs: Some(0.001),
+    }];
+
+    // Same timestamp, different UUID suffixes — simulates preexec/postexec
+    // within the same second.
+    let ts = "2026-02-25T23-45-00.000000000Z";
+    let path_a = dir.join(format!("{ts}-aaaa.json"));
+    let path_b = dir.join(format!("{ts}-bbbb.json"));
+    fs::write(&path_a, serde_json::to_string(&preexec).unwrap()).unwrap();
+    fs::write(&path_b, serde_json::to_string(&postexec).unwrap()).unwrap();
+
+    let result = collect_shell_staging(Some(&session), chrono::DateTime::UNIX_EPOCH);
+    assert_eq!(
+        result.events.len(),
+        2,
+        "both preexec and postexec should be collected; \
+         cache_dir={} dir={}",
+        guard.cache,
+        dir,
+    );
+}
+
+/// Nanosecond-precision timestamps parse correctly and preserve ordering.
+#[test]
+fn collect_staging_nanos_timestamp_parsed() {
+    let guard = CacheDirGuard::new();
+    let session = SessionId::from("test-session");
+    let dir = shell_staging_dir(Some(&session));
+    fs::create_dir_all(&dir).unwrap();
+
+    let event = vec![merge::Event::ShellCommand {
+        timestamp: chrono::DateTime::UNIX_EPOCH,
+        shell: "fish".to_string(),
+        command: "ls".to_string(),
+        cwd: "/project".to_string(),
+        exit_status: Some(0),
+        duration_secs: Some(0.1),
+    }];
+
+    let path = dir.join("2026-02-25T23-45-00.500000000Z-some-uuid.json");
+    fs::write(&path, serde_json::to_string(&event).unwrap()).unwrap();
+
+    let result = collect_shell_staging(Some(&session), chrono::DateTime::UNIX_EPOCH);
+    assert_eq!(result.events.len(), 1);
+
+    // The event timestamp should be from the filename, not UNIX_EPOCH.
+    let ts = result.events[0].timestamp();
+    assert_ne!(
+        ts,
+        chrono::DateTime::UNIX_EPOCH,
+        "timestamp should be parsed from filename"
+    );
+
+    drop(guard);
+}
+
+/// Legacy second-precision filenames still parse correctly.
+#[test]
+fn collect_staging_legacy_timestamp_parsed() {
+    let guard = CacheDirGuard::new();
+    let session = SessionId::from("test-session");
+    let dir = shell_staging_dir(Some(&session));
+    fs::create_dir_all(&dir).unwrap();
+
+    let event = vec![merge::Event::ShellCommand {
+        timestamp: chrono::DateTime::UNIX_EPOCH,
+        shell: "fish".to_string(),
+        command: "ls".to_string(),
+        cwd: "/project".to_string(),
+        exit_status: Some(0),
+        duration_secs: Some(0.1),
+    }];
+
+    // Old-style filename with no fractional seconds and no UUID.
+    let path = dir.join("2026-02-25T23-45-00Z.json");
+    fs::write(&path, serde_json::to_string(&event).unwrap()).unwrap();
+
+    let result = collect_shell_staging(Some(&session), chrono::DateTime::UNIX_EPOCH);
+    assert_eq!(result.events.len(), 1);
+
+    let ts = result.events[0].timestamp();
+    assert_ne!(
+        ts,
+        chrono::DateTime::UNIX_EPOCH,
+        "legacy timestamp should be parsed from filename"
+    );
+
+    drop(guard);
 }

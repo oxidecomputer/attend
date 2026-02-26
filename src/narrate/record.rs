@@ -25,7 +25,7 @@ use super::{
 };
 use crate::config::Config;
 use crate::state::SessionId;
-use crate::util::utc_now;
+use crate::util::utc_now_nanos;
 
 /// Target sample rate for transcription engines (Whisper, Parakeet).
 const TRANSCRIPTION_SAMPLE_RATE: u32 = 16_000;
@@ -547,7 +547,7 @@ impl DaemonState {
 
         let json = serde_json::to_string(&events)?;
 
-        let ts = utc_now().replace(':', "-");
+        let ts = utc_now_nanos().replace(':', "-");
         fs::create_dir_all(&dest_dir)?;
         let path = dest_dir.join(format!("{ts}.json"));
         crate::util::atomic_write_str(&path, &json)?;

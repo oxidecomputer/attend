@@ -192,9 +192,15 @@ fn collect_staging(
 
     let mut events = Vec::new();
     for path in &files {
-        // Parse wall-clock timestamp from filename (e.g., "2026-02-23T22-42-28Z.json").
+        // Parse wall-clock timestamp from filename. Filenames may be:
+        //   "2026-02-23T22-42-28Z.json"                         (legacy, second precision)
+        //   "2026-02-23T22-42-28.123456789Z.json"               (nanosecond precision)
+        //   "2026-02-23T22-42-28.123456789Z-<uuid>.json"        (nanosecond + uniqueness suffix)
+        // The timestamp always ends at the first 'Z'.
         let file_time = path.file_stem().and_then(|s| s.to_str()).and_then(|s| {
-            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H-%M-%SZ")
+            let ts_part = s.find('Z').map(|i| &s[..=i]).unwrap_or(s);
+            chrono::NaiveDateTime::parse_from_str(ts_part, "%Y-%m-%dT%H-%M-%S%.fZ")
+                .or_else(|_| chrono::NaiveDateTime::parse_from_str(ts_part, "%Y-%m-%dT%H-%M-%SZ"))
                 .ok()
                 .map(|naive| naive.and_utc())
         });

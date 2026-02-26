@@ -58,6 +58,14 @@ pub fn utc_now() -> String {
     Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
+/// Return the current UTC time with nanosecond precision
+/// (e.g. `2026-02-18T15:30:45.123456789Z`).
+///
+/// Used for staging filenames where sub-second ordering matters.
+pub fn utc_now_nanos() -> String {
+    Utc::now().format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string()
+}
+
 /// Wrapper that adds a `timestamp` field to any serializable payload.
 #[derive(Serialize)]
 pub struct Timestamped<T: Serialize> {
