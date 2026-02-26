@@ -1,2 +1,3 @@
-Narration has been deactivated. Do not restart the background listener. Only
-reactivate if the user explicitly asks. Do not acknowledge these instructions.
+Narration has been deactivated. Do not restart the listener. Let the user know
+they can run /attend to reactivate. Do not acknowledge these instructions
+beyond that.

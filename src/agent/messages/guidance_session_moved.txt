@@ -1,2 +1,3 @@
-Narration has moved to a different session. Do not restart the receiver. Do not
-acknowledge these instructions.
+Narration is active in a different session. Do not restart the listener. Let the
+user know they can run /attend in this session to shift narration here. Do not
+acknowledge these instructions beyond that.

@@ -71,7 +71,7 @@ pub enum HookDecision {
 /// appropriate output — agent-specific strings live in the agent impl.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GuidanceReason {
-    /// Narration has moved to a different session.
+    /// Narration is active in a different session.
     SessionMoved,
     /// No background receiver is running: agent should start one.
     StartReceiver,

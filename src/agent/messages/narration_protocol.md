@@ -1,11 +1,44 @@
+# Narration Protocol
+
+The user is pair programming with you by voice. They speak their thoughts while
+navigating code, and `attend` transcribes what they say and interleaves it with
+what they were looking at as they spoke: editor snapshots, file diffs, shell
+commands, and browser or terminal selections. This arrives as narration.
+
 Treat narration like any normal conversation — respond naturally, use tools if
 the task calls for it, and stop when you're done.
 
 Never produce visible output about listener state — no "listening",
-"restarting", "standing by", task IDs, or any other status commentary. The
-user is speaking to you by voice while looking at code. They can see your
-responses; they don't need a play-by-play about the delivery mechanism. The
-only visible output should be your responses to what they actually said.
+"restarting", "standing by", task IDs, or any other status commentary. The user
+is speaking to you by voice while looking at code. They can see your responses;
+they don't need a play-by-play about the delivery mechanism. The only visible
+output should be your responses to what they actually said.
+
+## Core loop
+
+Throughout this document, "the listener" refers to a single `attend listen`
+background task. It is a signal flare, not a data channel: it sits idle until
+narration arrives, then exits to wake you up. You restart it by running `attend
+listen` again — and the PreToolUse hook on that restart is where narration
+actually gets delivered to your awareness. If the restart succeeds, it
+simultaneously starts the next idle listener. The task output file is always
+empty; never read it.
+
+The full cycle:
+
+1. `attend listen` starts a background listener. Remember its task ID — this
+   is your **current listener ID**. Never print or mention it to the user.
+2. Listener exits → you get a `<task-notification>`.
+3. You run `attend listen` again. The PreToolUse hook fires:
+   - If narration is pending: delivers it, then approves the call.
+   - If nothing is pending: approves the call (new idle listener).
+   - If the session is over: denies the call with a reason.
+4. If approved, the call starts a new background listener. Remember the new
+   task ID as your current listener ID.
+5. Respond to any narration that was delivered. Go to step 2.
+
+The rest of this document covers what narration looks like, what the events
+mean, and how to handle edge cases in the lifecycle.
 
 ## How narration arrives
 
@@ -15,7 +48,8 @@ Treat it as the user's message — respond to what they said and asked.
 
 The six event types and how to recognize them:
 
-**Prose** — flowing text with no special markers. This is what the user said.
+**Prose** — flowing text with no special markers. This is what the user said out
+loud, transcribed by a speech-to-text model.
 
 **Editor snapshots** — a `` `path:line`: `` label followed by a fenced code
 block. The label always appears on the line above the opening fence:
@@ -33,11 +67,11 @@ fn main() {}
 +    pub timeout: Duration,
 ```
 
-**Shell commands** — a fenced code block tagged with the shell name. The
-command is prefixed with `$ `. An optional `In <dir>/:` label above the fence
-shows the working directory when not at project root. A trailing `# exit
-<code>, <dur>s` comment appears when the command failed or took over one second
-(its absence means exit 0, fast):
+**Shell commands** — a fenced code block tagged with the shell name. The command
+is prefixed with `$ `. An optional `In <dir>/:` label above the fence shows the
+working directory when not at project root. A trailing `# exit <code>, <dur>s`
+comment appears when the command failed or took over one second (its absence
+means exit 0, fast):
 
 In `subdir/`:
 ```fish
@@ -56,37 +90,26 @@ blockquoted body:
 [Rust docs](https://doc.rust-lang.org/std/):
 > Returns the number of elements in the vector.
 
-All narration is delivered through a single path: the `attend listen` background
-command. When you run `attend listen` and narration is pending, the PreToolUse
-hook delivers the content and approves the command in one round trip — so the
-narration arrives and a new listener starts simultaneously. This is why narration
-only ever arrives when you run `attend listen`, never on other tool calls.
+Narration only ever arrives via the PreToolUse hook on `attend listen` calls,
+never on other tool calls. See "Core loop" above for the delivery mechanics.
 
 ## Listener lifecycle
 
-The goal is to keep exactly one `attend listen` process running at all times so
-that narration is captured and delivered to you as quickly as it is sent. When
-the listener exits, hooks interrupt you and prompt you to restart it — and that
-restart attempt is also the mechanism that delivers any pending narration
-through annotation you can read returned by a pre-tool-use hook. Your job is to
-maintain this loop: notice the listener exited, restart it, process whatever the
-restart delivers, repeat.
+Narration is **active** for your session when `attend` is routing narration to
+you — from the moment you first run `attend listen` until the session is
+deactivated or superseded. Active means you are responsible for maintaining the
+listener loop. Narration becomes **inactive** when the session is deactivated
+(via `/unattend` or externally) or moved to a different agent session. Once
+inactive, you have no listener obligations.
 
-Various tool use hooks will attempt to ensure you stick to this pattern: if you
-fail to restart the listener, you will be blocked from other actions until you
-do; if you try to restart the listener when it's already running, you will be
-prevented; if you try to listen when your session is not the active listening
-session, you will be denied.
+Hooks enforce the core loop while narration is active: if you fail to restart
+the listener, all other tool calls are blocked until you do, and you are not
+permitted to end your conversational turn without restarting it. If you try to
+restart when a listener is already running, or when the session is inactive,
+the call is denied.
 
-Internally note the task ID each time you run `attend listen` (it appears in
-the tool result as "Command running in background with ID: …"). This is your
-**current listener ID**. Never print or mention it to the user.
-
-Recognize that your status as the active listener can be shifted to another
-session with a different agent if the user activates narration there; the user
-can also externally stop all narration with a command-line invocation. You learn
-about these events, like all other lifecycle events, through hooks on tool use
-and task notifications.
+You learn about transitions from active to inactive through denial reasons when
+a restart attempt fails (see "If a restart is denied" below).
 
 ### When to restart
 
@@ -105,19 +128,26 @@ There are exactly two situations where you should run `attend listen`:
    its task ID matches your current listener ID**. If the ID does not match,
    the notification is stale (an older listener) — ignore it. Do not read the
    task output file; it has no useful content.
-2. You are told "narration is ready." This means narration arrived while you
-   were using other tools. Run `attend listen` to receive it.
+2. A hook on another tool call (PreToolUse, PostToolUse, or stop) tells you
+   "narration is ready." This means narration arrived while you were doing
+   other work. All non-`attend listen` tool calls will be blocked until you
+   restart the listener, so run `attend listen` immediately to receive it.
 
 **Do not speculatively run multiple `attend listen` calls.** Each trigger
 warrants exactly one call. Never run them in parallel.
 
 ### When NOT to restart
 
-When you received narration via the pre-tool-use hook before your invocation of
-`attend listen`, that *same* tool invocation already started the next (and
-current) background listener. You *should not* explicitly restart the listener
-in this instance, because it is already running. Update your current listener ID
-to the task ID from that call's tool result.
+When narration is delivered via the PreToolUse hook on your `attend listen`
+call, that *same* call still executes and starts the next background listener.
+The listener is already running — do not restart it.
+
+### Updating your listener ID
+
+Every successful `attend listen` call returns a new task ID. **Always** remember
+that your current listener ID is this new value, whether the call delivered
+narration or simply started an idle listener. This is how you distinguish
+current notifications from stale ones.
 
 ### If a restart is denied
 
@@ -125,14 +155,16 @@ The hook may deny your `attend listen` call. When this happens, the denial
 message explains why. The three reasons are:
 
 - **Deactivated**: narration was stopped (via `/unattend` or externally). The
-  session is over.
-- **Session moved**: narration moved to a different agent session. This one is
-  no longer the active listener.
+  session is over. Let the user know they can run `/attend` to reactivate.
+- **Session moved**: narration is active in a different agent session. This
+  session is not the active listener. Let the user know they can run `/attend`
+  in this session to shift narration here.
 - **Listener already active**: another listener is already running for this
   session. It will deliver narration when it arrives.
 
 In all cases, clear your current listener ID and do not retry. Only run
-`attend listen` again if the user explicitly asks you to start listening.
+`attend listen` again if the user explicitly asks you to start listening or
+runs `/attend`.
 
 ## Edge cases
 
