@@ -35,6 +35,7 @@ be performed as specified, please do it.
 | 16 | [Yank-to-Clipboard](./phase-16-yank.md) | Done (56dc48b) | Phases 13, 14 |
 | 17 | [Loopback Audio Capture](./phase-17-loopback-capture.md) | Not started | Phases 6, 10 |
 | 18 | [Persistent Daemon](./phase-18-persistent-daemon.md) | Not started | Phase 14 |
+| 19 | [Clipboard Capture](./phase-19-clipboard-capture.md) | Not started | Phase 12a |
 
 ## Item Progress
 
@@ -206,3 +207,40 @@ be performed as specified, please do it.
 - [ ] 18.4 Idle timeout (configurable, default 5m)
 - [ ] 18.5 Memory footprint analysis
 - [ ] 18.6 Daemon health and observability
+
+### Phase 19: Clipboard Capture
+#### A: Skeleton + types
+- [ ] 19.1 Promote `image` to direct dependency
+- [ ] 19.2 `Event::ClipboardSelection` + `ClipboardContent` enum + serde
+- [ ] 19.3 `plain_text` field on `BrowserSelection`
+- [ ] 19.4 Stub `ClipboardTracker` + `clipboard_capture` module
+- [ ] 19.5 Stub `clipboard_staging_dir()`
+- [ ] 19.6 Stub `dedup_clipboard_selections` + `normalize_text`
+- [ ] 19.7 Stub render arm for `ClipboardSelection`
+- [ ] 19.8 Stub filter pass-through for `ClipboardSelection`
+- [ ] 19.9 `clipboard_capture` config option
+#### B: Tests (red)
+- [ ] 19.10 Serde tests (4)
+- [ ] 19.11 Tracker tests (10)
+- [ ] 19.12 Dedup tests (6)
+- [ ] 19.13 Browser dedup test (1)
+- [ ] 19.14 Subsumption tests (5)
+- [ ] 19.15 Render tests (4)
+- [ ] 19.16 Filter tests (2)
+- [ ] 19.17 Config tests (2)
+- [ ] 19.18 Prop tests (2)
+#### C: Implementation (green)
+- [ ] 19.19 Implement `ClipboardTracker`
+- [ ] 19.20 Implement `clipboard_staging_dir()`
+- [ ] 19.21 Implement `normalize_text` + `dedup_clipboard_selections`
+- [ ] 19.22 Update `dedup_browser_vs_external` to use normalized `plain_text`
+- [ ] 19.23 Implement clipboard subsumption (one-directional)
+- [ ] 19.24 Implement render
+- [ ] 19.25 Implement filter pass-through
+- [ ] 19.26 Browser extension: emit `plain_text`
+#### D: Wiring + docs
+- [ ] 19.27 Implement `clipboard_capture::spawn()` polling thread
+- [ ] 19.28 Wire into `CaptureHandle` as fourth thread
+- [ ] 19.29 Wire into daemon collection pipeline + staging cleanup
+- [ ] 19.30 Pre-authorize `Read` on clipboard staging dir in install + uninstall
+- [ ] 19.31 Update narration protocol + setup guide
