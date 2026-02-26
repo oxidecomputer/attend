@@ -36,6 +36,7 @@ be performed as specified, please do it.
 | 17 | [Loopback Audio Capture](./phase-17-loopback-capture.md) | Not started | Phases 6, 10 |
 | 18 | [Persistent Daemon](./phase-18-persistent-daemon.md) | Not started | Phase 14 |
 | 19 | [Clipboard Capture](./phase-19-clipboard-capture.md) | Done | Phase 12a |
+| 19E | [Clipboard Image Delivery](./phase-19e-clipboard-image-delivery.md) | Not started | Phase 19 |
 
 ## Item Progress
 
