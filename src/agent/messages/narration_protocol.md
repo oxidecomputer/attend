@@ -64,9 +64,29 @@ only ever arrives when you run `attend listen`, never on other tool calls.
 
 ## Listener lifecycle
 
+The goal is to keep exactly one `attend listen` process running at all times so
+that narration is captured and delivered to you as quickly as it is sent. When
+the listener exits, hooks interrupt you and prompt you to restart it — and that
+restart attempt is also the mechanism that delivers any pending narration
+through annotation you can read returned by a pre-tool-use hook. Your job is to
+maintain this loop: notice the listener exited, restart it, process whatever the
+restart delivers, repeat.
+
+Various tool use hooks will attempt to ensure you stick to this pattern: if you
+fail to restart the listener, you will be blocked from other actions until you
+do; if you try to restart the listener when it's already running, you will be
+prevented; if you try to listen when your session is not the active listening
+session, you will be denied.
+
 Internally note the task ID each time you run `attend listen` (it appears in
 the tool result as "Command running in background with ID: …"). This is your
 **current listener ID**. Never print or mention it to the user.
+
+Recognize that your status as the active listener can be shifted to another
+session with a different agent if the user activates narration there; the user
+can also externally stop all narration with a command-line invocation. You learn
+about these events, like all other lifecycle events, through hooks on tool use
+and task notifications.
 
 ### When to restart
 
@@ -75,8 +95,9 @@ process exited — most commonly because narration arrived, but also on idle
 timeout or external stop. The notification itself carries no reason. You must
 find out what happened by attempting to restart the listener: a hook before this
 tool invocation will either deliver narration and start a new idle listener, or
-deny the call with a reason explaining why. If nothing is pending and the
-session is still active, it will simply start a new idle listener.
+deny the call with a reason explaining why. If nothing is pending, the session
+is still active, and there's no currently active listener, it will simply
+restart an idle listener.
 
 There are exactly two situations where you should run `attend listen`:
 
@@ -88,28 +109,29 @@ There are exactly two situations where you should run `attend listen`:
    were using other tools. Run `attend listen` to receive it.
 
 **Do not speculatively run multiple `attend listen` calls.** Each trigger
-warrants exactly one call. If that call delivers narration and the listener
-terminates with rendered output, you may run a second call to re-establish the
-listener — but never run them in parallel.
+warrants exactly one call. Never run them in parallel.
 
 ### When NOT to restart
 
-- After responding to narration — the listener was already started in the same
-  round trip that delivered the content. Update your current listener ID to the
-  task ID from that call's tool result.
-- When told the listener is "already active" — one is running and will wake you.
+When you received narration via the pre-tool-use hook before your invocation of
+`attend listen`, that *same* tool invocation already started the next (and
+current) background listener. You *should not* explicitly restart the listener
+in this instance, because it is already running. Update your current listener ID
+to the task ID from that call's tool result.
 
 ### If a restart is denied
 
 The hook may deny your `attend listen` call. When this happens, the denial
-message explains why. The two reasons are:
+message explains why. The three reasons are:
 
 - **Deactivated**: narration was stopped (via `/unattend` or externally). The
   session is over.
 - **Session moved**: narration moved to a different agent session. This one is
   no longer the active listener.
+- **Listener already active**: another listener is already running for this
+  session. It will deliver narration when it arrives.
 
-In either case, clear your current listener ID and do not retry. Only run
+In all cases, clear your current listener ID and do not retry. Only run
 `attend listen` again if the user explicitly asks you to start listening.
 
 ## Edge cases
