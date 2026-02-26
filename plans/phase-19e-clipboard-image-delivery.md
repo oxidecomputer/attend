@@ -316,8 +316,27 @@ Add a section after the existing listener lifecycle documentation:
 ## Implementation notes
 
 **Base64 image detection**: Claude Code's Bash tool renders `data:image/png;base64,...`
-as an image ONLY when it is the sole stdout output. If mixed with any other
-text, it's treated as plain text. `attend clip` must output nothing else.
+as an image ONLY when it is the sole stdout output AND the output is small.
+Tested: a 100-byte 2x2 PNG (~100 chars base64) renders correctly. A 114KB
+800x600 PNG (~150K chars base64) does NOT trigger detection — it's shown as
+raw text and the command times out.
+
+This means `attend clip` cannot deliver large images via base64 stdout.
+**Fallback approach**: `attend clip` writes the image to a temp file and
+outputs the path. The agent then uses the `Read` tool on that path. The
+temp file path is session-scoped and ephemeral (deleted after read, or by
+the next `attend clip` call). The PreToolUse hook can pre-authorize the
+specific temp file path via `additionalContext` instructions, or we accept
+that `Read` on a temp file will prompt the user (one-time allow).
+
+Alternatively: `attend clip` writes to a well-known path like
+`<cache>/attend/clip-output.png` (overwritten each call) and the
+`additionalContext` tells the agent to `Read` that exact path. The install
+step pre-authorizes `Read(<cache>/attend/clip-output.png)`.
+
+**This is an open design question** — the base64-on-stdout approach only
+works for tiny images. The plan should be updated once a delivery mechanism
+for large images is confirmed.
 
 **`updatedInput` JSON format**: For rewriting a Bash command, the PreToolUse
 hook output needs:
