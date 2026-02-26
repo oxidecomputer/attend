@@ -20,8 +20,8 @@ use super::merge::{self, Event};
 use super::silence::SilenceDetector;
 use super::transcribe::{Engine, Word};
 use super::{
-    cache_dir, flush_sentinel_path, pause_sentinel_path, pending_dir, record_lock_path,
-    resolve_session, stop_sentinel_path, yank_sentinel_path, yanked_dir,
+    flush_sentinel_path, pause_sentinel_path, pending_dir, record_lock_path, resolve_session,
+    stop_sentinel_path, yank_sentinel_path, yanked_dir,
 };
 use crate::config::Config;
 use crate::state::SessionId;
@@ -1077,9 +1077,9 @@ pub fn daemon() -> anyhow::Result<()> {
     let model_path = config.model.unwrap_or_else(|| engine.default_model_path());
     let session_id = resolve_session(None);
 
-    // Ensure cache dir exists
-    let cd = cache_dir();
-    fs::create_dir_all(&cd)?;
+    // Ensure daemon dir exists (creates cache_dir/daemon/ and parents)
+    let dd = super::daemon_dir();
+    fs::create_dir_all(&dd)?;
 
     // Acquire record lock (auto-removed on drop, even on error/panic)
     let _lock = lockfile::Lockfile::create(record_lock_path())

@@ -7,6 +7,16 @@ use crate::state::{CacheDirGuard, SessionId};
 
 use super::*;
 
+/// Write a fake daemon lock file for tests that simulate a running daemon.
+///
+/// Creates the `daemon/` directory (which now holds the lock) and writes
+/// the given PID so `record_lock_path().exists()` returns true.
+fn write_fake_lock(pid: impl std::fmt::Display) {
+    let lock = record_lock_path();
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    std::fs::write(&lock, pid.to_string()).unwrap();
+}
+
 // -- process_alive tests --
 
 /// The current process is reported as alive.
@@ -178,7 +188,9 @@ fn cache_dir_is_under_attend() {
 fn pending_dir_includes_session() {
     let sid = SessionId::from("abc-123");
     let dir = pending_dir(Some(&sid));
-    assert!(dir.ends_with("pending/abc-123") || dir.ends_with("pending\\abc-123"));
+    assert!(
+        dir.ends_with("narration/pending/abc-123") || dir.ends_with("narration\\pending\\abc-123")
+    );
 }
 
 /// The archive directory path includes the session ID.
@@ -186,7 +198,9 @@ fn pending_dir_includes_session() {
 fn archive_dir_includes_session() {
     let sid = SessionId::from("abc-123");
     let dir = archive_dir(Some(&sid));
-    assert!(dir.ends_with("archive/abc-123") || dir.ends_with("archive\\abc-123"));
+    assert!(
+        dir.ends_with("narration/archive/abc-123") || dir.ends_with("narration\\archive\\abc-123")
+    );
 }
 
 // -- No-session (_local) fallback tests --
@@ -196,7 +210,7 @@ fn archive_dir_includes_session() {
 fn pending_dir_falls_back_to_local() {
     let dir = pending_dir(None);
     assert!(
-        dir.ends_with("pending/_local") || dir.ends_with("pending\\_local"),
+        dir.ends_with("narration/pending/_local") || dir.ends_with("narration\\pending\\_local"),
         "expected _local fallback, got: {dir}"
     );
 }
@@ -206,7 +220,7 @@ fn pending_dir_falls_back_to_local() {
 fn archive_dir_falls_back_to_local() {
     let dir = archive_dir(None);
     assert!(
-        dir.ends_with("archive/_local") || dir.ends_with("archive\\_local"),
+        dir.ends_with("narration/archive/_local") || dir.ends_with("narration\\archive\\_local"),
         "expected _local fallback, got: {dir}"
     );
 }
@@ -216,7 +230,7 @@ fn archive_dir_falls_back_to_local() {
 fn browser_staging_dir_falls_back_to_local() {
     let dir = browser_staging_dir(None);
     assert!(
-        dir.ends_with("browser-staging/_local") || dir.ends_with("browser-staging\\_local"),
+        dir.ends_with("staging/browser/_local") || dir.ends_with("staging\\browser\\_local"),
         "expected _local fallback, got: {dir}"
     );
 }
@@ -227,7 +241,7 @@ fn browser_staging_dir_includes_session() {
     let sid = SessionId::from("sess-99");
     let dir = browser_staging_dir(Some(&sid));
     assert!(
-        dir.ends_with("browser-staging/sess-99") || dir.ends_with("browser-staging\\sess-99"),
+        dir.ends_with("staging/browser/sess-99") || dir.ends_with("staging\\browser\\sess-99"),
         "expected session ID, got: {dir}"
     );
 }
@@ -240,7 +254,7 @@ fn yanked_dir_includes_session() {
     let sid = SessionId::from("abc-123");
     let dir = super::yanked_dir(Some(&sid));
     assert!(
-        dir.ends_with("yanked/abc-123") || dir.ends_with("yanked\\abc-123"),
+        dir.ends_with("narration/yanked/abc-123") || dir.ends_with("narration\\yanked\\abc-123"),
         "expected session ID, got: {dir}"
     );
 }
@@ -250,7 +264,7 @@ fn yanked_dir_includes_session() {
 fn yanked_dir_falls_back_to_local() {
     let dir = super::yanked_dir(None);
     assert!(
-        dir.ends_with("yanked/_local") || dir.ends_with("yanked\\_local"),
+        dir.ends_with("narration/yanked/_local") || dir.ends_with("narration\\yanked\\_local"),
         "expected _local fallback, got: {dir}"
     );
 }
@@ -275,7 +289,7 @@ fn pause_toggle_round_trip() {
     let _g = CacheDirGuard::new();
 
     // Simulate a running daemon by writing a record lock.
-    std::fs::write(record_lock_path(), std::process::id().to_string()).unwrap();
+    write_fake_lock(std::process::id());
 
     // First call: creates the sentinel (pause).
     record::pause().unwrap();
@@ -297,7 +311,7 @@ fn pause_toggle_round_trip() {
 #[test]
 fn pause_multiple_cycles() {
     let _g = CacheDirGuard::new();
-    std::fs::write(record_lock_path(), std::process::id().to_string()).unwrap();
+    write_fake_lock(std::process::id());
 
     for i in 0..5 {
         record::pause().unwrap();
@@ -319,7 +333,7 @@ fn stop_while_paused_is_accepted() {
     let _g = CacheDirGuard::new();
 
     // Use a dead PID so stop() doesn't wait 5 seconds for a daemon.
-    std::fs::write(record_lock_path(), i32::MAX.to_string()).unwrap();
+    write_fake_lock(i32::MAX);
 
     record::pause().unwrap();
     assert!(pause_sentinel_path().exists());
@@ -339,7 +353,7 @@ fn pause_sentinel_under_cache_dir() {
     assert!(sentinel.starts_with(g.cache.as_str()));
 
     // Write record lock with our PID (alive process).
-    std::fs::write(record_lock_path(), std::process::id().to_string()).unwrap();
+    write_fake_lock(std::process::id());
 
     // Without pause sentinel: not paused.
     assert!(!sentinel.exists());
@@ -369,7 +383,7 @@ fn yank_writes_sentinel() {
     let _g = CacheDirGuard::new();
 
     // Use a dead PID so yank() doesn't wait 5 seconds for a daemon.
-    std::fs::write(record_lock_path(), i32::MAX.to_string()).unwrap();
+    write_fake_lock(i32::MAX);
 
     record::yank().unwrap();
     // Sentinel is cleaned up by the CLI after it detects daemon exit,
@@ -383,7 +397,7 @@ fn yank_while_paused_is_accepted() {
     let _g = CacheDirGuard::new();
 
     // Use a dead PID so yank() doesn't wait 5 seconds for a daemon.
-    std::fs::write(record_lock_path(), i32::MAX.to_string()).unwrap();
+    write_fake_lock(i32::MAX);
 
     record::pause().unwrap();
     assert!(pause_sentinel_path().exists());

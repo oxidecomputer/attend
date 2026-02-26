@@ -695,12 +695,12 @@ fn clipboard_image_renders_as_image_tag() {
     let events = vec![Event::ClipboardSelection {
         timestamp: ts(0.0),
         content: ClipboardContent::Image {
-            path: "/tmp/clipboard-staging/12345.png".to_string(),
+            path: "/tmp/staging/clipboard/12345.png".to_string(),
         },
     }];
     let md = render_markdown(&events, SnipConfig::default(), RenderMode::Agent);
     assert!(
-        md.contains("![clipboard](/tmp/clipboard-staging/12345.png)"),
+        md.contains("![clipboard](/tmp/staging/clipboard/12345.png)"),
         "should render as image tag: {md:?}"
     );
 }

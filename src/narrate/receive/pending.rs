@@ -66,9 +66,9 @@ pub(crate) fn archive_pending(files: &[PathBuf], session_id: &SessionId) {
 /// No-op if retention is `"forever"`.
 pub(crate) fn auto_prune(config: &Config) {
     if let Some(retention) = config.retention_duration() {
-        let cache = crate::narrate::cache_dir();
+        let narration = crate::narrate::narration_root();
         for dir in ["archive", "pending"] {
-            let root = cache.join(dir);
+            let root = narration.join(dir);
             if root.exists() {
                 crate::narrate::clean::clean_archive_dir(root.as_std_path(), retention);
             }

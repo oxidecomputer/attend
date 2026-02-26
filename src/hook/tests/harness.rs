@@ -132,7 +132,8 @@ impl TestHarness {
     /// activated marker, just like `user_prompt` does for `/attend`.
     pub(super) fn activate(&self, session_id: &SessionId) {
         // Write listening file
-        let listening = self.cache().join("listening");
+        let listening = state::listening_path().unwrap();
+        std::fs::create_dir_all(listening.parent().unwrap()).unwrap();
         std::fs::write(&listening, session_id.as_str()).unwrap();
         // Write activated marker
         let marker = self
@@ -155,7 +156,7 @@ impl TestHarness {
     /// terminal (outside the hook system).
     pub(super) fn deactivate(&self) {
         // Read the current listening session (if any) and mark it displaced.
-        let listening = self.cache().join("listening");
+        let listening = state::listening_path().unwrap();
         if let Ok(content) = std::fs::read_to_string(&listening) {
             let session_id = content.trim().to_string();
             if !session_id.is_empty() {
@@ -173,7 +174,7 @@ impl TestHarness {
     /// to render. Uses an atomic counter for unique, ordered filenames
     /// (safe for rapid proptest sequences without sleeping).
     pub(super) fn write_pending(&self, session_id: &SessionId, text: &str) {
-        let dir = self.cache().join("pending").join(session_id.as_str());
+        let dir = crate::narrate::pending_dir(Some(session_id));
         std::fs::create_dir_all(&dir).unwrap();
         let seq = PENDING_SEQ.fetch_add(1, Ordering::Relaxed);
         let filename = format!("{seq:020}.json");
@@ -192,7 +193,7 @@ impl TestHarness {
     /// `read_pending` returns `None` because the event's path doesn't
     /// match the session's working directory.
     pub(super) fn write_undeliverable_pending(&self, session_id: &SessionId) {
-        let dir = self.cache().join("pending").join(session_id.as_str());
+        let dir = crate::narrate::pending_dir(Some(session_id));
         std::fs::create_dir_all(&dir).unwrap();
         let seq = PENDING_SEQ.fetch_add(1, Ordering::Relaxed);
         let filename = format!("{seq:020}.json");
@@ -210,7 +211,8 @@ impl TestHarness {
 
     /// Simulate a running receiver by writing a lock file with our PID.
     pub(super) fn fake_receiver(&self) -> ReceiverGuard {
-        let lock_path = self.cache().join("receive.lock");
+        let lock_path = crate::narrate::receive_lock_path();
+        std::fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
         std::fs::write(&lock_path, std::process::id().to_string()).unwrap();
         ReceiverGuard { lock_path }
     }

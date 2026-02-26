@@ -172,7 +172,7 @@ fn arb_clipboard_image() -> impl Strategy<Value = Event> {
     (0.0..100.0f64, "[a-z]{1,8}").prop_map(|(t, name)| Event::ClipboardSelection {
         timestamp: ts(t),
         content: ClipboardContent::Image {
-            path: format!("/tmp/clipboard-staging/{name}.png"),
+            path: format!("/tmp/staging/clipboard/{name}.png"),
         },
     })
 }

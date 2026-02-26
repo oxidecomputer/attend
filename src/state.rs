@@ -105,9 +105,14 @@ pub fn cache_dir() -> Option<Utf8PathBuf> {
     Some(dir.join("attend"))
 }
 
+/// Root directory for hook system shared state (listening, receive lock, cache).
+pub fn hooks_dir() -> Option<Utf8PathBuf> {
+    Some(cache_dir()?.join("hooks"))
+}
+
 /// Path to the file that identifies the currently attending session.
 pub fn listening_path() -> Option<Utf8PathBuf> {
-    Some(cache_dir()?.join("listening"))
+    Some(hooks_dir()?.join("listening"))
 }
 
 /// Read the session ID of the currently attending session, if any.
@@ -162,7 +167,7 @@ pub(crate) fn save_install_meta(meta: &InstallMeta) {
 
 /// Path to the shared ordering cache.
 fn shared_cache_path() -> Option<Utf8PathBuf> {
-    Some(cache_dir()?.join("latest.json"))
+    Some(hooks_dir()?.join("latest.json"))
 }
 
 /// Check whether an anyhow error chain contains an `io::ErrorKind::NotFound`.

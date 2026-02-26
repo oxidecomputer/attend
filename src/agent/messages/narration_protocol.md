@@ -98,7 +98,7 @@ Text selections appear as a plain blockquote with no attribution label:
 
 Image selections appear as a markdown image tag with an absolute path:
 
-![clipboard](/Users/oxide/.cache/attend/clipboard-staging/12345.png)
+![clipboard](/Users/oxide/.cache/attend/staging/clipboard/12345.png)
 
 **You must `Read` every clipboard image path when you encounter one.** These are
 ephemeral — the user copied this image while narrating, and it will not be

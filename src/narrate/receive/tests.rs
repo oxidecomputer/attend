@@ -324,7 +324,7 @@ fn collect_read_archive_round_trip() {
     let session_id = "int-test-session";
 
     // Set up a pending directory with two narration files.
-    let pending = base.path().join("pending").join(session_id);
+    let pending = base.path().join("narration/pending").join(session_id);
     fs::create_dir_all(&pending).unwrap();
 
     let events1 = vec![Event::Words {
@@ -352,7 +352,7 @@ fn collect_read_archive_round_trip() {
     assert!(content.contains("second dictation"));
 
     // Archive should move files out of pending.
-    let archive = base.path().join("archive").join(session_id);
+    let archive = base.path().join("narration/archive").join(session_id);
     fs::create_dir_all(&archive).unwrap();
     for path in &files {
         if let Some(filename) = path.file_name() {
@@ -564,7 +564,7 @@ fn clipboard_not_relativized() {
     let mut events = vec![Event::ClipboardSelection {
         timestamp: ts(0.0),
         content: ClipboardContent::Image {
-            path: "/Users/oxide/.cache/attend/clipboard-staging/12345.png".to_string(),
+            path: "/Users/oxide/.cache/attend/staging/clipboard/12345.png".to_string(),
         },
     }];
     relativize_events(&mut events, cwd);
@@ -574,7 +574,7 @@ fn clipboard_not_relativized() {
             ..
         } => {
             assert_eq!(
-                path, "/Users/oxide/.cache/attend/clipboard-staging/12345.png",
+                path, "/Users/oxide/.cache/attend/staging/clipboard/12345.png",
                 "clipboard image path should not be relativized"
             );
         }
@@ -600,7 +600,7 @@ fn collect_pending_merges_session_and_local() {
     let session_id = "merge-test-session";
 
     // Session pending dir
-    let session_dir = base.path().join("pending").join(session_id);
+    let session_dir = base.path().join("narration/pending").join(session_id);
     fs::create_dir_all(&session_dir).unwrap();
     let events_session = vec![Event::Words {
         timestamp: ts(1.0),
@@ -613,7 +613,7 @@ fn collect_pending_merges_session_and_local() {
     .unwrap();
 
     // _local pending dir
-    let local_dir = base.path().join("pending").join("_local");
+    let local_dir = base.path().join("narration/pending").join("_local");
     fs::create_dir_all(&local_dir).unwrap();
     let events_local = vec![Event::Words {
         timestamp: ts(0.0),

@@ -75,13 +75,12 @@ Show narration system status, including a report of any problems that are detect
 
 ### `attend narrate clean`
 
-In case of problems in the agent harness, you don't want to lose your narration and
-have to say it all over again! That's why `attend` maintains an archive of all your
-narrations. By default, archives older than 7 days are automatically pruned after
-each narration delivery (configurable via `archive_retention` in the config file).
+`attend` archives delivered narrations so they survive agent crashes or delivery
+failures. Archives older than 7 days are automatically pruned after each delivery
+(configurable via `archive_retention` in the config file).
 
-You can also remove old archived narration files manually using this command, which
-defaults to cleaning everything older than 7 days.
+This command removes old archives manually; it defaults to cleaning everything
+older than 7 days.
 
 ## Narration commands
 

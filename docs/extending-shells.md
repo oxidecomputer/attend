@@ -97,10 +97,10 @@ automatically from the registered backends.
 
 ## Implementation notes
 
-- **Fast path**: Hook scripts should check
-  `~/.local/share/attend/record.lock` (the record lock) before spawning
-  `attend`. This makes the hook free when narration is inactive. See
-  `src/shell/fish.rs` for the fish pattern.
+- **Fast path**: Hook scripts should check `record_lock_path()` (resolved at
+  install time and baked into the script) before spawning `attend`. This makes
+  the hook free when narration is inactive. See `src/shell/fish.rs` for the
+  fish pattern.
 - **Auto-sourcing**: Fish hooks go in `~/.config/fish/conf.d/` and are
   loaded automatically. Zsh hooks go in `~/.config/attend/hooks/` and
   require a `source` line in `~/.zshrc` (printed by the installer). Choose

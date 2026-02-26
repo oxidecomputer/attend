@@ -187,7 +187,7 @@ pub(crate) fn status() -> anyhow::Result<()> {
     println!("{:<COL$}{count} narration(s)", "Pending:");
 
     // Archive size
-    let archive_root = super::cache_dir().join("archive");
+    let archive_root = super::narration_root().join("archive");
     let archive_size = dir_size_bytes(archive_root.as_std_path());
     println!("{:<COL$}{}", "Archive:", format_size(archive_size));
 

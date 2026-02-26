@@ -4,6 +4,42 @@
 //! switch to the editor, speak and point at code, press the hotkey again.
 //! The tool transcribes speech, captures editor state and file diffs, and
 //! delivers a formatted prompt to a running Claude Code session.
+//!
+//! # Cache directory layout
+//!
+//! All runtime state lives under `~/Library/Caches/attend/` (macOS). The
+//! layout groups files by subsystem so `ls` shows a small number of
+//! well-named directories:
+//!
+//! ```text
+//! cache_dir/
+//! ├── daemon/                  Recording daemon IPC
+//! │   ├── lock                 PID lock file (daemon is running)
+//! │   ├── stop                 Sentinel: request graceful stop
+//! │   ├── flush                Sentinel: request mid-session flush
+//! │   ├── pause                Sentinel: toggle pause/resume
+//! │   └── yank                 Sentinel: stop + copy to clipboard
+//! ├── narration/               Narration file lifecycle
+//! │   ├── pending/<key>/       Awaiting delivery to an agent session
+//! │   ├── yanked/<key>/        Written by yank (isolated from hook delivery)
+//! │   └── archive/<key>/       Delivered or yanked, kept for retention
+//! ├── staging/                 Event staging for daemon collection
+//! │   ├── browser/<key>/       Browser extension selection events
+//! │   ├── shell/<key>/         Shell hook command events
+//! │   └── clipboard/<key>/     Clipboard images (PNG)
+//! ├── hooks/                   Hook system shared state
+//! │   ├── listening            Currently attending session ID
+//! │   ├── receive.lock         PID lock for the receive listener
+//! │   └── latest.json          Shared editor state ordering cache
+//! ├── sessions/                Per-session state
+//! │   ├── cache/<sid>.json
+//! │   ├── displaced/<sid>
+//! │   └── activated/<sid>
+//! ├── models/                  ML model files
+//! └── version.json             Install metadata
+//! ```
+//!
+//! `<key>` is either a session ID or `_local` (no active session).
 
 mod audio;
 mod capture;
@@ -27,7 +63,7 @@ use crate::state::SessionId;
 
 /// Directory name used for staging/pending when no agent session is active.
 ///
-/// The `record.lock` file (daemon is running) remains the sole gate for
+/// The daemon lock file (daemon is running) remains the sole gate for
 /// whether events are captured at all. This fallback only affects *where*
 /// events are staged when the daemon is running but no agent session exists.
 const LOCAL_DIR_NAME: &str = "_local";
@@ -52,19 +88,34 @@ pub(crate) fn cache_dir() -> Utf8PathBuf {
     crate::state::cache_dir().expect("cannot determine cache directory")
 }
 
+/// Root directory for recording daemon IPC (lock, sentinels).
+pub(crate) fn daemon_dir() -> Utf8PathBuf {
+    cache_dir().join("daemon")
+}
+
+/// Root directory for the narration file lifecycle (pending, archive, yanked).
+pub(crate) fn narration_root() -> Utf8PathBuf {
+    cache_dir().join("narration")
+}
+
+/// Root directory for event staging (browser, shell, clipboard).
+pub(crate) fn staging_root() -> Utf8PathBuf {
+    cache_dir().join("staging")
+}
+
 /// Path to the record lock file.
 pub(crate) fn record_lock_path() -> Utf8PathBuf {
-    cache_dir().join("record.lock")
+    daemon_dir().join("lock")
 }
 
 /// Path to the stop sentinel file.
 pub(crate) fn stop_sentinel_path() -> Utf8PathBuf {
-    cache_dir().join("stop")
+    daemon_dir().join("stop")
 }
 
 /// Path to the flush sentinel file.
 pub(crate) fn flush_sentinel_path() -> Utf8PathBuf {
-    cache_dir().join("flush")
+    daemon_dir().join("flush")
 }
 
 /// Path to the pause sentinel file.
@@ -72,12 +123,14 @@ pub(crate) fn flush_sentinel_path() -> Utf8PathBuf {
 /// Exists = paused, absent = not paused. The CLI toggles this file;
 /// the daemon checks each loop iteration.
 pub(crate) fn pause_sentinel_path() -> Utf8PathBuf {
-    cache_dir().join("pause")
+    daemon_dir().join("pause")
 }
 
 /// Path to the receive lock file.
 pub(crate) fn receive_lock_path() -> Utf8PathBuf {
-    cache_dir().join("receive.lock")
+    crate::state::hooks_dir()
+        .expect("cannot determine cache directory")
+        .join("receive.lock")
 }
 
 /// Resolve the directory key from an optional session ID.
@@ -91,15 +144,15 @@ fn dir_key(session_id: Option<&SessionId>) -> &str {
 /// Directory where pending narration files are written.
 ///
 /// Each narration is stored as `<timestamp>.json` inside
-/// `<cache_dir>/attend/pending/<key>/` where `<key>` is the session ID
+/// `narration/pending/<key>/` where `<key>` is the session ID
 /// or `_local` when no agent session is active.
 pub(crate) fn pending_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
-    cache_dir().join("pending").join(dir_key(session_id))
+    narration_root().join("pending").join(dir_key(session_id))
 }
 
 /// Directory where archived narration files are stored.
 pub(crate) fn archive_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
-    cache_dir().join("archive").join(dir_key(session_id))
+    narration_root().join("archive").join(dir_key(session_id))
 }
 
 /// Directory where the browser bridge stages selection events.
@@ -108,9 +161,7 @@ pub(crate) fn archive_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
 /// Instead, the recording daemon collects them during flush/stop and
 /// includes them in the narration output.
 pub(crate) fn browser_staging_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
-    cache_dir()
-        .join("browser-staging")
-        .join(dir_key(session_id))
+    staging_root().join("browser").join(dir_key(session_id))
 }
 
 /// Directory where the shell hook stages command events.
@@ -119,7 +170,7 @@ pub(crate) fn browser_staging_dir(session_id: Option<&SessionId>) -> Utf8PathBuf
 /// Instead, the recording daemon collects them during flush/stop and
 /// includes them in the narration output.
 pub(crate) fn shell_staging_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
-    cache_dir().join("shell-staging").join(dir_key(session_id))
+    staging_root().join("shell").join(dir_key(session_id))
 }
 
 /// Root directory for all clipboard staging (across sessions).
@@ -127,7 +178,7 @@ pub(crate) fn shell_staging_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
 /// Used by cleanup (walk all session subdirs) and by permission patterns
 /// (wildcard matching across sessions).
 pub(crate) fn clipboard_staging_root() -> Utf8PathBuf {
-    cache_dir().join("clipboard-staging")
+    staging_root().join("clipboard")
 }
 
 /// Directory where clipboard images are staged as PNG files.
@@ -143,7 +194,7 @@ pub(crate) fn clipboard_staging_dir(session_id: Option<&SessionId>) -> Utf8PathB
 /// Yank writes here instead of `pending/` so the hook delivery path
 /// never sees the content (no race between yank CLI and hook delivery).
 pub(crate) fn yanked_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
-    cache_dir().join("yanked").join(dir_key(session_id))
+    narration_root().join("yanked").join(dir_key(session_id))
 }
 
 /// Path to the yank sentinel file.
@@ -152,7 +203,7 @@ pub(crate) fn yanked_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
 /// instead of `pending/`. The CLI writes this sentinel; the daemon
 /// checks it each loop iteration.
 pub(crate) fn yank_sentinel_path() -> Utf8PathBuf {
-    cache_dir().join("yank")
+    daemon_dir().join("yank")
 }
 
 // ── Generalized staging infrastructure ──────────────────────────────────────

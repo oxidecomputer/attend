@@ -3,21 +3,37 @@
 Let your coding agent hear your voice and see what you're doing, as if you were
 screen-sharing on a voice call with a collaborator.
 
-When you're "pair programming" with an AI coding agent in your terminal, there's
-a gap: the agent can see your files, but it can't see what you're seeing. Instead,
-you have to tell it! You end up copy-pasting code snippets, typing out line numbers,
-or vaguely describing context the agent would already have if it could see what you
-do and hear you chat about it.
-
 Speak your thoughts while navigating code, and `attend` transcribes and delivers
-them as prompts. You can highlight code, flip between files, and narrate what you
-want done, without leaving your editor or switching to a chat window. The agent
-receives your words interleaved with what you were looking at or editing as you
-spoke.
+them as prompts: your words interleaved with what you were looking at as you
+spoke. Even when you're not actively narrating, `attend` queries your editor for
+cursor positions and selections, and injects that context into the conversation
+so your coding agent knows what's in front of you.
 
-Even when you're not actively narrating, `attend` queries your editor for changes
-in visible files, cursor positions, and selections, then injects that context into
-the conversation, so your coding agent knows what's in front of you.
+## What ends up in the narration
+
+A narration weaves together up to seven sources of context, interleaved
+chronologically:
+
+- **Voice**: your speech, transcribed to text via a local model. Always
+  available when recording.
+- **Editor snapshots**: the code around your cursor or selection, with file
+  path and language. Captured whenever you navigate or select. Requires editor
+  integration.
+- **File diffs**: the net change to files you edited while speaking. Requires
+  editor integration.
+- **External selections**: text you highlighted in any application, captured
+  via the accessibility API. macOS only; requires granting the accessibility
+  permission.
+- **Browser selections**: rich text you selected on a web page, with the page
+  URL and title. Requires a browser extension.
+- **Clipboard**: text *or images* you copied (Cmd+C) during recording. Text
+  that duplicates a richer source (browser or external selection) is
+  automatically dropped.
+- **Shell commands**: commands you ran, with exit status and duration. Requires
+  shell hook integration.
+
+Editor snapshots, file diffs, and shell commands are scoped to the agent's
+working directory; those from outside it are marked as redacted.
 
 Personally, I've found "pair programming" using `attend`'s voice narration is
 a rather different experience from typing my thoughts to a coding agent. There's

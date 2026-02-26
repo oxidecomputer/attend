@@ -3,16 +3,14 @@
 use std::fs;
 use std::time::{Duration, SystemTime};
 
-use super::cache_dir;
-
 /// Remove old narration files from `archive/`, `pending/`, and clipboard staging.
 ///
 /// Pending narrations for sessions that are no longer active will never be
 /// picked up by an agent, so they get the same retention treatment as archives.
 pub(crate) fn clean(older_than: Duration) -> anyhow::Result<()> {
-    let cache = cache_dir();
-    let archive_root = cache.join("archive");
-    let pending_root = cache.join("pending");
+    let narration = super::narration_root();
+    let archive_root = narration.join("archive");
+    let pending_root = narration.join("pending");
 
     let archive_removed = clean_archive_dir(archive_root.as_std_path(), older_than);
     let pending_removed = clean_archive_dir(pending_root.as_std_path(), older_than);

@@ -104,10 +104,9 @@ To stop narration, use the `/unattend` slash-command, or ask the agent to
 stop listening (it will run `attend listen --stop` on your behalf). The
 running background listener detects the change and exits naturally.
 
-Insofar as the agent doesn't ask for keyboard input (i.e. by presenting a plan,
-asking a multiple choice question, or requesting permission to do an action),
-you need never leave your focused editor, because you can narrate your responses
-while you're in the codebase.
+You can narrate responses to the agent without leaving your editor — the only
+time you need to switch is when the agent asks for keyboard input (plan
+approval, multiple-choice questions, or permission prompts).
 
 As a security precaution, the agent only sees editor context (cursors,
 selections, file contents, diffs) from within its own working directory. If you
