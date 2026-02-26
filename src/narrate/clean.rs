@@ -5,15 +5,17 @@ use std::time::{Duration, SystemTime};
 
 use super::cache_dir;
 
-/// Remove archived narration files older than the given duration.
+/// Remove old narration files from `archive/`, `pending/`, and clipboard staging.
+///
+/// Pending narrations for sessions that are no longer active will never be
+/// picked up by an agent, so they get the same retention treatment as archives.
 pub(crate) fn clean(older_than: Duration) -> anyhow::Result<()> {
-    let archive_root = cache_dir().join("archive");
-    if !archive_root.exists() {
-        println!("No archive directory found.");
-        return Ok(());
-    }
+    let cache = cache_dir();
+    let archive_root = cache.join("archive");
+    let pending_root = cache.join("pending");
 
-    let removed = clean_archive_dir(archive_root.as_std_path(), older_than);
+    let archive_removed = clean_archive_dir(archive_root.as_std_path(), older_than);
+    let pending_removed = clean_archive_dir(pending_root.as_std_path(), older_than);
 
     // Also clean up old clipboard staging images (referenced by path in
     // narration output, so they must outlive the narration write but not forever).
@@ -22,7 +24,9 @@ pub(crate) fn clean(older_than: Duration) -> anyhow::Result<()> {
 
     let age = humantime::format_duration(older_than);
     println!(
-        "Removed {removed} archived narration(s) and {clip_removed} clipboard image(s) older than {age}."
+        "Removed {} narration(s) ({archive_removed} archived, {pending_removed} stale pending) \
+         and {clip_removed} clipboard image(s) older than {age}.",
+        archive_removed + pending_removed,
     );
     Ok(())
 }

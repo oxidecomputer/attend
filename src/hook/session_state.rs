@@ -40,10 +40,14 @@ pub(crate) fn mark_session_displaced(session_id: &SessionId) {
     }
 }
 
-/// Remove all marker files from the `sessions/displaced/` and `sessions/activated/` directories.
+/// Remove all marker files from the `sessions/displaced/` and `sessions/activated/` directories,
+/// and prune stale dedup caches from `sessions/cache/`.
 ///
 /// Called on session start to prevent unbounded accumulation of
-/// marker files from old sessions.
+/// files from old sessions. Marker files are unconditionally removed
+/// (they are transient). Cache files are pruned by mtime: living
+/// sessions update their cache on every hook call, so only dead
+/// sessions go stale.
 pub(super) fn clean_session_markers() {
     let Some(sessions) = sessions_dir() else {
         return;
@@ -57,6 +61,24 @@ pub(super) fn clean_session_markers() {
             let _ = fs::remove_file(entry.path());
         }
     }
+
+    // Prune stale dedup caches (older than 24h). Active sessions touch
+    // their cache on every prompt, so they always have a fresh mtime.
+    let cache_dir = sessions.join("cache");
+    if let Ok(entries) = fs::read_dir(&cache_dir) {
+        let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(24 * 60 * 60);
+        for entry in entries.flatten() {
+            let stale = entry
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .is_some_and(|mtime| mtime < cutoff);
+            if stale {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+
     // Clean up legacy flat files from the old layout.
     clean_legacy_session_files();
 }

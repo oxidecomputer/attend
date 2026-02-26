@@ -57,13 +57,21 @@ pub(crate) fn archive_pending(files: &[PathBuf], session_id: &SessionId) {
     let _ = fs::remove_dir(&local_dir);
 }
 
-/// Prune archived narrations older than the configured retention period.
-/// No-op if retention is `"forever"` or the archive doesn't exist.
+/// Prune old narrations from both `archive/` and `pending/`.
+///
+/// Pending narrations for sessions that are no longer active will never be
+/// picked up by an agent. Applying the same retention policy prevents them
+/// from accumulating indefinitely.
+///
+/// No-op if retention is `"forever"`.
 pub(crate) fn auto_prune(config: &Config) {
     if let Some(retention) = config.retention_duration() {
-        let archive_root = crate::narrate::cache_dir().join("archive");
-        if archive_root.exists() {
-            crate::narrate::clean::clean_archive_dir(archive_root.as_std_path(), retention);
+        let cache = crate::narrate::cache_dir();
+        for dir in ["archive", "pending"] {
+            let root = cache.join(dir);
+            if root.exists() {
+                crate::narrate::clean::clean_archive_dir(root.as_std_path(), retention);
+            }
         }
     }
 }
