@@ -66,8 +66,40 @@ impl ClipboardTracker {
     /// platforms with formatted text). Returns `Changed` with the new
     /// content on change, `Unchanged` otherwise.
     pub fn check(&mut self, text: Option<&str>, image: Option<&ImageData>) -> ClipboardUpdate {
-        // Stub: to be implemented in Phase C.
-        let _ = (text, image);
+        // Text takes priority when both are available.
+        if let Some(t) = text {
+            if t.trim().is_empty() {
+                // Whitespace-only: treat as empty, no event.
+                return ClipboardUpdate::Unchanged;
+            }
+            if matches!(&self.last, LastContent::Text(prev) if prev == t) {
+                return ClipboardUpdate::Unchanged;
+            }
+            self.last = LastContent::Text(t.to_string());
+            return ClipboardUpdate::Changed(ClipboardContent::Text {
+                text: t.to_string(),
+            });
+        }
+
+        if let Some(img) = image {
+            let new_len = img.bytes.len();
+            let new_hash = hash_image_data(img);
+            if matches!(&self.last, LastContent::Image { byte_len, hash }
+                if *byte_len == new_len && *hash == new_hash)
+            {
+                return ClipboardUpdate::Unchanged;
+            }
+            self.last = LastContent::Image {
+                byte_len: new_len,
+                hash: new_hash,
+            };
+            // Image path is filled in by the caller (spawn thread) after PNG encoding.
+            return ClipboardUpdate::Changed(ClipboardContent::Image {
+                path: String::new(),
+            });
+        }
+
+        // Both unavailable: no event.
         ClipboardUpdate::Unchanged
     }
 }

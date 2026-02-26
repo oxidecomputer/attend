@@ -430,6 +430,41 @@ fn subsume_progressive_selections(events: &mut Vec<Event>) {
                     }
                 }
             }
+            Event::ClipboardSelection {
+                content: ClipboardContent::Text { text },
+                ..
+            } => {
+                let text = text.clone();
+                for later in &events[i + 1..] {
+                    if (later.timestamp() - ls_i) > tolerance {
+                        break;
+                    }
+                    // Clipboard can be subsumed by ExternalSelection.
+                    if let Event::ExternalSelection { text: t, .. } = later
+                        && t.contains(text.as_str())
+                    {
+                        remove[i] = true;
+                        break;
+                    }
+                    // Clipboard can be subsumed by BrowserSelection (via plain_text).
+                    if let Event::BrowserSelection { plain_text, .. } = later
+                        && plain_text.contains(text.as_str())
+                    {
+                        remove[i] = true;
+                        break;
+                    }
+                    // Clipboard can be subsumed by another ClipboardSelection.
+                    if let Event::ClipboardSelection {
+                        content: ClipboardContent::Text { text: t },
+                        ..
+                    } = later
+                        && t.contains(text.as_str())
+                    {
+                        remove[i] = true;
+                        break;
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -671,13 +706,25 @@ fn collapse_ext_selections(selections: Vec<Event>) -> Vec<Event> {
 fn dedup_browser_vs_external(events: &mut Vec<Event>) {
     let dedup_window = chrono::Duration::milliseconds(CROSS_TYPE_DEDUP_WINDOW_MS);
 
-    // Collect browser selection timestamps and texts for matching.
+    // Collect browser selection timestamps and normalized plain texts for matching.
     let browser_entries: Vec<(DateTime<Utc>, String)> = events
         .iter()
         .filter_map(|e| match e {
             Event::BrowserSelection {
-                timestamp, text, ..
-            } => Some((*timestamp, text.trim().to_string())),
+                timestamp,
+                plain_text,
+                text,
+                ..
+            } => {
+                // Use plain_text for comparison when available (more reliable
+                // for rich-text selections). Fall back to text for old events.
+                let compare = if plain_text.is_empty() {
+                    text
+                } else {
+                    plain_text
+                };
+                Some((*timestamp, normalize_text(compare)))
+            }
             _ => None,
         })
         .collect();
@@ -693,26 +740,49 @@ fn dedup_browser_vs_external(events: &mut Vec<Event>) {
         else {
             return true;
         };
-        let trimmed = text.trim();
-        // Drop if any BrowserSelection has matching text within the window.
+        let norm = normalize_text(text);
+        // Drop if any BrowserSelection has matching normalized text within the window.
         !browser_entries.iter().any(|(bs_ts, bs_text)| {
-            bs_text == trimmed && (*timestamp - *bs_ts).abs().le(&dedup_window)
+            *bs_text == norm && (*timestamp - *bs_ts).abs().le(&dedup_window)
         })
     });
 }
 
 /// Normalize text for comparison: collapse all whitespace to single spaces, trim.
 pub(crate) fn normalize_text(text: &str) -> String {
-    // Stub: to be implemented in Phase C.
-    text.to_string()
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Drop text `ClipboardSelection` events whose normalized text matches any
 /// `ExternalSelection` or `BrowserSelection` (via `plain_text`) in the list.
 ///
 /// Image clipboard events are never deduped by this pass.
-fn dedup_clipboard_selections(_events: &mut Vec<Event>) {
-    // Stub: to be implemented in Phase C.
+fn dedup_clipboard_selections(events: &mut Vec<Event>) {
+    // Collect normalized texts from richer sources.
+    let richer_texts: Vec<String> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::ExternalSelection { text, .. } => Some(normalize_text(text)),
+            Event::BrowserSelection { plain_text, .. } => Some(normalize_text(plain_text)),
+            _ => None,
+        })
+        .collect();
+
+    if richer_texts.is_empty() {
+        return;
+    }
+
+    events.retain(|e| {
+        let Event::ClipboardSelection {
+            content: ClipboardContent::Text { text },
+            ..
+        } = e
+        else {
+            return true;
+        };
+        let norm = normalize_text(text);
+        !richer_texts.contains(&norm)
+    });
 }
 
 // ── Run orchestrator ─────────────────────────────────────────────────────────

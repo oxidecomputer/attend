@@ -314,13 +314,26 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                 out.push('\n');
                 out.push_str("```\n");
             }
-            Event::ClipboardSelection { .. } => {
-                // Stub: to be implemented in Phase C.
-                // Text renders as plain blockquote (no attribution).
-                // Image renders as ![clipboard](path).
+            Event::ClipboardSelection { content, .. } => {
                 if in_prose {
                     out.push('\n');
                     in_prose = false;
+                }
+                if !out.is_empty() && !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push('\n');
+                match content {
+                    merge::ClipboardContent::Text { text } => {
+                        // Plain blockquote with no attribution.
+                        // Clipboard selections are not snipped (ephemeral state).
+                        for line in text.trim().lines() {
+                            out.push_str(&format!("> {line}\n"));
+                        }
+                    }
+                    merge::ClipboardContent::Image { path } => {
+                        out.push_str(&format!("![clipboard]({path})\n"));
+                    }
                 }
             }
             Event::Redacted { kind, keys, .. } => {
