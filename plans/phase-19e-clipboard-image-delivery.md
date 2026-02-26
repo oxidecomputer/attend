@@ -19,8 +19,11 @@ PNGs, rendered as `![clipboard](path)` in narration, and the agent can
 
 `clipboard_staging_dir()` currently returns a flat directory. Change it to
 take `Option<&SessionId>` and return `clipboard-staging/<session>/` (same
-pattern as `browser_staging_dir`, `shell_staging_dir`). This aligns with
-all other staging directories and enables per-session retention cleanup.
+pattern as `browser_staging_dir`, `shell_staging_dir`). When no agent
+session is active, the daemon passes `None` and images stage to
+`clipboard-staging/_local/` via `dir_key()` — same fallback as browser
+and shell staging. This aligns with all other staging directories and
+enables per-session retention cleanup.
 
 **Files**: `narrate.rs`, `narrate/clipboard_capture.rs`, `narrate/capture.rs`,
 `narrate/record.rs`
