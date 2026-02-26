@@ -1,6 +1,6 @@
 use super::super::*;
 
-use crate::narrate::render::{SnipConfig, format_markdown};
+use crate::narrate::render::{SnipConfig, format_markdown, render_markdown};
 
 /// Convert seconds to a UTC timestamp (for test brevity).
 fn ts(secs: f64) -> chrono::DateTime<chrono::Utc> {
@@ -651,5 +651,107 @@ fn bare_fence_when_no_language() {
     assert!(
         !md.contains("```rust"),
         "no language tag should appear: {md:?}"
+    );
+}
+
+// ── ClipboardSelection rendering ──────────────────────────────────────────
+
+/// ClipboardContent::Text renders as `> ` lines with no attribution header.
+#[test]
+fn clipboard_text_renders_as_plain_blockquote() {
+    let events = vec![Event::ClipboardSelection {
+        timestamp: ts(0.0),
+        content: ClipboardContent::Text {
+            text: "some copied text".to_string(),
+        },
+    }];
+    let md = render_markdown(&events, SnipConfig::default());
+    assert!(
+        md.contains("> some copied text"),
+        "should render as blockquote: {md:?}"
+    );
+    // No attribution line (no "app:" or "[title](url):" prefix).
+    assert!(!md.contains(":\n>"), "should have no attribution: {md:?}");
+}
+
+/// Multi-line clipboard text renders each line as a separate `> ` line.
+#[test]
+fn clipboard_text_multiline() {
+    let events = vec![Event::ClipboardSelection {
+        timestamp: ts(0.0),
+        content: ClipboardContent::Text {
+            text: "line one\nline two\nline three".to_string(),
+        },
+    }];
+    let md = render_markdown(&events, SnipConfig::default());
+    assert!(md.contains("> line one\n"), "first line: {md:?}");
+    assert!(md.contains("> line two\n"), "second line: {md:?}");
+    assert!(md.contains("> line three\n"), "third line: {md:?}");
+}
+
+/// ClipboardContent::Image renders as ![clipboard](/path/to/file.png).
+#[test]
+fn clipboard_image_renders_as_image_tag() {
+    let events = vec![Event::ClipboardSelection {
+        timestamp: ts(0.0),
+        content: ClipboardContent::Image {
+            path: "/tmp/clipboard-staging/12345.png".to_string(),
+        },
+    }];
+    let md = render_markdown(&events, SnipConfig::default());
+    assert!(
+        md.contains("![clipboard](/tmp/clipboard-staging/12345.png)"),
+        "should render as image tag: {md:?}"
+    );
+}
+
+/// A clipboard blockquote between an ExternalSelection and BrowserSelection
+/// has no attribution, while its neighbors do.
+#[test]
+fn clipboard_no_attribution_between_attributed() {
+    let events = vec![
+        Event::ExternalSelection {
+            timestamp: ts(1.0),
+            last_seen: ts(1.0),
+            app: "iTerm2".to_string(),
+            window_title: "tab1".to_string(),
+            text: "external text".to_string(),
+        },
+        Event::ClipboardSelection {
+            timestamp: ts(2.0),
+            content: ClipboardContent::Text {
+                text: "clipboard text".to_string(),
+            },
+        },
+        Event::BrowserSelection {
+            timestamp: ts(3.0),
+            last_seen: ts(3.0),
+            url: "https://example.com".to_string(),
+            title: "Page".to_string(),
+            text: "browser text".to_string(),
+            plain_text: "browser text".to_string(),
+        },
+    ];
+    let md = render_markdown(&events, SnipConfig::default());
+    // External has attribution.
+    assert!(md.contains("iTerm2:"), "external has attribution: {md:?}");
+    // Browser has attribution.
+    assert!(
+        md.contains("[Page](https://example.com):"),
+        "browser has attribution: {md:?}"
+    );
+    // Clipboard blockquote should NOT have attribution.
+    assert!(
+        md.contains("> clipboard text"),
+        "clipboard rendered: {md:?}"
+    );
+    // Find the clipboard blockquote and check the line before it is blank (no attribution).
+    let clip_pos = md.find("> clipboard text").unwrap();
+    let before_clip = &md[..clip_pos];
+    let last_newline = before_clip.rfind('\n').unwrap_or(0);
+    let line_before = before_clip[last_newline..].trim();
+    assert!(
+        line_before.is_empty(),
+        "no attribution line before clipboard blockquote: {line_before:?}"
     );
 }

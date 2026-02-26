@@ -174,6 +174,24 @@ fn retention_duration_parsing() {
     assert_eq!(config.retention_duration(), None);
 }
 
+/// A default Config has clipboard_capture effectively true (None = default on).
+#[test]
+fn clipboard_capture_defaults_to_true() {
+    let config = Config::default();
+    // None means "use default" which is true.
+    assert!(config.clipboard_capture.unwrap_or(true));
+}
+
+/// Parsing clipboard_capture = false from TOML yields false.
+#[test]
+fn clipboard_capture_explicit_false() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "clipboard_capture = false\n").unwrap();
+    let config = load_file(&path).unwrap();
+    assert_eq!(config.clipboard_capture, Some(false));
+}
+
 /// Unknown engine values in TOML are reported and ignored.
 #[test]
 fn unknown_engine_ignored() {

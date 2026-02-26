@@ -527,6 +527,54 @@ fn collect_pending_dir_returns_sorted_json() {
     assert_eq!(names[1], "b.json");
 }
 
+/// ClipboardSelection passes through the filter regardless of cwd scope.
+#[test]
+fn clipboard_passes_through_filter() {
+    use crate::narrate::merge::ClipboardContent;
+
+    let cwd = Utf8Path::new("/project");
+    let mut events = vec![Event::ClipboardSelection {
+        timestamp: ts(0.0),
+        content: ClipboardContent::Text {
+            text: "copied text".to_string(),
+        },
+    }];
+    filter_events(&mut events, cwd, &[]);
+    assert_eq!(
+        events.len(),
+        1,
+        "clipboard selection should pass through filter"
+    );
+    assert!(matches!(events[0], Event::ClipboardSelection { .. }));
+}
+
+/// ClipboardSelection (including image path) is untouched by relativization.
+#[test]
+fn clipboard_not_relativized() {
+    use crate::narrate::merge::ClipboardContent;
+
+    let cwd = Utf8Path::new("/project");
+    let mut events = vec![Event::ClipboardSelection {
+        timestamp: ts(0.0),
+        content: ClipboardContent::Image {
+            path: "/Users/oxide/.cache/attend/clipboard-staging/12345.png".to_string(),
+        },
+    }];
+    relativize_events(&mut events, cwd);
+    match &events[0] {
+        Event::ClipboardSelection {
+            content: ClipboardContent::Image { path },
+            ..
+        } => {
+            assert_eq!(
+                path, "/Users/oxide/.cache/attend/clipboard-staging/12345.png",
+                "clipboard image path should not be relativized"
+            );
+        }
+        other => panic!("expected ClipboardSelection, got {other:?}"),
+    }
+}
+
 /// `collect_pending_dir` returns empty for a nonexistent directory.
 #[test]
 fn collect_pending_dir_missing_dir() {

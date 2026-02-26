@@ -1459,3 +1459,363 @@ fn browser_selection_cross_run_held_then_subsumed() {
         Event::BrowserSelection { text, .. } if text == "spawn a task"
     ));
 }
+
+// ── ClipboardSelection serde round-trip ───────────────────────────────────
+
+/// ClipboardSelection with Text content survives JSON serialize/deserialize.
+#[test]
+fn clipboard_text_roundtrip() {
+    let event = Event::ClipboardSelection {
+        timestamp: ts(1.0),
+        content: ClipboardContent::Text {
+            text: "copied text".to_string(),
+        },
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    let round: Event = serde_json::from_str(&json).unwrap();
+    assert!(matches!(
+        round,
+        Event::ClipboardSelection {
+            content: ClipboardContent::Text { text },
+            ..
+        } if text == "copied text"
+    ));
+}
+
+/// ClipboardSelection with Image content survives JSON serialize/deserialize.
+#[test]
+fn clipboard_image_roundtrip() {
+    let event = Event::ClipboardSelection {
+        timestamp: ts(1.0),
+        content: ClipboardContent::Image {
+            path: "/tmp/clipboard.png".to_string(),
+        },
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    let round: Event = serde_json::from_str(&json).unwrap();
+    assert!(matches!(
+        round,
+        Event::ClipboardSelection {
+            content: ClipboardContent::Image { path },
+            ..
+        } if path == "/tmp/clipboard.png"
+    ));
+}
+
+/// BrowserSelection with plain_text field survives JSON round-trip.
+#[test]
+fn browser_plain_text_roundtrip() {
+    let event = Event::BrowserSelection {
+        timestamp: ts(1.0),
+        last_seen: ts(1.0),
+        url: "https://example.com".to_string(),
+        title: "Example".to_string(),
+        text: "**bold** text".to_string(),
+        plain_text: "bold text".to_string(),
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    let round: Event = serde_json::from_str(&json).unwrap();
+    assert!(matches!(
+        round,
+        Event::BrowserSelection { plain_text, .. } if plain_text == "bold text"
+    ));
+}
+
+/// Deserializing a BrowserSelection from an old archive (no plain_text key)
+/// produces an empty string default.
+#[test]
+fn browser_plain_text_default() {
+    let json = r#"{
+        "BrowserSelection": {
+            "timestamp": "1970-01-01T00:00:01Z",
+            "last_seen": "1970-01-01T00:00:01Z",
+            "url": "https://example.com",
+            "title": "Example",
+            "text": "some content"
+        }
+    }"#;
+    let event: Event = serde_json::from_str(json).unwrap();
+    assert!(matches!(
+        event,
+        Event::BrowserSelection { plain_text, .. } if plain_text.is_empty()
+    ));
+}
+
+// ── ClipboardSelection helpers ────────────────────────────────────────────
+
+/// Helper: clipboard text event.
+fn clipboard_text(t: f64, text: &str) -> Event {
+    Event::ClipboardSelection {
+        timestamp: ts(t),
+        content: ClipboardContent::Text {
+            text: text.to_string(),
+        },
+    }
+}
+
+/// Helper: clipboard image event.
+fn clipboard_image(t: f64, path: &str) -> Event {
+    Event::ClipboardSelection {
+        timestamp: ts(t),
+        content: ClipboardContent::Image {
+            path: path.to_string(),
+        },
+    }
+}
+
+// ── dedup_clipboard_selections ────────────────────────────────────────────
+
+/// Clipboard text matching an ExternalSelection's text is dropped.
+#[test]
+fn clipboard_deduped_by_exact_external() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "error message"),
+        clipboard_text(1.1, "error message"),
+    ];
+    compress_and_merge(&mut events);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::ClipboardSelection { .. })),
+        "clipboard should be deduped against matching external"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::ExternalSelection { .. })),
+        "external selection should survive"
+    );
+}
+
+/// Clipboard text matching a BrowserSelection's plain_text is dropped.
+#[test]
+fn clipboard_deduped_by_exact_browser() {
+    let mut events = vec![
+        Event::BrowserSelection {
+            timestamp: ts(1.0),
+            last_seen: ts(1.0),
+            url: "https://example.com".to_string(),
+            title: "Page".to_string(),
+            text: "[link](https://example.com)".to_string(),
+            plain_text: "link".to_string(),
+        },
+        clipboard_text(1.1, "link"),
+    ];
+    compress_and_merge(&mut events);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::ClipboardSelection { .. })),
+        "clipboard should be deduped against matching browser plain_text"
+    );
+}
+
+/// Clipboard "foo  bar\n baz" is deduped against external "foo bar baz"
+/// after normalization.
+#[test]
+fn clipboard_deduped_by_normalized_whitespace() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "foo bar baz"),
+        clipboard_text(1.1, "foo  bar\n baz"),
+    ];
+    compress_and_merge(&mut events);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::ClipboardSelection { .. })),
+        "clipboard should be deduped after whitespace normalization"
+    );
+}
+
+/// Clipboard text not matching any other selection survives.
+#[test]
+fn clipboard_no_match_retained() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "something else"),
+        clipboard_text(1.1, "unique clipboard text"),
+    ];
+    compress_and_merge(&mut events);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::ClipboardSelection { .. })),
+        "non-matching clipboard should survive"
+    );
+}
+
+/// ClipboardContent::Image is never dropped by selection dedup.
+#[test]
+fn clipboard_image_never_deduped() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "some text"),
+        clipboard_image(1.1, "/tmp/screenshot.png"),
+    ];
+    compress_and_merge(&mut events);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::ClipboardSelection {
+                content: ClipboardContent::Image { .. },
+                ..
+            }
+        )),
+        "clipboard image should never be deduped"
+    );
+}
+
+/// Clipboard text that is a substring of (but not equal to) another selection
+/// is NOT dropped by dedup (that's subsumption's job).
+#[test]
+fn clipboard_substring_not_deduped() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "error message in foo"),
+        clipboard_text(1.1, "error"),
+    ];
+    compress_and_merge(&mut events);
+    // Dedup only matches exact normalized text. Substring is handled by subsumption.
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::ClipboardSelection { .. })),
+        "clipboard substring should survive dedup (subsumption handles this)"
+    );
+}
+
+// ── dedup_browser_vs_external with normalized plain_text ──────────────────
+
+/// ExternalSelection is dropped when its normalized text matches the
+/// BrowserSelection's normalized plain_text, even if the markdown text differs.
+#[test]
+fn browser_vs_external_uses_normalized_plain_text() {
+    let mut events = vec![
+        Event::BrowserSelection {
+            timestamp: ts(1.0),
+            last_seen: ts(1.0),
+            url: "https://example.com".to_string(),
+            title: "Page".to_string(),
+            text: "[some link](https://example.com) text".to_string(),
+            plain_text: "some link text".to_string(),
+        },
+        ext_sel(1.2, "Firefox", "some link text"),
+    ];
+    compress_and_merge(&mut events);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::ExternalSelection { .. })),
+        "external should be deduped by browser plain_text"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::BrowserSelection { .. })),
+        "browser should survive"
+    );
+}
+
+// ── Clipboard subsumption ─────────────────────────────────────────────────
+
+/// ExternalSelection containing clipboard text within the subsumption window
+/// causes clipboard to be dropped.
+#[test]
+fn clipboard_subsumed_by_external() {
+    let mut events = vec![
+        clipboard_text(1.0, "error"),
+        ext_sel(1.5, "iTerm2", "error message in foo"),
+    ];
+    compress_and_merge(&mut events);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::ClipboardSelection { .. })),
+        "clipboard should be subsumed by wider external"
+    );
+}
+
+/// BrowserSelection whose plain_text contains clipboard text causes
+/// clipboard to be dropped.
+#[test]
+fn clipboard_subsumed_by_browser() {
+    let mut events = vec![
+        clipboard_text(1.0, "error"),
+        Event::BrowserSelection {
+            timestamp: ts(1.5),
+            last_seen: ts(1.5),
+            url: "https://example.com".to_string(),
+            title: "Page".to_string(),
+            text: "**error** message in [foo](url)".to_string(),
+            plain_text: "error message in foo".to_string(),
+        },
+    ];
+    compress_and_merge(&mut events);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::ClipboardSelection { .. })),
+        "clipboard should be subsumed by wider browser"
+    );
+}
+
+/// Later ClipboardSelection containing earlier clipboard's text within the
+/// subsumption window causes earlier to be dropped.
+#[test]
+fn clipboard_subsumes_clipboard() {
+    let mut events = vec![
+        clipboard_text(1.0, "error"),
+        clipboard_text(1.5, "error message"),
+    ];
+    compress_and_merge(&mut events);
+    let clips: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, Event::ClipboardSelection { .. }))
+        .collect();
+    assert_eq!(clips.len(), 1, "earlier clipboard should be subsumed");
+    assert!(matches!(
+        clips[0],
+        Event::ClipboardSelection {
+            content: ClipboardContent::Text { text },
+            ..
+        } if text == "error message"
+    ));
+}
+
+/// ClipboardSelection does not subsume an ExternalSelection, even if the
+/// clipboard text contains the external's text.
+#[test]
+fn clipboard_does_not_subsume_external() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "error"),
+        clipboard_text(1.5, "error message in foo"),
+    ];
+    compress_and_merge(&mut events);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::ExternalSelection { .. })),
+        "external should NOT be subsumed by clipboard"
+    );
+}
+
+/// ClipboardSelection does not subsume a BrowserSelection, even if the
+/// clipboard text contains the browser's plain_text.
+#[test]
+fn clipboard_does_not_subsume_browser() {
+    let mut events = vec![
+        Event::BrowserSelection {
+            timestamp: ts(1.0),
+            last_seen: ts(1.0),
+            url: "https://example.com".to_string(),
+            title: "Page".to_string(),
+            text: "error".to_string(),
+            plain_text: "error".to_string(),
+        },
+        clipboard_text(1.5, "error message in foo"),
+    ];
+    compress_and_merge(&mut events);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::BrowserSelection { .. })),
+        "browser should NOT be subsumed by clipboard"
+    );
+}

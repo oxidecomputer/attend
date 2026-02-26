@@ -161,6 +161,22 @@ fn arb_shell_command() -> impl Strategy<Value = Event> {
         })
 }
 
+fn arb_clipboard_text() -> impl Strategy<Value = Event> {
+    (0.0..100.0f64, "[a-z ]{1,30}").prop_map(|(t, text)| Event::ClipboardSelection {
+        timestamp: ts(t),
+        content: ClipboardContent::Text { text },
+    })
+}
+
+fn arb_clipboard_image() -> impl Strategy<Value = Event> {
+    (0.0..100.0f64, "[a-z]{1,8}").prop_map(|(t, name)| Event::ClipboardSelection {
+        timestamp: ts(t),
+        content: ClipboardContent::Image {
+            path: format!("/tmp/clipboard-staging/{name}.png"),
+        },
+    })
+}
+
 fn arb_event() -> impl Strategy<Value = Event> {
     prop_oneof![
         3 => arb_words(),
@@ -170,6 +186,8 @@ fn arb_event() -> impl Strategy<Value = Event> {
         1 => arb_ext_selection(),
         1 => arb_browser_selection(),
         1 => arb_shell_command(),
+        1 => arb_clipboard_text(),
+        1 => arb_clipboard_image(),
     ]
 }
 
@@ -881,5 +899,108 @@ proptest! {
     #[test]
     fn render_never_panics(mut events in arb_events()) {
         let _ = format_markdown(&mut events, SnipConfig::default());
+    }
+}
+
+// ── Clipboard-specific prop tests ────────────────────────────────────────
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(200))]
+
+    /// After compress_and_merge, no text clipboard survives whose normalized
+    /// text equals any ExternalSelection or BrowserSelection plain_text in the
+    /// output.
+    #[test]
+    fn prop_clipboard_in_merge_pipeline(mut events in arb_events()) {
+        compress_and_merge(&mut events);
+
+        // Collect normalized texts from richer sources in the output.
+        let mut richer_texts: Vec<String> = Vec::new();
+        for e in &events {
+            match e {
+                Event::ExternalSelection { text, .. } => {
+                    richer_texts.push(normalize_text(text));
+                }
+                Event::BrowserSelection { plain_text, .. } => {
+                    richer_texts.push(normalize_text(plain_text));
+                }
+                _ => {}
+            }
+        }
+
+        // Check: no text clipboard should match a richer source.
+        for e in &events {
+            if let Event::ClipboardSelection {
+                content: ClipboardContent::Text { text },
+                ..
+            } = e
+            {
+                let norm = normalize_text(text);
+                prop_assert!(
+                    !richer_texts.contains(&norm),
+                    "clipboard text {:?} (normalized: {:?}) should have been deduped \
+                     against a richer source",
+                    text,
+                    norm
+                );
+            }
+        }
+    }
+
+    /// Subsumption is asymmetric: a clipboard event may be dropped when a
+    /// richer type contains it, but a richer type is never dropped by a
+    /// clipboard event containing it.
+    #[test]
+    fn prop_clipboard_subsumption_asymmetric(
+        (t, clipboard_text_val, ext_text, app) in (
+            0.0..95.0f64,
+            "[a-z ]{1,10}",
+            "[a-z ]{1,10}",
+            prop_oneof!["iTerm2", "Safari"],
+        )
+    ) {
+        // Case 1: clipboard is a substring of external → clipboard may be dropped.
+        let wide_ext = format!("{ext_text}{clipboard_text_val}");
+        let mut events1 = vec![
+            Event::ClipboardSelection {
+                timestamp: ts(t),
+                content: ClipboardContent::Text { text: clipboard_text_val.clone() },
+            },
+            Event::ExternalSelection {
+                timestamp: ts(t + 0.5),
+                last_seen: ts(t + 0.5),
+                app: app.clone(),
+                window_title: "w".to_string(),
+                text: wide_ext,
+            },
+        ];
+        compress_and_merge(&mut events1);
+        // External should always survive.
+        prop_assert!(
+            events1.iter().any(|e| matches!(e, Event::ExternalSelection { .. })),
+            "external should survive even when clipboard is its substring"
+        );
+
+        // Case 2: external is a substring of clipboard → external must survive.
+        let wide_clip = format!("{clipboard_text_val}{ext_text}");
+        let mut events2 = vec![
+            Event::ExternalSelection {
+                timestamp: ts(t),
+                last_seen: ts(t),
+                app,
+                window_title: "w".to_string(),
+                text: ext_text,
+            },
+            Event::ClipboardSelection {
+                timestamp: ts(t + 0.5),
+                content: ClipboardContent::Text { text: wide_clip },
+            },
+        ];
+        compress_and_merge(&mut events2);
+        // External must never be subsumed by clipboard.
+        prop_assert!(
+            events2.iter().any(|e| matches!(e, Event::ExternalSelection { .. })),
+            "external must NOT be subsumed by clipboard, even if clipboard contains it"
+        );
     }
 }
