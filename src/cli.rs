@@ -12,7 +12,6 @@ mod shell_hook;
 pub use hook::HookEvent;
 pub use narrate::NarrateCommand;
 
-use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 
 /// Top-level CLI definition.
@@ -53,55 +52,10 @@ pub enum Command {
     Meditate(meditate::MeditateArgs),
     /// Set up agent hooks, editor keybindings, browser, and shell integrations.
     #[command(display_order = 6)]
-    Install {
-        /// Agent to install hooks for (repeatable).
-        #[arg(long, short, value_parser = hook::agent_value_parser())]
-        agent: Vec<String>,
-
-        /// Editor to install narration keybindings for (repeatable).
-        #[arg(long, short, value_parser = hook::editor_value_parser())]
-        editor: Vec<String>,
-
-        /// Browser to install native messaging for (repeatable).
-        #[arg(long, short, value_parser = hook::browser_value_parser())]
-        browser: Vec<String>,
-
-        /// Shell to install hooks and completions for (repeatable).
-        #[arg(long, short, value_parser = hook::shell_value_parser())]
-        shell: Vec<String>,
-
-        /// Install to a project-local settings file instead of global.
-        #[arg(long, short)]
-        project: Option<Utf8PathBuf>,
-
-        /// Use absolute path to current binary instead of $PATH lookup.
-        #[arg(long)]
-        dev: bool,
-    },
-
+    Install(install::InstallArgs),
     /// Remove agent hooks, editor keybindings, browser, and shell integrations.
     #[command(display_order = 7)]
-    Uninstall {
-        /// Agent to uninstall hooks for (repeatable).
-        #[arg(long, short, value_parser = hook::agent_value_parser())]
-        agent: Vec<String>,
-
-        /// Editor to uninstall narration keybindings for (repeatable).
-        #[arg(long, value_parser = hook::editor_value_parser())]
-        editor: Vec<String>,
-
-        /// Browser to uninstall native messaging for (repeatable).
-        #[arg(long, short, value_parser = hook::browser_value_parser())]
-        browser: Vec<String>,
-
-        /// Shell to uninstall hooks and completions for (repeatable).
-        #[arg(long, short, value_parser = hook::shell_value_parser())]
-        shell: Vec<String>,
-
-        /// Remove from a project-local settings file instead of global.
-        #[arg(long, short)]
-        project: Option<Utf8PathBuf>,
-    },
+    Uninstall(install::UninstallArgs),
     /// Generate shell completions and print to stdout.
     #[command(display_order = 8)]
     Completions(completions::CompletionsArgs),
@@ -176,21 +130,8 @@ impl Command {
                     duration,
                 } => shell_hook::postexec(shell, command, exit_status, duration),
             },
-            Command::Install {
-                agent,
-                editor,
-                browser,
-                shell,
-                project,
-                dev,
-            } => install::install(agent, editor, browser, shell, project, dev),
-            Command::Uninstall {
-                agent,
-                editor,
-                browser,
-                shell,
-                project,
-            } => install::uninstall(agent, editor, browser, shell, project),
+            Command::Install(args) => args.run(),
+            Command::Uninstall(args) => args.run(),
         }
     }
 }

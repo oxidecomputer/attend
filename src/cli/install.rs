@@ -2,8 +2,85 @@
 
 use camino::Utf8PathBuf;
 
+/// Arguments for the `install` subcommand.
+#[derive(clap::Args)]
+pub struct InstallArgs {
+    /// Agent to install hooks for (repeatable).
+    #[arg(long, short, value_parser = super::hook::agent_value_parser())]
+    pub agent: Vec<String>,
+
+    /// Editor to install narration keybindings for (repeatable).
+    #[arg(long, short, value_parser = super::hook::editor_value_parser())]
+    pub editor: Vec<String>,
+
+    /// Browser to install native messaging for (repeatable).
+    #[arg(long, short, value_parser = super::hook::browser_value_parser())]
+    pub browser: Vec<String>,
+
+    /// Shell to install hooks and completions for (repeatable).
+    #[arg(long, short, value_parser = super::hook::shell_value_parser())]
+    pub shell: Vec<String>,
+
+    /// Install to a project-local settings file instead of global.
+    #[arg(long, short)]
+    pub project: Option<Utf8PathBuf>,
+
+    /// Use absolute path to current binary instead of $PATH lookup.
+    #[arg(long)]
+    pub dev: bool,
+}
+
+impl InstallArgs {
+    pub fn run(self) -> anyhow::Result<()> {
+        install(
+            self.agent,
+            self.editor,
+            self.browser,
+            self.shell,
+            self.project,
+            self.dev,
+        )
+    }
+}
+
+/// Arguments for the `uninstall` subcommand.
+#[derive(clap::Args)]
+pub struct UninstallArgs {
+    /// Agent to uninstall hooks for (repeatable).
+    #[arg(long, short, value_parser = super::hook::agent_value_parser())]
+    pub agent: Vec<String>,
+
+    /// Editor to uninstall narration keybindings for (repeatable).
+    #[arg(long, value_parser = super::hook::editor_value_parser())]
+    pub editor: Vec<String>,
+
+    /// Browser to uninstall native messaging for (repeatable).
+    #[arg(long, short, value_parser = super::hook::browser_value_parser())]
+    pub browser: Vec<String>,
+
+    /// Shell to uninstall hooks and completions for (repeatable).
+    #[arg(long, short, value_parser = super::hook::shell_value_parser())]
+    pub shell: Vec<String>,
+
+    /// Remove from a project-local settings file instead of global.
+    #[arg(long, short)]
+    pub project: Option<Utf8PathBuf>,
+}
+
+impl UninstallArgs {
+    pub fn run(self) -> anyhow::Result<()> {
+        uninstall(
+            self.agent,
+            self.editor,
+            self.browser,
+            self.shell,
+            self.project,
+        )
+    }
+}
+
 /// Run the install subcommand.
-pub(super) fn install(
+fn install(
     agent: Vec<String>,
     editor: Vec<String>,
     browser: Vec<String>,
@@ -115,7 +192,7 @@ fn install_browser_wrapper(bin_cmd: &str) -> anyhow::Result<String> {
 }
 
 /// Run the uninstall subcommand.
-pub(super) fn uninstall(
+fn uninstall(
     agent: Vec<String>,
     editor: Vec<String>,
     browser: Vec<String>,
