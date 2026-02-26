@@ -82,12 +82,24 @@ impl Engine {
     }
 
     /// Ensure the model exists (downloading if needed) and load it.
+    ///
+    /// Logs wall-clock load time at info level for benchmarking.
     pub fn preload(&self, path: &Utf8Path) -> anyhow::Result<Box<dyn Transcriber>> {
         self.ensure_model(path)?;
-        match self {
-            Engine::Whisper => Ok(Box::new(whisper::WhisperTranscriber::load(path)?)),
-            Engine::Parakeet => Ok(Box::new(parakeet::ParakeetTranscriber::load(path)?)),
-        }
+        let t0 = std::time::Instant::now();
+        let transcriber = match self {
+            Engine::Whisper => Ok(Box::new(whisper::WhisperTranscriber::load(path)?)
+                as Box<dyn Transcriber>),
+            Engine::Parakeet => Ok(Box::new(parakeet::ParakeetTranscriber::load(path)?)
+                as Box<dyn Transcriber>),
+        };
+        let elapsed = t0.elapsed();
+        tracing::info!(
+            engine = self.display_name(),
+            load_secs = format!("{:.3}", elapsed.as_secs_f64()),
+            "Model loaded"
+        );
+        transcriber
     }
 
     /// Model variant names for benchmarking.

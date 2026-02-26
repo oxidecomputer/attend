@@ -136,6 +136,14 @@ pub(crate) fn status() -> anyhow::Result<()> {
             "archive_retention: invalid value {s:?} (using default 7d)"
         ));
     }
+    if let Some(ref s) = config.daemon_idle_timeout
+        && s != "forever"
+        && humantime::parse_duration(s).is_err()
+    {
+        warnings.push(format!(
+            "daemon_idle_timeout: invalid value {s:?} (using default 5m)"
+        ));
+    }
     if let Some(ref model) = config.model
         && !engine.is_model_cached(model)
     {

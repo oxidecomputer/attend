@@ -35,6 +35,9 @@ pub struct Config {
     /// Whether to capture clipboard changes (text and images). Defaults to true.
     #[serde(default)]
     pub clipboard_capture: Option<bool>,
+    /// How long the persistent daemon idles before auto-exiting (e.g. `"5m"`, `"10m"`).
+    /// Set to `"forever"` to never auto-exit. Defaults to `"5m"`.
+    pub daemon_idle_timeout: Option<String>,
 }
 
 fn default_ext_ignore_apps() -> Vec<String> {
@@ -51,6 +54,7 @@ impl Default for Config {
             archive_retention: None,
             ext_ignore_apps: default_ext_ignore_apps(),
             clipboard_capture: None,
+            daemon_idle_timeout: None,
         }
     }
 }
@@ -105,6 +109,26 @@ impl Config {
         }
     }
 
+    /// Parse `daemon_idle_timeout` to a [`Duration`], returning `None` for
+    /// `"forever"` (never auto-exit). Defaults to 5 minutes when unset or
+    /// when the value cannot be parsed (with a warning).
+    pub fn idle_timeout(&self) -> Option<std::time::Duration> {
+        match self.daemon_idle_timeout.as_deref() {
+            Some("forever") => None,
+            Some(s) => match humantime::parse_duration(s) {
+                Ok(d) => Some(d),
+                Err(e) => {
+                    tracing::warn!(
+                        value = s,
+                        "Invalid daemon_idle_timeout, falling back to 5m: {e}"
+                    );
+                    Some(std::time::Duration::from_secs(5 * 60))
+                }
+            },
+            None => Some(std::time::Duration::from_secs(5 * 60)),
+        }
+    }
+
     /// Merge another config layer into this one.
     ///
     /// Arrays are concatenated. Scalar fields use "first wins" semantics:
@@ -126,6 +150,9 @@ impl Config {
         }
         if self.clipboard_capture.is_none() {
             self.clipboard_capture = other.clipboard_capture;
+        }
+        if self.daemon_idle_timeout.is_none() {
+            self.daemon_idle_timeout = other.daemon_idle_timeout;
         }
     }
 }
