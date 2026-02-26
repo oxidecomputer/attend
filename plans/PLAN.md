@@ -202,12 +202,12 @@ be performed as specified, please do it.
 - [ ] **Linux loopback support** — blocked on cpal PulseAudio backend release (merged to master, not yet in a cpal release). Once available, loopback on Linux is straightforward: PulseAudio/PipeWire monitor sources are standard input devices. No attend code changes expected beyond enabling the `pulseaudio` cpal feature.
 
 ### Phase 18: Persistent Daemon
-- [ ] 18.1 Benchmark model load time
-- [ ] 18.2 Stop → flush+pause (daemon survives stop, enters idle)
-- [ ] 18.3 IPC: wake a paused daemon (resume sentinel from toggle/start)
-- [ ] 18.4 Idle timeout (configurable, default 5m)
-- [ ] 18.5 Memory footprint analysis
-- [ ] 18.6 Daemon health and observability
+- [x] 18.1 Benchmark model load time
+- [x] 18.2 Stop → flush+pause (daemon survives stop, enters idle)
+- [x] 18.3 IPC: wake a paused daemon (resume sentinel from toggle/start)
+- [x] 18.4 Idle timeout (configurable, default 5m)
+- [x] 18.5 Memory footprint analysis
+- [x] 18.6 Daemon health and observability
 
 ### Phase 19: Clipboard Capture
 #### A: Skeleton + types
