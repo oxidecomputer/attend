@@ -563,16 +563,12 @@ impl DaemonState {
         browser_cleanup.cleanup();
         shell_cleanup.cleanup();
 
-        // Best-effort cleanup of clipboard staging images.
-        // Unlike browser/shell staging, these are written by the in-process
-        // clipboard thread, not external processes. Clean up the directory
-        // contents (not the directory itself, which may be reused on flush).
-        let clip_dir = super::clipboard_staging_dir();
-        if let Ok(entries) = std::fs::read_dir(&clip_dir) {
-            for entry in entries.flatten() {
-                let _ = std::fs::remove_file(entry.path());
-            }
-        }
+        // Clipboard staging images are NOT cleaned up here. Unlike browser/shell
+        // staging (which contains event data merged into the narration JSON),
+        // clipboard images are referenced by absolute path in the narration
+        // output. The agent needs to read them when it encounters
+        // `![clipboard](path)` tags. They are cleaned up by archive retention
+        // (clean.rs) alongside old narration files.
 
         Ok(true)
     }
