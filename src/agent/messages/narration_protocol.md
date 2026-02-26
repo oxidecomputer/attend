@@ -128,10 +128,11 @@ There are exactly two situations where you should run `attend listen`:
    its task ID matches your current listener ID**. If the ID does not match,
    the notification is stale (an older listener) — ignore it. Do not read the
    task output file; it has no useful content.
-2. A hook on another tool call (PreToolUse, PostToolUse, or stop) tells you
-   "narration is ready." This means narration arrived while you were doing
-   other work. All non-`attend listen` tool calls will be blocked until you
-   restart the listener, so run `attend listen` immediately to receive it.
+2. A hook on another tool call (PreToolUse, PostToolUse), or when you attempt to
+   end your conversational turn, tells you "narration is ready." This means
+   narration arrived while you were doing other work. All non-`attend listen`
+   tool calls will be blocked until you restart the listener, so run `attend
+   listen` immediately to receive it.
 
 **Do not speculatively run multiple `attend listen` calls.** Each trigger
 warrants exactly one call. Never run them in parallel.
@@ -151,14 +152,16 @@ current notifications from stale ones.
 
 ### If a restart is denied
 
-The hook may deny your `attend listen` call. When this happens, the denial
-message explains why. The three reasons are:
+A hook may deny your `attend listen` call. When this happens, the denial message
+explains why. The three reasons are:
 
 - **Deactivated**: narration was stopped (via `/unattend` or externally). The
   session is over. Recovery requires the user to run `/attend` to create a new
   session — you cannot reactivate narration by running `attend listen` yourself,
-  even if the user asks you to start listening. The skill must be re-invoked.
-  Let the user know they can run `/attend` to reactivate.
+  even if the user asks you to start listening. The skill must be re-invoked
+  explicitly by the user (this is a safeguard to prevent agents from
+  live-locking on attempting to steal sessions back and forth). Let the user
+  know they can run `/attend` to reactivate narration in this session.
 - **Session moved**: narration is active in a different agent session. This
   session is not the active listener. The user must run `/attend` in this
   session to shift narration here — you cannot reclaim the session by running
@@ -166,16 +169,21 @@ message explains why. The three reasons are:
 - **Listener already active**: another listener is already running for this
   session. It will deliver narration when it arrives.
 
-In all cases, clear your current listener ID and do not retry. Do not run
-`attend listen` again until the user runs `/attend` to re-invoke the skill.
+In all cases, forget your current listener ID and do not retry. If the session
+was deactivated or moved, do not run `attend listen` again until the user runs
+`/attend` to re-invoke the skill.
 
 ## Edge cases
 
 If narration contains only cursor/selection movements with no spoken words,
-restart the listener without any acknowledgement. These are incidental editor
-movements, not intentional messages.
+restart the listener without any acknowledgement. These might give you context
+about what the user is working on, which you can feel free to incorporate into
+your mental model, but you should passively observe them until the user actually
+speaks.
 
-Editor context is scoped to your current working directory. If the user
-references files you can't see, they may have navigated outside it — suggest
-adding paths to `include_dirs` in `.attend/config.toml` (or
-`~/.config/attend/config.toml`).
+Editor context and shell command instrumentation are scoped to your current
+working directory, as a security precaution to limit unintended information
+disclosure. If the user appears to be referring in their narration to files or
+commands but you can't see any context to follow along, they may be doing
+actions outside it — suggest adding paths to `include_dirs` in
+`.attend/config.toml` (or `~/.config/attend/config.toml`).
