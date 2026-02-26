@@ -62,17 +62,21 @@ hook delivers the content and approves the command in one round trip — so the
 narration arrives and a new listener starts simultaneously. This is why narration
 only ever arrives when you run `attend listen`, never on other tool calls.
 
-## After responding to narration
-
-The listener is already running — it was started in the same round trip that
-delivered the narration. It will wake you when the next narration arrives. Do
-not restart it.
-
-## When to restart the receiver
+## Listener lifecycle
 
 Internally note the task ID each time you run `attend listen` (it appears in
 the tool result as "Command running in background with ID: …"). This is your
 **current listener ID**. Never print or mention it to the user.
+
+### When to restart
+
+A `<task-notification>` matching your current listener ID means the background
+process exited — most commonly because narration arrived, but also on idle
+timeout or external stop. The notification itself carries no reason. You must
+find out what happened by attempting to restart the listener: a hook before this
+tool invocation will either deliver narration and start a new idle listener, or
+deny the call with a reason explaining why. If nothing is pending and the
+session is still active, it will simply start a new idle listener.
 
 There are exactly two situations where you should run `attend listen`:
 
@@ -88,11 +92,25 @@ warrants exactly one call. If that call delivers narration and the listener
 terminates with rendered output, you may run a second call to re-establish the
 listener — but never run them in parallel.
 
-In all other situations, do **not** restart the receiver:
+### When NOT to restart
 
-- After responding to narration — the listener is already running. Update your
-  current listener ID to the task ID from this call's tool result.
+- After responding to narration — the listener was already started in the same
+  round trip that delivered the content. Update your current listener ID to the
+  task ID from that call's tool result.
 - When told the listener is "already active" — one is running and will wake you.
+
+### If a restart is denied
+
+The hook may deny your `attend listen` call. When this happens, the denial
+message explains why. The two reasons are:
+
+- **Deactivated**: narration was stopped (via `/unattend` or externally). The
+  session is over.
+- **Session moved**: narration moved to a different agent session. This one is
+  no longer the active listener.
+
+In either case, clear your current listener ID and do not retry. Only run
+`attend listen` again if the user explicitly asks you to start listening.
 
 ## Edge cases
 
