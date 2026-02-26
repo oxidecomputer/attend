@@ -133,7 +133,7 @@ fn sign_extension() -> anyhow::Result<()> {
             .with_context(|| format!("failed to copy {name}"))?;
     }
 
-    eprintln!("signing extension via AMO (unlisted channel)...");
+    eprintln!("Signing extension via AMO (unlisted channel)...");
     let status = std::process::Command::new("web-ext")
         .args(["sign", "--channel=unlisted", "--source-dir"])
         .arg(source.path())
