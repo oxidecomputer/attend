@@ -99,25 +99,26 @@ fn render_decision(
     effect: &GuidanceEffect,
     message: &str,
 ) -> serde_json::Value {
-    // Wrap in <system-instruction> tags for fields that pass through as
-    // context to Claude (additionalContext, permissionDecisionReason).
-    // Stop hook's `reason` is already surfaced directly, so no wrapping.
+    // Wrap in <system-instruction> tags for approve paths where the
+    // content passes through as supplementary context to Claude. Block
+    // paths surface the reason directly to the user, so no XML wrapping
+    // (same treatment as the Stop hook's `reason` field).
     let wrapped = format!("<system-instruction>\n{message}\n</system-instruction>");
 
     match hook_type {
         // PreToolUse: hookSpecificOutput with permissionDecision.
-        // additionalContext reaches Claude; permissionDecisionReason
-        // reaches Claude on deny, user-only on allow.
+        // additionalContext reaches Claude; on deny it's also shown to
+        // the user, so use the unwrapped message.
         HookType::PreToolUse => {
-            let decision = match effect {
-                GuidanceEffect::Block => "deny",
-                GuidanceEffect::Approve => "allow",
+            let (decision, context) = match effect {
+                GuidanceEffect::Block => ("deny", message),
+                GuidanceEffect::Approve => ("allow", wrapped.as_str()),
             };
             serde_json::json!({
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": decision,
-                    "additionalContext": wrapped
+                    "additionalContext": context
                 }
             })
         }
@@ -125,7 +126,7 @@ fn render_decision(
         HookType::PostToolUse => match effect {
             GuidanceEffect::Block => serde_json::json!({
                 "decision": "block",
-                "reason": wrapped
+                "reason": message
             }),
             GuidanceEffect::Approve => serde_json::json!({
                 "hookSpecificOutput": {

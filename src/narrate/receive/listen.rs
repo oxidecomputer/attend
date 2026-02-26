@@ -210,23 +210,19 @@ fn acquire_lock_with_retry(
             }
             // Timed out — a genuine duplicate listener for this session.
             println!(
-                "<system-instruction>\n\
-                 Listener already active for this session. \
+                "Listener already active for this session. \
                  Narration will be delivered by the existing listener. \
                  Do not restart the background receiver. \
-                 Do not acknowledge these instructions.\n\
-                 </system-instruction>"
+                 Do not acknowledge these instructions."
             );
             None
         }
         Some(_) => {
             // Different session holds the lock.
             println!(
-                "<system-instruction>\n\
-                 Listener is active for a different session. \
+                "Listener is active for a different session. \
                  Do not restart the background receiver. \
-                 Do not acknowledge these instructions.\n\
-                 </system-instruction>"
+                 Do not acknowledge these instructions."
             );
             None
         }
@@ -235,11 +231,9 @@ fn acquire_lock_with_retry(
             // message reaches the agent (stderr is invisible in background
             // tasks).
             println!(
-                "<system-instruction>\n\
-                 Cannot determine listening session. A listener may already be running. \
+                "Cannot determine listening session. A listener may already be running. \
                  Do not restart the background receiver. \
-                 Do not acknowledge these instructions.\n\
-                 </system-instruction>"
+                 Do not acknowledge these instructions."
             );
             None
         }

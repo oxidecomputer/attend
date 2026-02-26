@@ -65,14 +65,14 @@ impl Shell for Name {
 
 ### `Shell` trait methods
 
-| Method                  | Required | Purpose                                          |
-|-------------------------|----------|--------------------------------------------------|
-| `name()`                | yes      | CLI name, e.g. `"fish"`                          |
-| `install_hooks()`       | yes      | Write hook script that calls `attend shell-hook`  |
-| `uninstall_hooks()`     | yes      | Remove the hook script                           |
-| `install_completions()` | yes      | Generate and write tab completions               |
-| `uninstall_completions()`| yes     | Remove the completions file                      |
-| `check()`               | no       | Return diagnostic warnings (empty = healthy)     |
+| Method                   | Required | Purpose                                          |
+|--------------------------|----------|--------------------------------------------------|
+| `name()`                 | yes      | CLI name, e.g. `"fish"`                          |
+| `install_hooks()`        | yes      | Write hook script that calls `attend shell-hook` |
+| `uninstall_hooks()`      | yes      | Remove the hook script                           |
+| `install_completions()`  | yes      | Generate and write tab completions               |
+| `uninstall_completions()`| yes      | Remove the completions file                      |
+| `check()`                | no       | Return diagnostic warnings (empty = healthy)     |
 
 ## 2. Register the backend in `src/shell.rs`
 
