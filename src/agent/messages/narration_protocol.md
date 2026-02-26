@@ -166,9 +166,8 @@ message explains why. The three reasons are:
 - **Listener already active**: another listener is already running for this
   session. It will deliver narration when it arrives.
 
-In all cases, clear your current listener ID and do not retry. Only run
-`attend listen` again if the user explicitly asks you to start listening or
-runs `/attend`.
+In all cases, clear your current listener ID and do not retry. Do not run
+`attend listen` again until the user runs `/attend` to re-invoke the skill.
 
 ## Edge cases
 
