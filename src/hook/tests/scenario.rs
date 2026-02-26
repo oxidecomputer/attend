@@ -368,6 +368,10 @@ fn listen_stop_deactivates_active_session() {
     let out = h.fire_hook_ext(&s, HookType::PreToolUse, ListenVariant::ListenStop, false);
     TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::Deactivated));
 
+    // Simulate the `stop()` command running (removes the listening file).
+    // The hook marks displaced but delegates file removal to the command.
+    h.deactivate();
+
     // PostToolUse: silent (command already ran).
     let out = h.fire_hook_ext(&s, HookType::PostToolUse, ListenVariant::ListenStop, false);
     TestHarness::assert_decision(&out, &HookDecision::Silent);
@@ -437,6 +441,7 @@ fn listen_blocked_after_deactivation() {
     h.activate(&s);
     let out = h.fire_hook_ext(&s, HookType::PreToolUse, ListenVariant::ListenStop, false);
     TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::Deactivated));
+    h.deactivate(); // Simulate `stop()` running after PreToolUse approval.
 
     // Session is now inactive with a displaced marker.
     // `attend listen` is blocked — auto-claim prevented.

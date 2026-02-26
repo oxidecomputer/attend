@@ -316,12 +316,12 @@ fn handle_unlisten_hook(
     // PreToolUse: gate whether deactivation is allowed.
     match relation {
         SessionRelation::Active => {
-            // This session owns narration — deactivate.
+            // This session owns narration — mark displaced so the
+            // auto-claim path won't re-activate. The actual listening
+            // file removal happens in `stop()` (the command we're
+            // approving), which is the sole owner of that mutation.
             if let Some(session_id) = state::listening_session() {
                 mark_session_displaced(&session_id);
-            }
-            if let Some(path) = state::listening_path() {
-                let _ = fs::remove_file(path);
             }
             agent.attend_result(
                 &HookDecision::approve(GuidanceReason::Deactivated),

@@ -516,6 +516,23 @@ proptest! {
                                // tested separately by exhaustive + scenario tests)
                     );
                     model.check_and_update(*session, *hook_type, *listen_kind, &outcome);
+
+                    // After ListenStop PreToolUse is approved on an active
+                    // session, the `stop()` command runs and removes the
+                    // listening file. Simulate that here so the filesystem
+                    // matches the oracle (which already set listening=None).
+                    if *listen_kind == ListenKind::ListenStop
+                        && *hook_type == HookType::PreToolUse
+                        && matches!(
+                            outcome,
+                            Outcome::Decision(HookDecision::Guidance {
+                                reason: GuidanceReason::Deactivated,
+                                ..
+                            })
+                        )
+                    {
+                        h.deactivate();
+                    }
                 }
             }
         }
