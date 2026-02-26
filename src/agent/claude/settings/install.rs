@@ -149,16 +149,18 @@ pub fn install(bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()
 
         let look_pattern = format!("Bash({bin_cmd} look:*)");
         let listen_pattern = format!("Bash({bin_cmd} listen:*)");
+        let clipboard_read_pattern = format!("Read({}/*)", crate::narrate::clipboard_staging_dir());
         // Remove our own entries, then re-add current.
         // Match on the exact patterns we install, not a substring search,
         // to avoid clobbering unrelated permissions.
         allow_vec.retain(|v: &serde_json::Value| {
             v.as_str()
-                .map(|s| s != look_pattern && s != listen_pattern)
+                .map(|s| s != look_pattern && s != listen_pattern && s != clipboard_read_pattern)
                 .unwrap_or(true)
         });
         allow_vec.push(serde_json::Value::String(look_pattern));
         allow_vec.push(serde_json::Value::String(listen_pattern));
+        allow_vec.push(serde_json::Value::String(clipboard_read_pattern));
     }
 
     // Write back

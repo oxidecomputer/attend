@@ -16,16 +16,18 @@ use camino::Utf8PathBuf;
 
 use super::merge::Event;
 
-/// Handle for the background editor/diff/ext polling threads.
+/// Handle for the background editor/diff/ext/clipboard polling threads.
 pub(crate) struct CaptureHandle {
     stop_flag: Arc<AtomicBool>,
     paused_flag: Arc<AtomicBool>,
     editor_events: Arc<Mutex<Vec<Event>>>,
     diff_events: Arc<Mutex<Vec<Event>>>,
     ext_events: Arc<Mutex<Vec<Event>>>,
+    clipboard_events: Arc<Mutex<Vec<Event>>>,
     editor_thread: Option<thread::JoinHandle<()>>,
     diff_thread: Option<thread::JoinHandle<()>>,
     ext_thread: Option<thread::JoinHandle<()>>,
+    clipboard_thread: Option<thread::JoinHandle<()>>,
 }
 
 impl CaptureHandle {
@@ -40,15 +42,16 @@ impl CaptureHandle {
     }
 
     /// Drain accumulated events without stopping threads.
-    pub fn drain(&self) -> (Vec<Event>, Vec<Event>, Vec<Event>) {
+    pub fn drain(&self) -> (Vec<Event>, Vec<Event>, Vec<Event>, Vec<Event>) {
         let editor = std::mem::take(&mut *self.editor_events.lock().unwrap());
         let diff = std::mem::take(&mut *self.diff_events.lock().unwrap());
         let ext = std::mem::take(&mut *self.ext_events.lock().unwrap());
-        (editor, diff, ext)
+        let clipboard = std::mem::take(&mut *self.clipboard_events.lock().unwrap());
+        (editor, diff, ext, clipboard)
     }
 
     /// Signal stop and collect remaining results.
-    pub fn collect(mut self) -> (Vec<Event>, Vec<Event>, Vec<Event>) {
+    pub fn collect(mut self) -> (Vec<Event>, Vec<Event>, Vec<Event>, Vec<Event>) {
         self.stop_flag.store(true, Ordering::Relaxed);
 
         // Intentionally ignored: thread panics are non-recoverable here.
@@ -59,6 +62,9 @@ impl CaptureHandle {
             let _ = h.join();
         }
         if let Some(h) = self.ext_thread.take() {
+            let _ = h.join();
+        }
+        if let Some(h) = self.clipboard_thread.take() {
             let _ = h.join();
         }
 
@@ -77,6 +83,7 @@ impl CaptureHandle {
 pub(crate) fn start(
     cwd: Option<Utf8PathBuf>,
     ext_ignore_apps: Vec<String>,
+    clipboard_capture: bool,
 ) -> anyhow::Result<CaptureHandle> {
     let stop_flag = Arc::new(AtomicBool::new(false));
     let paused_flag = Arc::new(AtomicBool::new(false));
@@ -84,6 +91,7 @@ pub(crate) fn start(
     let editor_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
     let diff_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
     let ext_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
+    let clipboard_events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
 
     // Shared file path list: written by editor_capture, read by diff_capture.
     let open_paths: Arc<Mutex<Vec<Utf8PathBuf>>> = Arc::new(Mutex::new(Vec::new()));
@@ -110,14 +118,26 @@ pub(crate) fn start(
         ext_ignore_apps,
     );
 
+    let clipboard_thread = if clipboard_capture {
+        super::clipboard_capture::spawn(
+            Arc::clone(&stop_flag),
+            Arc::clone(&paused_flag),
+            Arc::clone(&clipboard_events),
+        )
+    } else {
+        None
+    };
+
     Ok(CaptureHandle {
         stop_flag,
         paused_flag,
         editor_events,
         diff_events,
         ext_events,
+        clipboard_events,
         editor_thread: Some(editor_thread),
         diff_thread: Some(diff_thread),
         ext_thread,
+        clipboard_thread,
     })
 }

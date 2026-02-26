@@ -44,9 +44,15 @@ pub fn uninstall(project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
         && let Some(allow) = perms.get_mut("allow").and_then(|a| a.as_array_mut())
     {
         let before = allow.len();
+        let clipboard_staging = crate::narrate::clipboard_staging_dir();
+        let clipboard_pattern = format!("Read({}/*)", clipboard_staging);
         allow.retain(|v| {
             v.as_str()
-                .map(|s| !s.ends_with("attend look:*)") && !s.ends_with("attend listen:*)"))
+                .map(|s| {
+                    !s.ends_with("attend look:*)")
+                        && !s.ends_with("attend listen:*)")
+                        && s != clipboard_pattern
+                })
                 .unwrap_or(true)
         });
         if allow.len() < before {

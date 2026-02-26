@@ -12,6 +12,10 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 use super::merge::{ClipboardContent, Event};
 
@@ -122,6 +126,112 @@ fn hash_image_data(img: &ImageData) -> u64 {
     let mut hasher = DefaultHasher::new();
     img.bytes.hash(&mut hasher);
     hasher.finish()
+}
+
+/// How often to poll the clipboard for changes (ms).
+const CLIPBOARD_POLL_MS: u64 = 500;
+
+/// Sleep interval when paused (ms).
+const PAUSED_POLL_MS: u64 = 500;
+
+/// Spawn the clipboard polling thread.
+///
+/// Returns the join handle, or `None` if the clipboard cannot be accessed
+/// (e.g. headless environment). The thread pushes `ClipboardSelection`
+/// events into `events` until `stop` is set.
+pub(super) fn spawn(
+    stop: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
+    events: Arc<Mutex<Vec<Event>>>,
+) -> Option<thread::JoinHandle<()>> {
+    let mut clipboard = match arboard::Clipboard::new() {
+        Ok(cb) => cb,
+        Err(e) => {
+            tracing::warn!("Clipboard capture unavailable: {e}");
+            return None;
+        }
+    };
+
+    // Seed with current clipboard content (no event emitted).
+    let seed_text = clipboard.get_text().ok();
+    let seed_image = clipboard.get_image().ok().map(|img| ImageData {
+        width: img.width,
+        height: img.height,
+        bytes: img.bytes.into_owned(),
+    });
+    let mut tracker = ClipboardTracker::new_seeded(seed_text.as_deref(), seed_image.as_ref());
+
+    Some(thread::spawn(move || {
+        let staging_dir = super::clipboard_staging_dir();
+
+        while !stop.load(Ordering::Relaxed) {
+            if paused.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_millis(PAUSED_POLL_MS));
+                continue;
+            }
+
+            thread::sleep(Duration::from_millis(CLIPBOARD_POLL_MS));
+
+            // Try text first, then image. First success wins.
+            let text = clipboard.get_text().ok();
+            let image_data = clipboard.get_image().ok().map(|img| ImageData {
+                width: img.width,
+                height: img.height,
+                bytes: img.bytes.into_owned(),
+            });
+
+            match tracker.check(text.as_deref(), image_data.as_ref()) {
+                ClipboardUpdate::Changed(ClipboardContent::Text { text }) => {
+                    let timestamp = chrono::Utc::now();
+                    events.lock().unwrap().push(Event::ClipboardSelection {
+                        timestamp,
+                        content: ClipboardContent::Text { text },
+                    });
+                }
+                ClipboardUpdate::Changed(ClipboardContent::Image { .. }) => {
+                    // Encode the image to PNG and stage it.
+                    let Some(ref img) = image_data else {
+                        continue;
+                    };
+                    let Some(path) = stage_image_png(img, &staging_dir) else {
+                        continue;
+                    };
+                    let timestamp = chrono::Utc::now();
+                    events.lock().unwrap().push(Event::ClipboardSelection {
+                        timestamp,
+                        content: ClipboardContent::Image { path },
+                    });
+                }
+                ClipboardUpdate::Unchanged => {}
+            }
+        }
+    }))
+}
+
+/// Encode image data to PNG and write to the clipboard staging directory.
+///
+/// Returns the absolute path to the staged file, or `None` on failure.
+fn stage_image_png(img: &ImageData, staging_dir: &camino::Utf8Path) -> Option<String> {
+    use image::{ImageBuffer, Rgba};
+
+    let buf: ImageBuffer<Rgba<u8>, _> =
+        ImageBuffer::from_raw(img.width as u32, img.height as u32, &img.bytes[..])?;
+
+    if let Err(e) = std::fs::create_dir_all(staging_dir) {
+        tracing::warn!("Cannot create clipboard staging dir: {e}");
+        return None;
+    }
+
+    let ts = crate::util::utc_now_nanos().replace(':', "-");
+    let id = uuid::Uuid::new_v4();
+    let path = staging_dir.join(format!("{ts}-{id}.png"));
+
+    if let Err(e) = buf.save(path.as_str()) {
+        tracing::warn!("Cannot encode clipboard image to PNG: {e}");
+        return None;
+    }
+
+    Some(path.to_string())
 }
 
 #[cfg(test)]

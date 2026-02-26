@@ -46,7 +46,7 @@ Narration arrives wrapped in `<narration>` tags. It interleaves the user's
 spoken words with structured context from their editor, terminal, and browser.
 Treat it as the user's message — respond to what they said and asked.
 
-The seven event types and how to recognize them:
+The eight event types and how to recognize them:
 
 **Prose** — flowing text with no special markers. This is what the user said out
 loud, transcribed by a speech-to-text model.
@@ -89,6 +89,20 @@ blockquoted body:
 
 [Rust docs](https://doc.rust-lang.org/std/):
 > Returns the number of elements in the vector.
+
+**Clipboard selections** — content the user copied to the clipboard (Cmd+C).
+Text selections appear as a plain blockquote with no attribution label:
+
+> some copied text that wasn't captured
+> by any other selection source
+
+Image selections appear as a markdown image tag with an absolute path:
+
+![clipboard](/Users/oxide/.cache/attend/clipboard-staging/12345.png)
+
+You can read clipboard images directly with the Read tool — the path is
+pre-authorized. Clipboard text that duplicates a richer source (external or
+browser selection) is automatically dropped during merge.
 
 **Redaction markers** — a ✂ prefix indicating context was captured but filtered
 because it originated outside the project directory. Multiple kinds on one line

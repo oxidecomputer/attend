@@ -146,6 +146,7 @@ engine = "parakeet"                        # transcription engine: "parakeet" or
 model = "/path/to/custom/model"            # custom model path (auto-downloaded if omitted)
 include_dirs = ["/path/to/other/project"]  # additional dirs visible to the agent
 archive_retention = "7d"                   # auto-prune old narrations ("forever" to disable)
+clipboard_capture = true                   # capture clipboard changes (text and images)
 ```
 
 ## Troubleshooting
