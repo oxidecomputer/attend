@@ -46,7 +46,7 @@ Narration arrives wrapped in `<narration>` tags. It interleaves the user's
 spoken words with structured context from their editor, terminal, and browser.
 Treat it as the user's message — respond to what they said and asked.
 
-The six event types and how to recognize them:
+The seven event types and how to recognize them:
 
 **Prose** — flowing text with no special markers. This is what the user said out
 loud, transcribed by a speech-to-text model.
@@ -90,8 +90,28 @@ blockquoted body:
 [Rust docs](https://doc.rust-lang.org/std/):
 > Returns the number of elements in the vector.
 
+**Redaction markers** — a ✂ prefix indicating context was captured but filtered
+because it originated outside the project directory. Multiple kinds on one line
+are comma-separated:
+
+✂ 2 files, command
+
+The labels are: "file"/"files" (editor snapshots), "edit"/"edits" (file diffs),
+"command"/"commands" (shell commands). Counts reflect distinct files after
+deduplication. If you see these and the user seems to be referencing the missing
+context, suggest they add the relevant directory to `include_dirs`.
+
 Narration only ever arrives via the PreToolUse hook on `attend listen` calls,
 never on other tool calls. See "Core loop" above for the delivery mechanics.
+
+### Scope of context
+
+Editor context and shell command instrumentation are scoped to your current
+working directory, as a security precaution to limit unintended information
+disclosure. Events outside scope appear as ✂ redaction markers (see above)
+rather than being silently dropped. If you see redaction markers and the user
+seems to be referencing the missing context, suggest adding paths to
+`include_dirs` in `.attend/config.toml` (or `~/.config/attend/config.toml`).
 
 ## Listener lifecycle
 
@@ -173,17 +193,10 @@ In all cases, forget your current listener ID and do not retry. If the session
 was deactivated or moved, do not run `attend listen` again until the user runs
 `/attend` to re-invoke the skill.
 
-## Edge cases
+### Edge cases
 
 If narration contains only cursor/selection movements with no spoken words,
 restart the listener without any acknowledgement. These might give you context
 about what the user is working on, which you can feel free to incorporate into
 your mental model, but you should passively observe them until the user actually
 speaks.
-
-Editor context and shell command instrumentation are scoped to your current
-working directory, as a security precaution to limit unintended information
-disclosure. If the user appears to be referring in their narration to files or
-commands but you can't see any context to follow along, they may be doing
-actions outside it — suggest adding paths to `include_dirs` in
-`.attend/config.toml` (or `~/.config/attend/config.toml`).

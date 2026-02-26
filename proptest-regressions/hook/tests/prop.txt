@@ -5,3 +5,5 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 9acd5b4803bc60dd10e42fd3b98c27704655db0d1fe6eb1bdd6d5610a1d69179 # shrinks to ops = [Activate(2), Activate(0), FireHook { session: 2, hook_type: Stop, listen_kind: None }, Activate(2), Activate(0), FireHook { session: 2, hook_type: Stop, listen_kind: None }]
+cc 47c5ae5a4e46ad7c474da64dcd8cdf33a1fb07113f761ed627dd7d4bb08c81d6 # shrinks to has_deliverable = false, has_undeliverable = true, receiver_alive = false
+cc a60fd39e388e58e0515b8899ed776824db357f4e305f73c8127966e66e3c7b34 # shrinks to ops = [WriteUndeliverablePending(0), Activate(0), FireHook { session: 0, hook_type: Stop, listen_kind: None }]

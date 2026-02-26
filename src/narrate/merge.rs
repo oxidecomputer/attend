@@ -65,6 +65,14 @@ use serde::{Deserialize, Serialize};
 use crate::state::FileEntry;
 pub use crate::view::CapturedRegion;
 
+/// The kind of event that was redacted (filtered due to project scope).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum RedactedKind {
+    EditorSnapshot,
+    FileDiff,
+    ShellCommand,
+}
+
 /// A timestamped event from one of the capture streams.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
@@ -135,6 +143,19 @@ pub enum Event {
         /// Wall-clock duration in seconds (None for preexec-only).
         duration_secs: Option<f64>,
     },
+    /// A placeholder for events filtered out by project-scope checks.
+    ///
+    /// Created during the receive phase when events fall outside the project
+    /// directory and configured `include_dirs`. Never serialized to disk.
+    Redacted {
+        /// UTC wall-clock time of the original event.
+        timestamp: chrono::DateTime<chrono::Utc>,
+        /// What kind of event was redacted.
+        kind: RedactedKind,
+        /// Identifiers for deduplication during collapse. For EditorSnapshot
+        /// and FileDiff these are file paths; for ShellCommand, command text.
+        keys: Vec<String>,
+    },
 }
 
 impl Event {
@@ -146,7 +167,8 @@ impl Event {
             | Event::FileDiff { timestamp, .. }
             | Event::ExternalSelection { timestamp, .. }
             | Event::BrowserSelection { timestamp, .. }
-            | Event::ShellCommand { timestamp, .. } => *timestamp,
+            | Event::ShellCommand { timestamp, .. }
+            | Event::Redacted { timestamp, .. } => *timestamp,
         }
     }
 }
@@ -468,6 +490,10 @@ fn process_run(mut run: Vec<Event>) -> Vec<Event> {
                 ext_selections.push(event);
             }
             Event::ShellCommand { .. } => {
+                ext_selections.push(event);
+            }
+            // Redacted events are created after merge; pass through if present.
+            Event::Redacted { .. } => {
                 ext_selections.push(event);
             }
             Event::Words { .. } => unreachable!("run should not contain Words"),

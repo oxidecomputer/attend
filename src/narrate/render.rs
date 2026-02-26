@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::merge::{self, Event};
+use super::merge::{self, Event, RedactedKind};
 
 /// Controls collapsing of large code snippets and diffs.
 ///
@@ -123,6 +123,19 @@ fn clean_whisper_text(raw: &str) -> String {
     out
 }
 
+/// Format a single `Redacted` event's label (without the ✂ prefix).
+fn redacted_label(kind: &RedactedKind, keys: &[String]) -> String {
+    let count = keys.len();
+    match (kind, count) {
+        (RedactedKind::EditorSnapshot, 1) => "file".to_string(),
+        (RedactedKind::EditorSnapshot, n) => format!("{n} files"),
+        (RedactedKind::FileDiff, 1) => "edit".to_string(),
+        (RedactedKind::FileDiff, n) => format!("{n} edits"),
+        (RedactedKind::ShellCommand, 1) => "command".to_string(),
+        (RedactedKind::ShellCommand, n) => format!("{n} commands"),
+    }
+}
+
 /// Render a sorted/compressed event list as markdown.
 ///
 /// The output interleaves prose text with fenced code/diff blocks:
@@ -132,15 +145,19 @@ fn clean_whisper_text(raw: &str) -> String {
 /// - Shell commands become fenced code blocks with `$ ` command prefix
 /// - External selections become attributed blockquotes
 /// - Browser selections become link-attributed blockquotes
+/// - Redacted events become `✂` markers, comma-separated when adjacent
 pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
     let mut out = String::new();
     let mut in_prose = false;
+    let mut i = 0;
 
-    for event in events.iter() {
+    while i < events.len() {
+        let event = &events[i];
         match event {
             Event::Words { text, .. } => {
                 let cleaned = clean_whisper_text(text);
                 if cleaned.is_empty() || is_noise_marker(&cleaned) {
+                    i += 1;
                     continue;
                 }
                 if !in_prose && !out.is_empty() {
@@ -183,6 +200,7 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
             }
             Event::FileDiff { path, old, new, .. } => {
                 if old == new {
+                    i += 1;
                     continue;
                 }
                 let diff = merge::unified_diff(old, new);
@@ -296,7 +314,32 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                 out.push('\n');
                 out.push_str("```\n");
             }
+            Event::Redacted { kind, keys, .. } => {
+                if in_prose {
+                    out.push('\n');
+                    in_prose = false;
+                }
+                if !out.is_empty() && !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push('\n');
+                // Collect consecutive Redacted events onto one comma-separated line.
+                let mut labels = vec![redacted_label(kind, keys)];
+                while i + 1 < events.len() {
+                    if let Event::Redacted {
+                        kind: k, keys: ks, ..
+                    } = &events[i + 1]
+                    {
+                        labels.push(redacted_label(k, ks));
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+                out.push_str(&format!("\u{2702} {}\n", labels.join(", ")));
+            }
         }
+        i += 1;
     }
 
     if in_prose {
@@ -317,180 +360,4 @@ pub fn format_markdown(events: &mut Vec<Event>, snip_cfg: SnipConfig) -> String 
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    use proptest::prelude::*;
-
-    // -- clean_whisper_text --
-
-    /// Space before period is removed.
-    #[test]
-    fn clean_whisper_space_before_period() {
-        assert_eq!(clean_whisper_text("test ."), "test.");
-    }
-
-    /// Space before apostrophe in contraction is removed.
-    #[test]
-    fn clean_whisper_contraction() {
-        assert_eq!(clean_whisper_text("I 'm going"), "I'm going");
-    }
-
-    /// Space before comma is removed.
-    #[test]
-    fn clean_whisper_comma() {
-        assert_eq!(clean_whisper_text("Now , let"), "Now, let");
-    }
-
-    /// Multiple Whisper artifacts in one string are all cleaned.
-    #[test]
-    fn clean_whisper_multiple() {
-        assert_eq!(
-            clean_whisper_text("Hello , I 'm here . Great !"),
-            "Hello, I'm here. Great!"
-        );
-    }
-
-    /// Text without Whisper artifacts passes through unchanged.
-    #[test]
-    fn clean_whisper_no_change() {
-        assert_eq!(clean_whisper_text("no changes here"), "no changes here");
-    }
-
-    /// Normal spaces between words are preserved.
-    #[test]
-    fn clean_whisper_preserves_spaces() {
-        assert_eq!(clean_whisper_text("a b c"), "a b c");
-    }
-
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(300))]
-
-        /// clean_whisper_text is idempotent: cleaning twice equals cleaning once.
-        #[test]
-        fn clean_whisper_idempotent(input in "[ -~]{0,100}") {
-            let once = clean_whisper_text(&input);
-            let twice = clean_whisper_text(&once);
-            prop_assert_eq!(&once, &twice);
-        }
-
-        /// clean_whisper_text never increases string length.
-        #[test]
-        fn clean_whisper_never_grows(input in "[ -~]{0,100}") {
-            let cleaned = clean_whisper_text(&input);
-            prop_assert!(
-                cleaned.len() <= input.len(),
-                "cleaned ({}) longer than input ({})",
-                cleaned.len(),
-                input.len()
-            );
-        }
-
-        /// clean_whisper_text preserves all non-space characters in order.
-        #[test]
-        fn clean_whisper_preserves_non_space(input in "[ -~]{0,100}") {
-            let cleaned = clean_whisper_text(&input);
-            let input_non_space: String = input.chars().filter(|&c| c != ' ').collect();
-            let cleaned_non_space: String = cleaned.chars().filter(|&c| c != ' ').collect();
-            prop_assert_eq!(input_non_space, cleaned_non_space);
-        }
-    }
-
-    // -- is_noise_marker --
-
-    /// Bracketed and parenthesized markers are recognized; plain text is not.
-    #[test]
-    fn noise_marker_parenthesized() {
-        assert!(is_noise_marker("[music]"));
-        assert!(is_noise_marker("(buzzing)"));
-        assert!(is_noise_marker("  [typing sounds]  "));
-        assert!(!is_noise_marker("hello"));
-        assert!(!is_noise_marker("[not closed"));
-    }
-
-    // -- snip --
-
-    /// Text at or below the snip threshold passes through unchanged.
-    #[test]
-    fn snip_below_threshold_unchanged() {
-        let text = "line1\nline2\nline3\n";
-        let cfg = SnipConfig {
-            threshold: 5,
-            head: 2,
-            tail: 1,
-        };
-        assert_eq!(snip(text, cfg, None), text);
-    }
-
-    /// Text above the threshold keeps head/tail lines with an omission count.
-    #[test]
-    fn snip_above_threshold_collapses() {
-        let text = "a\nb\nc\nd\ne\nf\n";
-        let cfg = SnipConfig {
-            threshold: 5,
-            head: 2,
-            tail: 1,
-        };
-        // Without line numbers
-        assert_eq!(snip(text, cfg, None), "a\nb\n// ... (3 lines omitted)\nf\n");
-    }
-
-    /// Snip marker includes actual line numbers when first_line is provided.
-    #[test]
-    fn snip_with_line_range() {
-        let text = "a\nb\nc\nd\ne\nf\n";
-        let cfg = SnipConfig {
-            threshold: 5,
-            head: 2,
-            tail: 1,
-        };
-        // first_line=10: head keeps lines 10-11, omits 12-14, tail keeps line 15
-        assert_eq!(
-            snip(text, cfg, Some(10)),
-            "a\nb\n// ... (lines 12-14 omitted)\nf\n"
-        );
-    }
-
-    /// Text at exactly the threshold passes through unchanged.
-    #[test]
-    fn snip_at_exact_threshold_unchanged() {
-        let text = (1..=5)
-            .map(|i| format!("line{i}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-            + "\n";
-        let cfg = SnipConfig {
-            threshold: 5,
-            head: 2,
-            tail: 1,
-        };
-        assert_eq!(snip(&text, cfg, Some(1)), text);
-    }
-
-    /// When head + tail >= total lines, snip should not panic or produce
-    /// malformed output (overlapping head/tail).
-    #[test]
-    fn snip_head_tail_overlap() {
-        // 6 lines with head=4, tail=4 → head+tail=8 > 6 lines
-        let text = "a\nb\nc\nd\ne\nf\n";
-        let cfg = SnipConfig {
-            threshold: 3, // trigger snipping (6 > 3)
-            head: 4,
-            tail: 4,
-        };
-        let result = snip(text, cfg, None);
-        // With overlapping head/tail, all original lines should survive
-        // (nothing to omit). Verify no panic and no duplication.
-        let result_lines: Vec<&str> = result.lines().collect();
-        let input_lines: Vec<&str> = text.lines().collect();
-        // Every input line should appear at least once.
-        for line in &input_lines {
-            assert!(
-                result_lines.contains(line),
-                "line {:?} missing from snip output: {:?}",
-                line,
-                result
-            );
-        }
-    }
-}
+mod tests;

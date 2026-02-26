@@ -1,8 +1,12 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use camino::{Utf8Path, Utf8PathBuf};
 
-use super::*;
+use super::filter::{filter_events, relativize_events};
+use super::listen::try_lock;
+use super::pending::{collect_pending, collect_pending_dir};
+use super::read_pending;
 use crate::narrate::merge::{CapturedRegion, Event};
 use crate::state::SessionId;
 
@@ -141,9 +145,9 @@ fn filter_events_keeps_words() {
     assert_eq!(events.len(), 1);
 }
 
-/// Diffs for files outside cwd are dropped.
+/// Diffs for files outside cwd are replaced with a Redacted marker.
 #[test]
-fn filter_events_drops_outside_diff() {
+fn filter_events_redacts_outside_diff() {
     let cwd = Utf8Path::new("/project");
     let mut events = vec![Event::FileDiff {
         timestamp: ts(0.0),
@@ -152,7 +156,18 @@ fn filter_events_drops_outside_diff() {
         new: "b\n".to_string(),
     }];
     filter_events(&mut events, cwd, &[]);
-    assert!(events.is_empty());
+    assert_eq!(events.len(), 1, "should have one Redacted event");
+    assert!(
+        matches!(
+            &events[0],
+            Event::Redacted {
+                kind: crate::narrate::merge::RedactedKind::FileDiff,
+                keys,
+                ..
+            } if keys == &["/other/file.rs"]
+        ),
+        "should be a Redacted FileDiff with the filtered path"
+    );
 }
 
 /// External selections pass through the filter unconditionally (no file paths to check).
@@ -368,9 +383,9 @@ fn filter_events_keeps_shell_command_inside_cwd() {
     assert_eq!(events.len(), 1, "shell command inside cwd should pass");
 }
 
-/// Shell commands with cwd outside the project are filtered out.
+/// Shell commands with cwd outside the project are replaced with a Redacted marker.
 #[test]
-fn filter_events_drops_shell_command_outside_cwd() {
+fn filter_events_redacts_shell_command_outside_cwd() {
     let cwd = Utf8Path::new("/project");
     let mut events = vec![Event::ShellCommand {
         timestamp: ts(0.0),
@@ -381,9 +396,17 @@ fn filter_events_drops_shell_command_outside_cwd() {
         duration_secs: Some(0.1),
     }];
     filter_events(&mut events, cwd, &[]);
+    assert_eq!(events.len(), 1, "should have one Redacted event");
     assert!(
-        events.is_empty(),
-        "shell command outside cwd should be dropped"
+        matches!(
+            &events[0],
+            Event::Redacted {
+                kind: crate::narrate::merge::RedactedKind::ShellCommand,
+                keys,
+                ..
+            } if keys == &["ls"]
+        ),
+        "should be a Redacted ShellCommand with the command text"
     );
 }
 
@@ -559,5 +582,210 @@ fn collect_pending_merges_session_and_local() {
     assert!(
         content.contains("session narration"),
         "session narration should be included"
+    );
+}
+
+// -- Redaction marker tests --
+
+/// Partial EditorSnapshot filtering: some regions survive, dropped regions
+/// produce a Redacted marker with correct file paths.
+#[test]
+fn filter_events_partial_editor_snapshot_redaction() {
+    let cwd = Utf8Path::new("/project");
+    let mut events = vec![Event::EditorSnapshot {
+        timestamp: ts(0.0),
+        files: vec![],
+        regions: vec![
+            CapturedRegion {
+                path: "/project/src/main.rs".to_string(),
+                content: "fn main() {}\n".to_string(),
+                first_line: 1,
+                selections: vec![],
+                language: None,
+            },
+            CapturedRegion {
+                path: "/other/lib.rs".to_string(),
+                content: "fn other() {}\n".to_string(),
+                first_line: 1,
+                selections: vec![],
+                language: None,
+            },
+            CapturedRegion {
+                path: "/elsewhere/util.rs".to_string(),
+                content: "fn util() {}\n".to_string(),
+                first_line: 1,
+                selections: vec![],
+                language: None,
+            },
+        ],
+    }];
+    filter_events(&mut events, cwd, &[]);
+    assert_eq!(events.len(), 2, "surviving snapshot + redacted marker");
+    assert!(
+        matches!(&events[0], Event::EditorSnapshot { regions, .. } if regions.len() == 1),
+        "one region should survive"
+    );
+    assert!(
+        matches!(
+            &events[1],
+            Event::Redacted {
+                kind: crate::narrate::merge::RedactedKind::EditorSnapshot,
+                keys,
+                ..
+            } if keys.len() == 2
+        ),
+        "two distinct files should be redacted"
+    );
+}
+
+/// Adjacent Redacted events of the same kind are collapsed with key dedup.
+#[test]
+fn collapse_redacted_merges_adjacent_same_kind() {
+    use crate::narrate::merge::RedactedKind;
+
+    let cwd = Utf8Path::new("/project");
+    let mut events = vec![
+        Event::FileDiff {
+            timestamp: ts(0.0),
+            path: "/other/a.rs".to_string(),
+            old: "a".to_string(),
+            new: "b".to_string(),
+        },
+        Event::FileDiff {
+            timestamp: ts(1.0),
+            path: "/other/a.rs".to_string(),
+            old: "b".to_string(),
+            new: "c".to_string(),
+        },
+        Event::FileDiff {
+            timestamp: ts(2.0),
+            path: "/other/b.rs".to_string(),
+            old: "x".to_string(),
+            new: "y".to_string(),
+        },
+    ];
+    filter_events(&mut events, cwd, &[]);
+    assert_eq!(
+        events.len(),
+        1,
+        "three diffs should collapse into one Redacted"
+    );
+    match &events[0] {
+        Event::Redacted { kind, keys, .. } => {
+            assert_eq!(*kind, RedactedKind::FileDiff);
+            assert_eq!(keys.len(), 2, "two distinct file paths after dedup");
+        }
+        other => panic!("expected Redacted, got {other:?}"),
+    }
+}
+
+/// Interleaved Redacted kinds in a run are grouped and reordered by kind.
+#[test]
+fn collapse_redacted_reorders_interleaved_kinds() {
+    use crate::narrate::merge::RedactedKind;
+
+    let cwd = Utf8Path::new("/project");
+    // Pattern: file, command, file → should collapse to 2 files + 1 command
+    let mut events = vec![
+        Event::EditorSnapshot {
+            timestamp: ts(0.0),
+            files: vec![],
+            regions: vec![CapturedRegion {
+                path: "/other/a.rs".to_string(),
+                content: "fn a() {}\n".to_string(),
+                first_line: 1,
+                selections: vec![],
+                language: None,
+            }],
+        },
+        Event::ShellCommand {
+            timestamp: ts(1.0),
+            shell: "fish".to_string(),
+            command: "ls".to_string(),
+            cwd: "/other".to_string(),
+            exit_status: Some(0),
+            duration_secs: Some(0.1),
+        },
+        Event::EditorSnapshot {
+            timestamp: ts(2.0),
+            files: vec![],
+            regions: vec![CapturedRegion {
+                path: "/other/b.rs".to_string(),
+                content: "fn b() {}\n".to_string(),
+                first_line: 1,
+                selections: vec![],
+                language: None,
+            }],
+        },
+    ];
+    filter_events(&mut events, cwd, &[]);
+    // Run of 3 Redacted events should collapse to 2: EditorSnapshot(2 files) + ShellCommand(1)
+    assert_eq!(
+        events.len(),
+        2,
+        "interleaved kinds should reorder into 2 groups"
+    );
+    // BTreeMap ordering: EditorSnapshot < ShellCommand
+    assert!(
+        matches!(
+            &events[0],
+            Event::Redacted { kind: RedactedKind::EditorSnapshot, keys, .. } if keys.len() == 2
+        ),
+        "first should be EditorSnapshot with 2 files"
+    );
+    assert!(
+        matches!(
+            &events[1],
+            Event::Redacted { kind: RedactedKind::ShellCommand, keys, .. } if keys.len() == 1
+        ),
+        "second should be ShellCommand with 1 command"
+    );
+}
+
+/// Redaction-only pending files yield None from read_pending (not worth delivering).
+#[test]
+fn read_pending_redaction_only_returns_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = vec![Event::FileDiff {
+        timestamp: ts(0.0),
+        path: "/other/file.rs".to_string(),
+        old: "a\n".to_string(),
+        new: "b\n".to_string(),
+    }];
+    let path = dir.path().join("test.json");
+    fs::write(&path, serde_json::to_string(&events).unwrap()).unwrap();
+
+    let cwd = Utf8Path::new("/project");
+    assert!(
+        read_pending(&[path], Some(cwd), &[]).is_none(),
+        "redaction-only content should not be delivered"
+    );
+}
+
+/// Redaction markers appear inline when mixed with deliverable content.
+#[test]
+fn read_pending_renders_redaction_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = vec![
+        Event::Words {
+            timestamp: ts(0.0),
+            text: "look at this".to_string(),
+        },
+        Event::FileDiff {
+            timestamp: ts(1.0),
+            path: "/other/file.rs".to_string(),
+            old: "a\n".to_string(),
+            new: "b\n".to_string(),
+        },
+    ];
+    let path = dir.path().join("test.json");
+    fs::write(&path, serde_json::to_string(&events).unwrap()).unwrap();
+
+    let cwd = Utf8Path::new("/project");
+    let result = read_pending(&[path], Some(cwd), &[]).unwrap();
+    assert!(result.contains("look at this"), "prose should be present");
+    assert!(
+        result.contains("\u{2702} edit"),
+        "redaction marker should be present: got {result:?}"
     );
 }
