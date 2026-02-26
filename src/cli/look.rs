@@ -3,6 +3,7 @@
 use camino::Utf8PathBuf;
 
 use super::Format;
+use crate::state::FileEntry;
 
 /// Arguments for the `look` subcommand.
 #[derive(clap::Args)]
@@ -67,6 +68,7 @@ impl LookArgs {
             } else {
                 crate::view::parse_compact(&self.args.join(" "))?
             };
+            let entries = filter_to_scope(entries);
             let extent = if self.full {
                 crate::view::Extent::Full
             } else if self.before.is_some() || self.after.is_some() {
@@ -97,4 +99,26 @@ impl LookArgs {
             Ok(())
         }
     }
+}
+
+/// Filter file entries to the project scope (cwd + include_dirs) and
+/// relativize paths to the project root.
+///
+/// Uses the process's current working directory and the attend config to
+/// determine scope, matching the same filtering the narration pipeline applies.
+fn filter_to_scope(entries: Vec<FileEntry>) -> Vec<FileEntry> {
+    let cwd = Utf8PathBuf::try_from(std::env::current_dir().unwrap_or_default())
+        .unwrap_or_else(|_| Utf8PathBuf::from("."));
+    let config = crate::config::Config::load(&cwd);
+
+    entries
+        .into_iter()
+        .filter(|e| crate::util::path_included(e.path.as_str(), &cwd, &config.include_dirs))
+        .map(|mut e| {
+            if let Ok(rel) = camino::Utf8Path::new(&e.path).strip_prefix(&cwd) {
+                e.path = rel.to_string().into();
+            }
+            e
+        })
+        .collect()
 }

@@ -8,6 +8,7 @@
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::narrate::merge::{Event, RedactedKind};
+use crate::util::path_included;
 
 /// Filter events to only include files under `cwd` or any `include_dirs`.
 ///
@@ -169,15 +170,6 @@ fn collapse_redacted(events: &mut Vec<Event>) {
     }
 
     *events = result;
-}
-
-/// Check if a path (as string) is under `cwd` or any of the `include_dirs`.
-fn path_included(path: &str, cwd: &Utf8Path, include_dirs: &[Utf8PathBuf]) -> bool {
-    let p = Utf8Path::new(path);
-    if p.starts_with(cwd) {
-        return true;
-    }
-    include_dirs.iter().any(|dir| p.starts_with(dir))
 }
 
 /// Rewrite absolute paths to be relative to `cwd`.

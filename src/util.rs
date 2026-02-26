@@ -3,6 +3,7 @@
 use std::path::Path;
 use std::{fs, io};
 
+use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 use serde::Serialize;
 
@@ -64,6 +65,15 @@ pub fn utc_now() -> String {
 /// Used for staging filenames where sub-second ordering matters.
 pub fn utc_now_nanos() -> String {
     Utc::now().format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string()
+}
+
+/// Check if a path is under `cwd` or any of the `include_dirs`.
+pub(crate) fn path_included(path: &str, cwd: &Utf8Path, include_dirs: &[Utf8PathBuf]) -> bool {
+    let p = Utf8Path::new(path);
+    if p.starts_with(cwd) {
+        return true;
+    }
+    include_dirs.iter().any(|dir| p.starts_with(dir))
 }
 
 /// Wrapper that adds a `timestamp` field to any serializable payload.
