@@ -21,6 +21,7 @@ pub(super) fn filter_events(events: &mut Vec<Event>, cwd: &Utf8Path, include_dir
             Event::Words { .. }
             | Event::ExternalSelection { .. }
             | Event::BrowserSelection { .. }
+            | Event::ClipboardSelection { .. }
             | Event::Redacted { .. } => filtered.push(event),
             Event::EditorSnapshot {
                 timestamp,
@@ -194,10 +195,11 @@ pub(super) fn relativize_events(events: &mut [Event], cwd: &Utf8Path) {
             Event::ShellCommand { cwd: cmd_cwd, .. } => {
                 *cmd_cwd = relativize_str(cmd_cwd, cwd);
             }
-            // External/browser selections and redacted markers have no paths to relativize.
+            // External/browser/clipboard selections and redacted markers have no paths to relativize.
             Event::Words { .. }
             | Event::ExternalSelection { .. }
             | Event::BrowserSelection { .. }
+            | Event::ClipboardSelection { .. }
             | Event::Redacted { .. } => {}
         }
     }

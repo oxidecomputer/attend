@@ -133,6 +133,7 @@ fn arb_browser_selection() -> impl Strategy<Value = Event> {
             last_seen: ts(t),
             url,
             title,
+            plain_text: text.clone(),
             text,
         })
 }
@@ -245,6 +246,7 @@ fn arb_cross_run_browser() -> impl Strategy<Value = Vec<Event>> {
                     last_seen: ts(t),
                     url: url.clone(),
                     title: "Page".to_string(),
+                    plain_text: prefix.clone(),
                     text: prefix,
                 },
                 Event::Words {
@@ -256,6 +258,7 @@ fn arb_cross_run_browser() -> impl Strategy<Value = Vec<Event>> {
                     last_seen: ts(t_wide),
                     url,
                     title: "Page".to_string(),
+                    plain_text: wide.clone(),
                     text: wide,
                 },
             ]

@@ -9,6 +9,7 @@ mod audio;
 mod capture;
 mod chime;
 mod clean;
+pub(crate) mod clipboard_capture;
 mod diff_capture;
 mod editor_capture;
 mod ext_capture;
@@ -119,6 +120,14 @@ pub(crate) fn browser_staging_dir(session_id: Option<&SessionId>) -> Utf8PathBuf
 /// includes them in the narration output.
 pub(crate) fn shell_staging_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
     cache_dir().join("shell-staging").join(dir_key(session_id))
+}
+
+/// Directory where clipboard images are staged as PNG files.
+///
+/// Not session-scoped (unlike browser/shell staging) because the clipboard
+/// polling thread runs inside the daemon and writes directly.
+pub(crate) fn clipboard_staging_dir() -> Utf8PathBuf {
+    cache_dir().join("clipboard-staging")
 }
 
 /// Directory where yanked narration files are written.

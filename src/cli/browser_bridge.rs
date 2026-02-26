@@ -79,6 +79,7 @@ pub(super) fn run() -> anyhow::Result<()> {
         last_seen: now,
         url: msg.url,
         title: msg.title,
+        plain_text: String::new(), // TODO (Phase 19): populate from extension's plain_text field
         text,
     }];
 

@@ -32,6 +32,9 @@ pub struct Config {
     /// Defaults to `["Zed"]` since Zed's GPUI does not expose AXSelectedText.
     #[serde(default = "default_ext_ignore_apps")]
     pub ext_ignore_apps: Vec<String>,
+    /// Whether to capture clipboard changes (text and images). Defaults to true.
+    #[serde(default)]
+    pub clipboard_capture: Option<bool>,
 }
 
 fn default_ext_ignore_apps() -> Vec<String> {
@@ -47,6 +50,7 @@ impl Default for Config {
             silence_duration: None,
             archive_retention: None,
             ext_ignore_apps: default_ext_ignore_apps(),
+            clipboard_capture: None,
         }
     }
 }
@@ -119,6 +123,9 @@ impl Config {
         }
         if self.archive_retention.is_none() {
             self.archive_retention = other.archive_retention;
+        }
+        if self.clipboard_capture.is_none() {
+            self.clipboard_capture = other.clipboard_capture;
         }
     }
 }

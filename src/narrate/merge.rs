@@ -2,7 +2,7 @@
 //!
 //! # Event sources
 //!
-//! Six event types arrive from five capture sources during a narration
+//! Seven event types arrive from six capture sources during a narration
 //! session:
 //!
 //! - **Words**: transcribed speech segments from the Whisper model. These
@@ -26,6 +26,10 @@
 //!
 //! - **ShellCommand**: pushed from shell hook integration (preexec/postexec).
 //!   Carries command text, cwd, exit status, and duration.
+//!
+//! - **ClipboardSelection**: captured when clipboard content changes during
+//!   a session. Text content is stored inline; images are PNG-encoded and
+//!   staged to a file. Point-in-time only (no `last_seen`).
 //!
 //! All events carry a UTC wall-clock `timestamp` and selection-bearing
 //! types also carry a `last_seen` timestamp (the last time the selection
@@ -102,6 +106,16 @@ const CROSS_TYPE_DEDUP_WINDOW_MS: i64 = 500;
 /// 2 seconds is generous without merging unrelated selections.
 const SUBSUME_WINDOW_MS: i64 = 2000;
 
+/// Content captured from the system clipboard.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ClipboardContent {
+    /// Plain text copied to the clipboard.
+    Text { text: String },
+    /// Image copied to the clipboard, staged as a PNG file.
+    Image { path: String },
+}
+
 /// The kind of event that was redacted (filtered due to project scope).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RedactedKind {
@@ -174,6 +188,11 @@ pub enum Event {
         title: String,
         /// The selected content, converted from HTML to markdown by the bridge.
         text: String,
+        /// Plain-text rendering of the selection (`selection.toString()` from
+        /// the browser). Used for dedup against clipboard and external
+        /// selections, since the `text` field contains markdown.
+        #[serde(default)]
+        plain_text: String,
     },
     /// A command executed in the user's shell.
     /// Delivered via the `attend shell-hook` CLI subcommand.
@@ -190,6 +209,17 @@ pub enum Event {
         exit_status: Option<i32>,
         /// Wall-clock duration in seconds (None for preexec-only).
         duration_secs: Option<f64>,
+    },
+    /// Content captured from the system clipboard.
+    ///
+    /// Emitted once per clipboard change during a recording session. Text is
+    /// stored inline; images are PNG-encoded and staged to a file. No `last_seen`
+    /// field — clipboard captures are point-in-time only.
+    ClipboardSelection {
+        /// UTC wall-clock time of capture.
+        timestamp: DateTime<Utc>,
+        /// The clipboard content (text or image).
+        content: ClipboardContent,
     },
     /// A placeholder for events filtered out by project-scope checks.
     ///
@@ -216,6 +246,7 @@ impl Event {
             | Event::ExternalSelection { timestamp, .. }
             | Event::BrowserSelection { timestamp, .. }
             | Event::ShellCommand { timestamp, .. }
+            | Event::ClipboardSelection { timestamp, .. }
             | Event::Redacted { timestamp, .. } => *timestamp,
         }
     }
@@ -625,6 +656,9 @@ fn collapse_ext_selections(selections: Vec<Event>) -> Vec<Event> {
     // same text within 500ms, drop the ExternalSelection (browser is richer).
     dedup_browser_vs_external(&mut result);
 
+    // Clipboard dedup: drop text clipboard events that match richer sources.
+    dedup_clipboard_selections(&mut result);
+
     result
 }
 
@@ -665,6 +699,20 @@ fn dedup_browser_vs_external(events: &mut Vec<Event>) {
             bs_text == trimmed && (*timestamp - *bs_ts).abs().le(&dedup_window)
         })
     });
+}
+
+/// Normalize text for comparison: collapse all whitespace to single spaces, trim.
+pub(crate) fn normalize_text(text: &str) -> String {
+    // Stub: to be implemented in Phase C.
+    text.to_string()
+}
+
+/// Drop text `ClipboardSelection` events whose normalized text matches any
+/// `ExternalSelection` or `BrowserSelection` (via `plain_text`) in the list.
+///
+/// Image clipboard events are never deduped by this pass.
+fn dedup_clipboard_selections(_events: &mut Vec<Event>) {
+    // Stub: to be implemented in Phase C.
 }
 
 // ── Run orchestrator ─────────────────────────────────────────────────────────
@@ -718,7 +766,9 @@ fn process_run(mut run: Vec<Event>) -> Vec<Event> {
             } => {
                 diffs.push((timestamp, path, old, new));
             }
-            Event::ExternalSelection { .. } | Event::BrowserSelection { .. } => {
+            Event::ExternalSelection { .. }
+            | Event::BrowserSelection { .. }
+            | Event::ClipboardSelection { .. } => {
                 ext_selections.push(event);
             }
             Event::ShellCommand { .. } => {

@@ -717,6 +717,7 @@ fn browser_sel(t: f64, url: &str, text: &str) -> Event {
         url: url.to_string(),
         title: "Page Title".to_string(),
         text: text.to_string(),
+        plain_text: text.to_string(),
     }
 }
 
@@ -803,6 +804,7 @@ fn browser_selection_empty_title() {
         url: "https://example.com".to_string(),
         title: String::new(),
         text: "hello".to_string(),
+        plain_text: "hello".to_string(),
     }];
     let md = format_markdown(&mut events, SnipConfig::default());
     assert!(
@@ -1427,6 +1429,7 @@ fn browser_selection_cross_run_held_then_subsumed() {
             url: "https://docs.rs/tokio".to_string(),
             title: "Page".to_string(),
             text: "spawn".to_string(),
+            plain_text: "spawn".to_string(),
         },
         Event::Words {
             timestamp: ts(5.0),
@@ -1438,6 +1441,7 @@ fn browser_selection_cross_run_held_then_subsumed() {
             url: "https://docs.rs/tokio".to_string(),
             title: "Page".to_string(),
             text: "spawn a task".to_string(),
+            plain_text: "spawn a task".to_string(),
         },
     ];
     compress_and_merge(&mut events);

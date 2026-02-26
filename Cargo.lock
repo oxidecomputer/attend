@@ -218,6 +218,7 @@ dependencies = [
  "htmd",
  "humantime",
  "hyperpolyglot",
+ "image",
  "insta",
  "jsonc-parser",
  "lockfile",

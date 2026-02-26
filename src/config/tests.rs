@@ -118,6 +118,7 @@ fn merge_semantics() {
         silence_duration: None,
         archive_retention: None,
         ext_ignore_apps: vec!["Zed".into()],
+        clipboard_capture: None,
     };
     let other = Config {
         include_dirs: vec![Utf8PathBuf::from("/b")],
@@ -126,6 +127,7 @@ fn merge_semantics() {
         silence_duration: Some(3.0),
         archive_retention: Some("30d".to_string()),
         ext_ignore_apps: vec!["Slack".into()],
+        clipboard_capture: Some(false),
     };
     base.merge(other);
     assert_eq!(

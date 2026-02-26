@@ -314,6 +314,15 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                 out.push('\n');
                 out.push_str("```\n");
             }
+            Event::ClipboardSelection { .. } => {
+                // Stub: to be implemented in Phase C.
+                // Text renders as plain blockquote (no attribution).
+                // Image renders as ![clipboard](path).
+                if in_prose {
+                    out.push('\n');
+                    in_prose = false;
+                }
+            }
             Event::Redacted { kind, keys, .. } => {
                 if in_prose {
                     out.push('\n');
