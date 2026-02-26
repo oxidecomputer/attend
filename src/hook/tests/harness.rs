@@ -149,6 +149,24 @@ impl TestHarness {
         let _ = std::fs::remove_file(&displaced);
     }
 
+    /// Simulate a CLI `attend listen --stop`: read the current session,
+    /// mark it as displaced, and remove the listening file. This is the
+    /// path exercised when a human runs `attend listen --stop` from a
+    /// terminal (outside the hook system).
+    pub(super) fn deactivate(&self) {
+        // Read the current listening session (if any) and mark it displaced.
+        let listening = self.cache().join("listening");
+        if let Ok(content) = std::fs::read_to_string(&listening) {
+            let session_id = content.trim().to_string();
+            if !session_id.is_empty() {
+                let marker = self.cache().join("sessions/displaced").join(&session_id);
+                std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+                std::fs::write(&marker, "").unwrap();
+            }
+        }
+        let _ = std::fs::remove_file(&listening);
+    }
+
     /// Write a pending narration file for the given session.
     ///
     /// Creates a minimal Words event so the delivery path has content

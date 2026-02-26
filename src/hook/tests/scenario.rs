@@ -422,14 +422,14 @@ fn listen_auto_claims_fresh_session() {
     TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::StartReceiver));
 }
 
-/// **Scenario**: `attend listen` auto-claims narration after
-/// deactivation via `listen --stop`.
+/// **Scenario**: `attend listen` is blocked after deactivation via
+/// `listen --stop`. The session must re-activate with `/attend` first.
 ///
 /// **Flow**: Session activates -> deactivates via `listen --stop` ->
-/// fires `attend listen` again -> auto-claims (session was previously
-/// activated, now inactive).
+/// fires `attend listen` again -> blocked (displaced marker prevents
+/// auto-claim) -> re-activates via `/attend` -> `attend listen` works.
 #[test]
-fn listen_auto_claims_after_deactivation() {
+fn listen_blocked_after_deactivation() {
     let h = TestHarness::new();
     let s: SessionId = "session-1".into();
 
@@ -438,12 +438,44 @@ fn listen_auto_claims_after_deactivation() {
     let out = h.fire_hook_ext(&s, HookType::PreToolUse, ListenVariant::ListenStop, false);
     TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::Deactivated));
 
-    // Session is now inactive but was previously activated.
-    // `attend listen` auto-claims.
+    // Session is now inactive with a displaced marker.
+    // `attend listen` is blocked — auto-claim prevented.
     let out = h.fire_hook(&s, HookType::PreToolUse, true, false);
-    TestHarness::assert_activation(&out);
+    TestHarness::assert_decision(&out, &HookDecision::block(GuidanceReason::Deactivated));
 
-    // Subsequent hooks see the session as active again.
-    let out = h.fire_hook(&s, HookType::PreToolUse, false, false);
-    TestHarness::assert_decision(&out, &HookDecision::approve(GuidanceReason::StartReceiver));
+    // Re-activate via /attend clears the displaced marker.
+    h.activate(&s);
+
+    // Now `attend listen` works normally.
+    let out = h.fire_hook(&s, HookType::PreToolUse, true, false);
+    TestHarness::assert_decision(&out, &HookDecision::Silent);
+}
+
+/// **Scenario**: CLI `attend listen --stop` from another terminal
+/// prevents the agent from auto-reclaiming narration.
+///
+/// **Flow**: Session activates -> external CLI stop (mark displaced +
+/// remove listening) -> agent's `attend listen` is blocked -> `/attend`
+/// re-activates -> `attend listen` works again.
+#[test]
+fn cli_stop_prevents_auto_claim() {
+    let h = TestHarness::new();
+    let s: SessionId = "session-1".into();
+
+    h.activate(&s);
+
+    // Simulate a human running `attend listen --stop` from another terminal.
+    h.deactivate();
+
+    // Agent tries to restart listener after its background task exits.
+    // Auto-claim is blocked because the displaced marker is set.
+    let out = h.fire_hook(&s, HookType::PreToolUse, true, false);
+    TestHarness::assert_decision(&out, &HookDecision::block(GuidanceReason::Deactivated));
+
+    // Re-activate via /attend clears the displaced marker.
+    h.activate(&s);
+
+    // Now `attend listen` works normally.
+    let out = h.fire_hook(&s, HookType::PreToolUse, true, false);
+    TestHarness::assert_decision(&out, &HookDecision::Silent);
 }

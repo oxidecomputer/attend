@@ -33,7 +33,7 @@ pub(super) fn session_displaced(session_id: &SessionId) -> bool {
 }
 
 /// Record that this session has been displaced.
-pub(super) fn mark_session_displaced(session_id: &SessionId) {
+pub(crate) fn mark_session_displaced(session_id: &SessionId) {
     if let Some(path) = displaced_marker_path(session_id) {
         let _ = fs::create_dir_all(path.parent().unwrap());
         let _ = fs::write(&path, "");

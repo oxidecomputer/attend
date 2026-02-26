@@ -264,7 +264,7 @@ impl Command {
                 stop,
             } => {
                 if stop {
-                    crate::narrate::receive::stop()
+                    crate::narrate::receive::stop(session)
                 } else {
                     // check → one-shot (old `receive` without --wait)
                     // default → wait (old `receive --wait`)

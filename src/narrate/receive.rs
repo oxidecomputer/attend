@@ -301,10 +301,30 @@ fn try_lock(lock_path: &Utf8Path) -> Option<lockfile::Lockfile> {
 
 /// Deactivate narration: remove the listening file and exit.
 ///
-/// When run directly by a human (no hook), this is an unconditional force
-/// stop. The running `attend listen` background task detects the missing
-/// file on its next poll iteration and exits naturally.
-pub fn stop() -> anyhow::Result<()> {
+/// When run directly by a human (no hook), this stops the active session.
+/// The running `attend listen` background task detects the missing file
+/// on its next poll iteration and exits naturally.
+///
+/// If `session_filter` is `Some`, only deactivate when the active session
+/// matches the filter. This is used by `attend listen --stop --session`.
+pub fn stop(session_filter: Option<String>) -> anyhow::Result<()> {
+    let current = crate::state::listening_session();
+
+    // If a session filter was provided, only stop if it matches.
+    if let Some(ref filter) = session_filter {
+        let filter_id: crate::state::SessionId = filter.clone().into();
+        if current.as_ref() != Some(&filter_id) {
+            println!("Session does not match active listener.");
+            return Ok(());
+        }
+    }
+
+    // Mark the session as displaced before removing the listening file,
+    // so the agent's auto-claim path knows not to re-activate.
+    if let Some(ref session_id) = current {
+        crate::hook::mark_session_displaced(session_id);
+    }
+
     if let Some(path) = crate::state::listening_path() {
         match fs::remove_file(&path) {
             Ok(()) => println!("Narration deactivated."),

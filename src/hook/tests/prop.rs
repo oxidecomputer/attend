@@ -51,6 +51,9 @@ enum Op {
     StartReceiver,
     /// Kill the fake receiver (remove lock file).
     KillReceiver,
+    /// Simulate CLI `attend listen --stop` from an external terminal:
+    /// mark the active session as displaced and remove the listening file.
+    Deactivate,
     /// Fire a narration hook and check the outcome against the oracle.
     FireHook {
         session: usize,
@@ -71,6 +74,7 @@ fn op_strategy() -> impl Strategy<Value = Op> {
         2 => (0..NUM_SESSIONS).prop_map(Op::WriteUndeliverablePending),
         1 => Just(Op::StartReceiver),
         1 => Just(Op::KillReceiver),
+        1 => Just(Op::Deactivate),
         8 => (0..NUM_SESSIONS, 0..3usize, 0..3usize).prop_map(|(s, ht_idx, listen_idx)| {
             let hook_type = ALL_HOOK_TYPES[ht_idx];
             // listen variants only meaningful for ToolUse hooks, not Stop.
@@ -157,6 +161,13 @@ impl OracleModel {
         self.receiver_alive = true;
     }
 
+    fn deactivate(&mut self) {
+        if let Some(s) = self.listening {
+            self.displaced[s] = true;
+        }
+        self.listening = None;
+    }
+
     fn kill_receiver(&mut self) {
         self.receiver_alive = false;
     }
@@ -212,7 +223,8 @@ impl OracleModel {
             // PreToolUse
             match relation {
                 SessionRelation::Active => {
-                    // Deactivate: remove listening file.
+                    // Deactivate: mark displaced and remove listening file.
+                    self.displaced[session] = true;
                     self.listening = None;
                     self.assert_decision(
                         outcome,
@@ -246,12 +258,23 @@ impl OracleModel {
 
         // -- Inactive (no listener exists) --
         // Both handle_listen_hook and handle_general_hook/general_decision
-        // return Silent for Inactive, except attend listen which auto-claims.
+        // return Silent for Inactive, except attend listen which auto-claims
+        // (unless the session was displaced).
         if relation == SessionRelation::Inactive {
             if listen_kind == ListenKind::Listen && hook_type == HookType::PreToolUse {
-                // Auto-claim: activate the session.
-                self.activate(session);
-                self.assert_activation(outcome, "inactive listen auto-claim");
+                if self.displaced[session] {
+                    // Displaced sessions cannot auto-claim. The user must
+                    // re-activate with /attend.
+                    self.assert_decision(
+                        outcome,
+                        &HookDecision::block(GuidanceReason::Deactivated),
+                        "inactive listen blocked (displaced)",
+                    );
+                } else {
+                    // Auto-claim: activate the session.
+                    self.activate(session);
+                    self.assert_activation(outcome, "inactive listen auto-claim");
+                }
             } else {
                 self.assert_decision(outcome, &HookDecision::Silent, "inactive");
             }
@@ -470,6 +493,10 @@ proptest! {
                         receiver_guard = None;
                         model.kill_receiver();
                     }
+                }
+                Op::Deactivate => {
+                    h.deactivate();
+                    model.deactivate();
                 }
                 Op::FireHook {
                     session,

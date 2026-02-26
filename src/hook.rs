@@ -16,7 +16,7 @@ use crate::state::{self, EditorState};
 pub use types::{GuidanceEffect, GuidanceReason, HookDecision, HookInput, HookKind, HookType};
 
 // Crate-internal re-export.
-pub(crate) use session_state::clear_session_displaced;
+pub(crate) use session_state::{clear_session_displaced, mark_session_displaced};
 
 // Internal imports from submodules.
 #[cfg(test)]
@@ -24,8 +24,8 @@ use command::parse_listen_command;
 use command::{ListenCommand, detect_listen_command, is_attend_prompt, is_unattend_prompt};
 use decision::{SessionRelation, general_decision, receiver_alive};
 use session_state::{
-    clean_session_markers, mark_session_activated, mark_session_displaced, session_cache_path,
-    session_displaced, session_was_activated,
+    clean_session_markers, mark_session_activated, session_cache_path, session_displaced,
+    session_was_activated,
 };
 use upgrade::auto_upgrade_hooks;
 
@@ -116,10 +116,11 @@ pub fn user_prompt(agent: &dyn Agent, cli_cwd: Option<Utf8PathBuf>) -> anyhow::R
             .ok_or_else(|| anyhow::anyhow!("no session_id in hook input"))?;
 
         let listening = state::listening_session();
-        if listening.as_ref() == Some(&session_id)
-            && let Some(path) = state::listening_path()
-        {
-            let _ = fs::remove_file(path);
+        if listening.as_ref() == Some(&session_id) {
+            mark_session_displaced(&session_id);
+            if let Some(path) = state::listening_path() {
+                let _ = fs::remove_file(path);
+            }
         }
 
         return agent.attend_deactivate(&session_id);
@@ -273,9 +274,19 @@ fn handle_listen_hook(
             // Auto-claim: if the agent runs `attend listen` without an
             // active session, activate narration for this session so it
             // doesn't need the user to type /attend first.
+            //
+            // Guard: if the session was explicitly deactivated (or
+            // displaced by another session), don't auto-reclaim. The
+            // user must type /attend to re-activate.
             if matches!(hook_type, HookType::PreToolUse)
                 && let Some(ref sid) = input.session_id
             {
+                if session_displaced(sid) {
+                    return agent.attend_result(
+                        &HookDecision::block(GuidanceReason::Deactivated),
+                        hook_type,
+                    );
+                }
                 if let Err(e) = activate_session(sid) {
                     tracing::warn!("auto-claim failed: {e}");
                 }
@@ -306,6 +317,9 @@ fn handle_unlisten_hook(
     match relation {
         SessionRelation::Active => {
             // This session owns narration — deactivate.
+            if let Some(session_id) = state::listening_session() {
+                mark_session_displaced(&session_id);
+            }
             if let Some(path) = state::listening_path() {
                 let _ = fs::remove_file(path);
             }
