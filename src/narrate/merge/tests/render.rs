@@ -1,6 +1,6 @@
 use super::super::*;
 
-use crate::narrate::render::{SnipConfig, format_markdown, render_markdown};
+use crate::narrate::render::{RenderMode, SnipConfig, format_markdown, render_markdown};
 
 /// Convert seconds to a UTC timestamp (for test brevity).
 fn ts(secs: f64) -> chrono::DateTime<chrono::Utc> {
@@ -665,7 +665,7 @@ fn clipboard_text_renders_as_plain_blockquote() {
             text: "some copied text".to_string(),
         },
     }];
-    let md = render_markdown(&events, SnipConfig::default());
+    let md = render_markdown(&events, SnipConfig::default(), RenderMode::Agent);
     assert!(
         md.contains("> some copied text"),
         "should render as blockquote: {md:?}"
@@ -683,7 +683,7 @@ fn clipboard_text_multiline() {
             text: "line one\nline two\nline three".to_string(),
         },
     }];
-    let md = render_markdown(&events, SnipConfig::default());
+    let md = render_markdown(&events, SnipConfig::default(), RenderMode::Agent);
     assert!(md.contains("> line one\n"), "first line: {md:?}");
     assert!(md.contains("> line two\n"), "second line: {md:?}");
     assert!(md.contains("> line three\n"), "third line: {md:?}");
@@ -698,7 +698,7 @@ fn clipboard_image_renders_as_image_tag() {
             path: "/tmp/clipboard-staging/12345.png".to_string(),
         },
     }];
-    let md = render_markdown(&events, SnipConfig::default());
+    let md = render_markdown(&events, SnipConfig::default(), RenderMode::Agent);
     assert!(
         md.contains("![clipboard](/tmp/clipboard-staging/12345.png)"),
         "should render as image tag: {md:?}"
@@ -732,7 +732,7 @@ fn clipboard_no_attribution_between_attributed() {
             plain_text: "browser text".to_string(),
         },
     ];
-    let md = render_markdown(&events, SnipConfig::default());
+    let md = render_markdown(&events, SnipConfig::default(), RenderMode::Agent);
     // External has attribution.
     assert!(md.contains("iTerm2:"), "external has attribution: {md:?}");
     // Browser has attribution.

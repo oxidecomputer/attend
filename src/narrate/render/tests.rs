@@ -186,7 +186,7 @@ fn render_redacted_singular() {
         kind: RedactedKind::EditorSnapshot,
         keys: vec!["a.rs".to_string()],
     }];
-    let md = render_markdown(&events, SnipConfig::default());
+    let md = render_markdown(&events, SnipConfig::default(), RenderMode::Agent);
     assert_eq!(md.trim(), "\u{2702} file");
 }
 
@@ -200,7 +200,7 @@ fn render_redacted_plural() {
         kind: RedactedKind::FileDiff,
         keys: vec!["a.rs".to_string(), "b.rs".to_string(), "c.rs".to_string()],
     }];
-    let md = render_markdown(&events, SnipConfig::default());
+    let md = render_markdown(&events, SnipConfig::default(), RenderMode::Agent);
     assert_eq!(md.trim(), "\u{2702} 3 edits");
 }
 
@@ -214,7 +214,7 @@ fn render_redacted_shell_command() {
         kind: RedactedKind::ShellCommand,
         keys: vec!["ls".to_string(), "pwd".to_string()],
     }];
-    let md = render_markdown(&events, SnipConfig::default());
+    let md = render_markdown(&events, SnipConfig::default(), RenderMode::Agent);
     assert_eq!(md.trim(), "\u{2702} 2 commands");
 }
 
@@ -235,6 +235,67 @@ fn render_redacted_comma_separated() {
             keys: vec!["ls".to_string()],
         },
     ];
-    let md = render_markdown(&events, SnipConfig::default());
+    let md = render_markdown(&events, SnipConfig::default(), RenderMode::Agent);
     assert_eq!(md.trim(), "\u{2702} 2 files, command");
+}
+
+// -- clipboard image rendering --
+
+/// Agent mode renders clipboard images as file path references.
+#[test]
+fn clipboard_image_agent_renders_path() {
+    use super::super::merge::ClipboardContent;
+
+    let events = vec![Event::ClipboardSelection {
+        timestamp: chrono::DateTime::UNIX_EPOCH,
+        content: ClipboardContent::Image {
+            path: "/tmp/test.png".to_string(),
+        },
+    }];
+    let md = render_markdown(&events, SnipConfig::default(), RenderMode::Agent);
+    assert_eq!(md.trim(), "![clipboard](/tmp/test.png)");
+}
+
+/// Yank mode renders clipboard images as inline base64 data URIs.
+#[test]
+fn clipboard_image_yank_renders_base64() {
+    use super::super::merge::ClipboardContent;
+
+    // Create a minimal valid 1x1 white PNG for the test.
+    let dir = tempfile::tempdir().unwrap();
+    let png_path = dir.path().join("test.png");
+    let img: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> =
+        image::ImageBuffer::from_pixel(1, 1, image::Rgba([255, 255, 255, 255]));
+    img.save(&png_path).unwrap();
+
+    let events = vec![Event::ClipboardSelection {
+        timestamp: chrono::DateTime::UNIX_EPOCH,
+        content: ClipboardContent::Image {
+            path: png_path.to_str().unwrap().to_string(),
+        },
+    }];
+    let md = render_markdown(&events, SnipConfig::default(), RenderMode::Yank);
+    assert!(
+        md.contains("![clipboard](data:image/png;base64,"),
+        "yank mode should embed base64: {md}"
+    );
+    assert!(
+        !md.contains(png_path.to_str().unwrap()),
+        "yank mode should not contain the file path"
+    );
+}
+
+/// Yank mode with a missing file renders a fallback message.
+#[test]
+fn clipboard_image_yank_missing_file_fallback() {
+    use super::super::merge::ClipboardContent;
+
+    let events = vec![Event::ClipboardSelection {
+        timestamp: chrono::DateTime::UNIX_EPOCH,
+        content: ClipboardContent::Image {
+            path: "/nonexistent/clipboard.png".to_string(),
+        },
+    }];
+    let md = render_markdown(&events, SnipConfig::default(), RenderMode::Yank);
+    assert_eq!(md.trim(), "[clipboard image unavailable]");
 }

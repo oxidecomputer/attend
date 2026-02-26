@@ -143,6 +143,7 @@ pub(super) fn spawn(
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     events: Arc<Mutex<Vec<Event>>>,
+    staging_dir: camino::Utf8PathBuf,
 ) -> Option<thread::JoinHandle<()>> {
     let mut clipboard = match arboard::Clipboard::new() {
         Ok(cb) => cb,
@@ -162,8 +163,6 @@ pub(super) fn spawn(
     let mut tracker = ClipboardTracker::new_seeded(seed_text.as_deref(), seed_image.as_ref());
 
     Some(thread::spawn(move || {
-        let staging_dir = super::clipboard_staging_dir();
-
         while !stop.load(Ordering::Relaxed) {
             if paused.load(Ordering::Relaxed) {
                 thread::sleep(Duration::from_millis(PAUSED_POLL_MS));

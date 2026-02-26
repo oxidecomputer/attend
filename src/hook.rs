@@ -246,9 +246,12 @@ fn handle_listen_hook(
             let cwd = resolve_cwd(input);
             let config = crate::config::Config::load(&cwd);
             let files = crate::narrate::receive::collect_pending(session_id);
-            if let Some(content) =
-                crate::narrate::receive::read_pending(&files, Some(&cwd), &config.include_dirs)
-            {
+            if let Some(content) = crate::narrate::receive::read_pending(
+                &files,
+                Some(&cwd),
+                &config.include_dirs,
+                crate::narrate::render::RenderMode::Agent,
+            ) {
                 crate::narrate::receive::archive_pending(&files, session_id);
                 crate::narrate::receive::auto_prune(&config);
                 return agent.deliver_narration(&content);
@@ -357,8 +360,13 @@ fn handle_general_hook(
         let files = crate::narrate::receive::collect_pending(session_id);
         if files.is_empty() {
             false
-        } else if crate::narrate::receive::read_pending(&files, Some(&cwd), &config.include_dirs)
-            .is_some()
+        } else if crate::narrate::receive::read_pending(
+            &files,
+            Some(&cwd),
+            &config.include_dirs,
+            crate::narrate::render::RenderMode::Agent,
+        )
+        .is_some()
         {
             true
         } else {

@@ -42,6 +42,7 @@ pub(crate) fn read_pending(
     files: &[PathBuf],
     cwd: Option<&Utf8Path>,
     include_dirs: &[Utf8PathBuf],
+    mode: render::RenderMode,
 ) -> Option<String> {
     if files.is_empty() {
         return None;
@@ -89,7 +90,7 @@ pub(crate) fn read_pending(
         return None;
     }
 
-    let markdown = render::render_markdown(&all_events, SnipConfig::default());
+    let markdown = render::render_markdown(&all_events, SnipConfig::default(), mode);
     let trimmed = markdown.trim();
     if trimmed.is_empty() {
         return None;

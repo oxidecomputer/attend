@@ -8,6 +8,17 @@ use serde::{Deserialize, Serialize};
 
 use super::merge::{self, Event, RedactedKind};
 
+/// Controls how clipboard images are rendered in markdown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderMode {
+    /// Render clipboard images as `![clipboard](path)` — for agent consumption.
+    /// The agent can `Read` the file directly.
+    Agent,
+    /// Render clipboard images as `![clipboard](data:image/png;base64,...)`
+    /// — self-contained for clipboard paste.
+    Yank,
+}
+
 /// Controls collapsing of large code snippets and diffs.
 ///
 /// When a fenced block exceeds `threshold` lines, only the first `head`
@@ -146,7 +157,7 @@ fn redacted_label(kind: &RedactedKind, keys: &[String]) -> String {
 /// - External selections become attributed blockquotes
 /// - Browser selections become link-attributed blockquotes
 /// - Redacted events become `✂` markers, comma-separated when adjacent
-pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
+pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig, mode: RenderMode) -> String {
     let mut out = String::new();
     let mut in_prose = false;
     let mut i = 0;
@@ -331,9 +342,23 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
                             out.push_str(&format!("> {line}\n"));
                         }
                     }
-                    merge::ClipboardContent::Image { path } => {
-                        out.push_str(&format!("![clipboard]({path})\n"));
-                    }
+                    merge::ClipboardContent::Image { path } => match mode {
+                        RenderMode::Agent => {
+                            out.push_str(&format!("![clipboard]({path})\n"));
+                        }
+                        RenderMode::Yank => {
+                            if let Ok(bytes) = std::fs::read(path) {
+                                use base64::Engine as _;
+                                let encoded =
+                                    base64::engine::general_purpose::STANDARD.encode(&bytes);
+                                out.push_str(&format!(
+                                    "![clipboard](data:image/png;base64,{encoded})\n"
+                                ));
+                            } else {
+                                out.push_str("[clipboard image unavailable]\n");
+                            }
+                        }
+                    },
                 }
             }
             Event::Redacted { kind, keys, .. } => {
@@ -378,7 +403,7 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig) -> String {
 #[cfg(test)]
 pub fn format_markdown(events: &mut Vec<Event>, snip_cfg: SnipConfig) -> String {
     merge::compress_and_merge(events);
-    render_markdown(events, snip_cfg)
+    render_markdown(events, snip_cfg, RenderMode::Agent)
 }
 
 #[cfg(test)]

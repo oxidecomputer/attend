@@ -122,12 +122,20 @@ pub(crate) fn shell_staging_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
     cache_dir().join("shell-staging").join(dir_key(session_id))
 }
 
+/// Root directory for all clipboard staging (across sessions).
+///
+/// Used by cleanup (walk all session subdirs) and by permission patterns
+/// (wildcard matching across sessions).
+pub(crate) fn clipboard_staging_root() -> Utf8PathBuf {
+    cache_dir().join("clipboard-staging")
+}
+
 /// Directory where clipboard images are staged as PNG files.
 ///
-/// Not session-scoped (unlike browser/shell staging) because the clipboard
-/// polling thread runs inside the daemon and writes directly.
-pub(crate) fn clipboard_staging_dir() -> Utf8PathBuf {
-    cache_dir().join("clipboard-staging")
+/// Session-scoped like browser and shell staging. When no session is
+/// active, falls back to `_local/`.
+pub(crate) fn clipboard_staging_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
+    clipboard_staging_root().join(dir_key(session_id))
 }
 
 /// Directory where yanked narration files are written.

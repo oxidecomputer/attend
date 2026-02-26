@@ -494,8 +494,9 @@ fn yanked_events_round_trip_through_read_pending() {
 
     // Simulate yank CLI: collect files and read.
     let files: Vec<std::path::PathBuf> = vec![json_path.into_std_path_buf()];
-    let content = super::receive::read_pending(&files, Some(cwd), &[])
-        .expect("should produce content from yanked events");
+    let content =
+        super::receive::read_pending(&files, Some(cwd), &[], super::render::RenderMode::Agent)
+            .expect("should produce content from yanked events");
 
     assert!(content.contains("hello from yank"));
     assert!(content.contains("more words"));
@@ -638,7 +639,9 @@ fn yank_with_session_filters_by_cwd() {
     let files: Vec<std::path::PathBuf> = vec![yanked.join("test.json").into_std_path_buf()];
 
     // With cwd filtering (session present): only project files survive.
-    let content = super::receive::read_pending(&files, Some(cwd), &[]).unwrap();
+    let content =
+        super::receive::read_pending(&files, Some(cwd), &[], super::render::RenderMode::Agent)
+            .unwrap();
     assert!(
         content.contains("src/main.rs"),
         "project file should be included and relativized"
@@ -702,7 +705,8 @@ fn yank_without_session_includes_all_content() {
     let files: Vec<std::path::PathBuf> = vec![yanked.join("test.json").into_std_path_buf()];
 
     // Without cwd filtering (no session): all content passes through.
-    let content = super::receive::read_pending(&files, None, &[]).unwrap();
+    let content =
+        super::receive::read_pending(&files, None, &[], super::render::RenderMode::Yank).unwrap();
     assert!(
         content.contains("/project-a/src/main.rs"),
         "project-a file should be included with absolute path"
@@ -767,7 +771,9 @@ fn yank_collects_from_session_and_local() {
     assert_eq!(files.len(), 2, "should collect from both dirs");
 
     let cwd = camino::Utf8Path::new("/project");
-    let content = super::receive::read_pending(&files, Some(cwd), &[]).unwrap();
+    let content =
+        super::receive::read_pending(&files, Some(cwd), &[], super::render::RenderMode::Agent)
+            .unwrap();
     assert!(content.contains("session yank"));
     assert!(content.contains("local yank"));
 }

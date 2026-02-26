@@ -100,9 +100,11 @@ Image selections appear as a markdown image tag with an absolute path:
 
 ![clipboard](/Users/oxide/.cache/attend/clipboard-staging/12345.png)
 
-You can read clipboard images directly with the Read tool — the path is
-pre-authorized. Clipboard text that duplicates a richer source (external or
-browser selection) is automatically dropped during merge.
+**You must `Read` every clipboard image path when you encounter one.** These are
+ephemeral — the user copied this image while narrating, and it will not be
+available indefinitely. The path is pre-authorized. Clipboard text that
+duplicates a richer source (external or browser selection) is automatically
+dropped during merge.
 
 **Redaction markers** — a ✂ prefix indicating context was captured but filtered
 because it originated outside the project directory. Multiple kinds on one line
@@ -156,7 +158,7 @@ deny the call with a reason explaining why. If nothing is pending, the session
 is still active, and there's no currently active listener, it will simply
 restart an idle listener.
 
-There are exactly two situations where you should run `attend listen`:
+There are exactly three situations where you should run `attend listen`:
 
 1. A `<task-notification>` arrives for an `attend listen` task — but **only if
    its task ID matches your current listener ID**. If the ID does not match,
@@ -167,6 +169,10 @@ There are exactly two situations where you should run `attend listen`:
    narration arrived while you were doing other work. All non-`attend listen`
    tool calls will be blocked until you restart the listener, so run `attend
    listen` immediately to receive it.
+3. A `<task-notification>` shows your current listener was **killed** (status
+   `killed`). This happens when a session is resumed after `/exit` or
+   `/compact` — the old background task is cleaned up. Restart the listener
+   to resume narration in the continued session.
 
 **Do not speculatively run multiple `attend listen` calls.** Each trigger
 warrants exactly one call. Never run them in parallel.

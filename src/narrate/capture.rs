@@ -84,6 +84,7 @@ pub(crate) fn start(
     cwd: Option<Utf8PathBuf>,
     ext_ignore_apps: Vec<String>,
     clipboard_capture: bool,
+    clipboard_staging_dir: camino::Utf8PathBuf,
 ) -> anyhow::Result<CaptureHandle> {
     let stop_flag = Arc::new(AtomicBool::new(false));
     let paused_flag = Arc::new(AtomicBool::new(false));
@@ -123,6 +124,7 @@ pub(crate) fn start(
             Arc::clone(&stop_flag),
             Arc::clone(&paused_flag),
             Arc::clone(&clipboard_events),
+            clipboard_staging_dir,
         )
     } else {
         None

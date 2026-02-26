@@ -149,13 +149,32 @@ pub fn install(bin_cmd: &str, project: Option<Utf8PathBuf>) -> anyhow::Result<()
 
         let look_pattern = format!("Bash({bin_cmd} look:*)");
         let listen_pattern = format!("Bash({bin_cmd} listen:*)");
-        let clipboard_read_pattern = format!("Read({}/*)", crate::narrate::clipboard_staging_dir());
+        // Claude Code uses gitignore-style patterns: `~/` = relative to home
+        // directory, which is portable and avoids the single-`/` trap (which
+        // means relative to project root, not filesystem root).
+        let clipboard_root_abs = crate::narrate::clipboard_staging_root();
+        let clipboard_root_tilde = dirs::home_dir()
+            .and_then(|home| {
+                clipboard_root_abs
+                    .as_str()
+                    .strip_prefix(home.to_str()?)
+                    .map(|rel| format!("~{rel}"))
+            })
+            .unwrap_or_else(|| clipboard_root_abs.to_string());
+        let clipboard_read_pattern = format!("Read({clipboard_root_tilde}/**)");
         // Remove our own entries, then re-add current.
         // Match on the exact patterns we install, not a substring search,
         // to avoid clobbering unrelated permissions.
+        // Also remove legacy clipboard patterns (flat `/*`, `/*/*`, `/**`).
+        let clipboard_root_str = clipboard_root_abs.to_string();
         allow_vec.retain(|v: &serde_json::Value| {
             v.as_str()
-                .map(|s| s != look_pattern && s != listen_pattern && s != clipboard_read_pattern)
+                .map(|s| {
+                    s != look_pattern
+                        && s != listen_pattern
+                        && !s.starts_with(&format!("Read({clipboard_root_str}"))
+                        && !s.starts_with(&format!("Read({clipboard_root_tilde}"))
+                })
                 .unwrap_or(true)
         });
         allow_vec.push(serde_json::Value::String(look_pattern));

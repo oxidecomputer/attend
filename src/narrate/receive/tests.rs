@@ -8,6 +8,7 @@ use super::listen::try_lock;
 use super::pending::{collect_pending, collect_pending_dir};
 use super::read_pending;
 use crate::narrate::merge::{CapturedRegion, Event};
+use crate::narrate::render::RenderMode;
 use crate::state::SessionId;
 
 /// Convert seconds to a UTC timestamp (for test brevity).
@@ -32,7 +33,7 @@ fn collect_pending_empty_dir() {
 #[test]
 fn read_pending_empty() {
     let cwd = Utf8Path::new("/project");
-    assert!(read_pending(&[], Some(cwd), &[]).is_none());
+    assert!(read_pending(&[], Some(cwd), &[], RenderMode::Agent).is_none());
 }
 
 /// A single JSON file with a Words event renders as prose.
@@ -47,7 +48,7 @@ fn read_pending_single_json() {
     fs::write(&path, serde_json::to_string(&events).unwrap()).unwrap();
 
     let cwd = Utf8Path::new("/project");
-    let result = read_pending(&[path], Some(cwd), &[]).unwrap();
+    let result = read_pending(&[path], Some(cwd), &[], RenderMode::Agent).unwrap();
     assert!(result.contains("hello world"));
     // read_pending returns raw markdown; <narration> tags are applied at render time.
     assert!(!result.contains("<narration>"));
@@ -88,7 +89,7 @@ fn read_pending_filters_by_cwd() {
     fs::write(&path, serde_json::to_string(&events).unwrap()).unwrap();
 
     let cwd = Utf8Path::new("/project");
-    let result = read_pending(&[path], Some(cwd), &[]).unwrap();
+    let result = read_pending(&[path], Some(cwd), &[], RenderMode::Agent).unwrap();
     assert!(
         result.contains("src/main.rs"),
         "project file should be included"
@@ -126,12 +127,18 @@ fn read_pending_includes_extra_dirs() {
 
     let cwd = Utf8Path::new("/project");
     // Without include_dirs, the snapshot is filtered out (only words remain).
-    let result = read_pending(std::slice::from_ref(&path), Some(cwd), &[]).unwrap();
+    let result = read_pending(
+        std::slice::from_ref(&path),
+        Some(cwd),
+        &[],
+        RenderMode::Agent,
+    )
+    .unwrap();
     assert!(!result.contains("/shared/utils.rs"));
 
     // With include_dirs, the snapshot passes.
     let include = vec![Utf8PathBuf::from("/shared")];
-    let result = read_pending(&[path], Some(cwd), &include).unwrap();
+    let result = read_pending(&[path], Some(cwd), &include, RenderMode::Agent).unwrap();
     assert!(result.contains("/shared/utils.rs"));
 }
 
@@ -279,7 +286,7 @@ fn read_pending_merges_multiple_files() {
     fs::write(&f2, serde_json::to_string(&events2).unwrap()).unwrap();
 
     let cwd = Utf8Path::new("/project");
-    let result = read_pending(&[f1, f2], Some(cwd), &[]).unwrap();
+    let result = read_pending(&[f1, f2], Some(cwd), &[], RenderMode::Agent).unwrap();
     // Prose from both files appears.
     assert!(result.contains("look at this"));
     assert!(result.contains("refactor that"));
@@ -340,7 +347,7 @@ fn collect_read_archive_round_trip() {
 
     // Read should merge into a single narration block.
     let cwd = Utf8Path::new("/project");
-    let content = read_pending(&files, Some(cwd), &[]).unwrap();
+    let content = read_pending(&files, Some(cwd), &[], RenderMode::Agent).unwrap();
     assert!(content.contains("first dictation"));
     assert!(content.contains("second dictation"));
 
@@ -501,7 +508,7 @@ fn read_pending_renders_shell_command() {
     fs::write(&path, serde_json::to_string(&events).unwrap()).unwrap();
 
     let cwd = Utf8Path::new("/project");
-    let result = read_pending(&[path], Some(cwd), &[]).unwrap();
+    let result = read_pending(&[path], Some(cwd), &[], RenderMode::Agent).unwrap();
     assert!(result.contains("then I ran"), "prose should be included");
     assert!(
         result.contains("cargo test --lib"),
@@ -629,7 +636,7 @@ fn collect_pending_merges_session_and_local() {
 
     // Read merges both files into one markdown document.
     let cwd = Utf8Path::new("/project");
-    let content = read_pending(&files, Some(cwd), &[]).unwrap();
+    let content = read_pending(&files, Some(cwd), &[], RenderMode::Agent).unwrap();
     assert!(
         content.contains("local narration"),
         "_local narration should be included"
@@ -815,7 +822,7 @@ fn read_pending_redaction_only_returns_none() {
 
     let cwd = Utf8Path::new("/project");
     assert!(
-        read_pending(&[path], Some(cwd), &[]).is_none(),
+        read_pending(&[path], Some(cwd), &[], RenderMode::Agent).is_none(),
         "redaction-only content should not be delivered"
     );
 }
@@ -840,7 +847,7 @@ fn read_pending_renders_redaction_marker() {
     fs::write(&path, serde_json::to_string(&events).unwrap()).unwrap();
 
     let cwd = Utf8Path::new("/project");
-    let result = read_pending(&[path], Some(cwd), &[]).unwrap();
+    let result = read_pending(&[path], Some(cwd), &[], RenderMode::Agent).unwrap();
     assert!(result.contains("look at this"), "prose should be present");
     assert!(
         result.contains("\u{2702} edit"),

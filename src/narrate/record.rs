@@ -815,7 +815,12 @@ fn copy_yanked_to_clipboard(session_id: Option<&crate::state::SessionId>) -> any
     // project). Without a session, include all content unfiltered — the user
     // isn't targeting a particular project and can paste anywhere.
     let cwd_filter = session_id.map(|_| cwd.as_path());
-    if let Some(content) = super::receive::read_pending(&files, cwd_filter, &config.include_dirs) {
+    if let Some(content) = super::receive::read_pending(
+        &files,
+        cwd_filter,
+        &config.include_dirs,
+        super::render::RenderMode::Yank,
+    ) {
         let mut clipboard = arboard::Clipboard::new()
             .map_err(|e| anyhow::anyhow!("cannot access clipboard: {e}"))?;
         clipboard
@@ -917,7 +922,13 @@ pub fn daemon() -> anyhow::Result<()> {
     // on background threads. Pass None for cwd so paths stay absolute — filtering
     // is deferred to receive.
     let clipboard_enabled = config.clipboard_capture.unwrap_or(true);
-    let editor_events = capture::start(None, config.ext_ignore_apps.clone(), clipboard_enabled)?;
+    let clipboard_staging = super::clipboard_staging_dir(session_id.as_ref());
+    let editor_events = capture::start(
+        None,
+        config.ext_ignore_apps.clone(),
+        clipboard_enabled,
+        clipboard_staging,
+    )?;
 
     // Spawn model preload on a background thread. The first call to
     // transcriber.get() blocks until the model is ready. This lets audio

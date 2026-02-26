@@ -95,7 +95,12 @@ fn run_once(session_id: Option<SessionId>) -> anyhow::Result<()> {
     };
 
     let files = collect_pending(&session_id);
-    if let Some(content) = read_pending(&files, Some(&cwd), &config.include_dirs) {
+    if let Some(content) = read_pending(
+        &files,
+        Some(&cwd),
+        &config.include_dirs,
+        crate::narrate::render::RenderMode::Agent,
+    ) {
         println!("{content}");
         archive_pending(&files, &session_id);
         auto_prune(&config);
