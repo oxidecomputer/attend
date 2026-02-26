@@ -26,30 +26,28 @@ slow down and consider more deeply.
 
 I invite you to see if you feel the same way.
 
-## Supported editors, agents, browsers, and platforms
+## Supported editors, agents, browsers, shells, platforms...
 
 - Editors: [Zed](https://zed.dev)
 - Agents: [Claude Code](https://claude.com/product/claude-code)
-- Browsers: [Firefox](https://www.mozilla.org/firefox/) (via native messaging extension)
-- Platforms: anything Unix-esque should work; Windows is not supported currently
+- Browsers (optional): [Firefox](https://www.mozilla.org/firefox/),
+  [Chrome](https://www.google.com/chrome/)
+- Shells (optional): [Fish](https://fishshell.com/), [Zsh](https://www.zsh.org/)
+- Platforms: anything Unix-esque should work (if it doesn't, it's a bug!);
+  Windows is not supported currently
 
 The architecture supports adding new editors, agents, shells, and browsers
 independently of one another. See the [extending guide](docs/extending.md)
 for how to add new integrations. Contributions welcome!
 
-## Platform requirements
-
-`attend` requires a Unix platform (macOS or Linux). Windows is not currently
-supported.
-
 ## Quick start
 
 To install `attend`, you'll need
-[Rust](https://rust-lang.org/learn/get-started/):
+[Rust](https://rust-lang.org/learn/get-started/); then, you should:
 
 ```bash
 cargo install --git https://github.com/oxidecomputer/attend
-attend install --agent claude --editor zed
+attend install --agent claude --editor zed    # for example
 ```
 
 This installs the hooks that provide editor context to Claude Code, plus
