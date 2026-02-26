@@ -1,8 +1,11 @@
 mod browser_bridge;
+mod completions;
 mod glance;
 mod hook;
 mod install;
+mod listen;
 mod look;
+mod meditate;
 mod narrate;
 mod shell_hook;
 
@@ -10,7 +13,7 @@ pub use hook::HookEvent;
 pub use narrate::NarrateCommand;
 
 use camino::Utf8PathBuf;
-use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 
 /// Top-level CLI definition.
 #[derive(Parser)]
@@ -41,66 +44,13 @@ pub enum Command {
     Narrate(NarrateCommand),
     /// Show editor state (open files, cursors, selections).
     #[command(display_order = 3)]
-    Glance {
-        /// Resolve paths relative to this directory and show relative paths.
-        #[arg(long, short)]
-        dir: Option<Utf8PathBuf>,
-
-        /// Output format.
-        #[arg(long, short, default_value = "human")]
-        format: Format,
-
-        /// Continuously watch editor state.
-        #[arg(long, short)]
-        watch: bool,
-
-        /// Override polling / debounce interval in seconds.
-        #[arg(long, short = 'i')]
-        interval: Option<f64>,
-    },
+    Glance(glance::GlanceArgs),
     /// Show file content at cursor and selection positions.
     #[command(display_order = 4)]
-    Look {
-        /// Resolve paths relative to this directory and show relative paths.
-        #[arg(long, short)]
-        dir: Option<Utf8PathBuf>,
-
-        /// Output format.
-        #[arg(long, short, default_value = "human")]
-        format: Format,
-
-        /// Show entire file contents with highlights inline.
-        #[arg(long, conflicts_with_all = ["before", "after"])]
-        full: bool,
-
-        /// Context lines before each excerpt.
-        #[arg(long, short = 'B')]
-        before: Option<usize>,
-
-        /// Context lines after each excerpt.
-        #[arg(long, short = 'A')]
-        after: Option<usize>,
-
-        /// Continuously watch editor state in view mode.
-        #[arg(long, short)]
-        watch: bool,
-
-        /// Override polling / debounce interval in seconds.
-        #[arg(long, short = 'i')]
-        interval: Option<f64>,
-
-        /// File paths and positions in compact format (same as default output).
-        /// E.g.: src/foo.rs 5:12 19:40-24:6 src/bar.rs 10:1
-        #[arg(trailing_var_arg = true)]
-        args: Vec<String>,
-    },
+    Look(look::LookArgs),
     /// Run as a background daemon, keeping the state cache warm.
     #[command(display_order = 5)]
-    Meditate {
-        /// Override polling / debounce interval in seconds.
-        #[arg(long, short = 'i')]
-        interval: Option<f64>,
-    },
+    Meditate(meditate::MeditateArgs),
     /// Set up agent hooks, editor keybindings, browser, and shell integrations.
     #[command(display_order = 6)]
     Install {
@@ -154,26 +104,10 @@ pub enum Command {
     },
     /// Generate shell completions and print to stdout.
     #[command(display_order = 8)]
-    Completions {
-        /// Shell to generate completions for.
-        shell: clap_complete::Shell,
-    },
+    Completions(completions::CompletionsArgs),
     /// Receive narration from a recording session.
     #[command(display_order = 9)]
-    Listen {
-        /// Check once and exit instead of waiting.
-        #[arg(long)]
-        check: bool,
-
-        /// Session ID (defaults to listening file).
-        #[arg(long)]
-        session: Option<String>,
-
-        /// Deactivate narration: remove the listening file and exit.
-        /// With --session, only deactivate if the active session matches.
-        #[arg(long, conflicts_with = "check")]
-        stop: bool,
-    },
+    Listen(listen::ListenArgs),
     /// Respond to agent lifecycle events (used by installed hooks).
     #[command(display_order = 10, subcommand)]
     Hook(HookEvent),
@@ -225,54 +159,12 @@ impl Command {
     /// Execute a subcommand.
     pub fn run(self) -> anyhow::Result<()> {
         match self {
-            Command::Completions { shell } => {
-                clap_complete::generate(
-                    shell,
-                    &mut Cli::command(),
-                    "attend",
-                    &mut std::io::stdout(),
-                );
-                Ok(())
-            }
-            Command::Glance {
-                dir,
-                format,
-                watch,
-                interval,
-            } => glance::run(dir, format, watch, interval),
-            Command::Look {
-                dir,
-                format,
-                full,
-                before,
-                after,
-                watch,
-                interval,
-                args,
-            } => look::run(dir, format, full, before, after, watch, interval, args),
-            Command::Meditate { interval } => crate::watch::run(
-                crate::watch::WatchMode::Silent,
-                None,
-                interval,
-                &Format::Human,
-                false,
-                None,
-                None,
-            ),
-            Command::Listen {
-                check,
-                session,
-                stop,
-            } => {
-                if stop {
-                    crate::narrate::receive::stop(session)
-                } else {
-                    // check → one-shot (old `receive` without --wait)
-                    // default → wait (old `receive --wait`)
-                    crate::narrate::receive::run(!check, session)
-                }
-            }
             Command::Narrate(cmd) => cmd.run(),
+            Command::Glance(args) => args.run(),
+            Command::Look(args) => args.run(),
+            Command::Meditate(args) => args.run(),
+            Command::Completions(args) => args.run(),
+            Command::Listen(args) => args.run(),
             Command::Hook(event) => event.run(),
             Command::BrowserBridge => browser_bridge::run(),
             Command::ShellHook(cmd) => match cmd {
