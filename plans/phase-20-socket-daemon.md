@@ -19,7 +19,7 @@
 - [x] 1c. Extract `AudioSource` trait — `023c84d`
 - [x] 1d. Wire `CaptureConfig` into `capture::start()` — `6ccb168`
 - [x] 2. Add `StubTranscriber` — `3ca31b6`
-- [x] 3. Clock trait and `Instant` elimination — `f2a4bf0`, `f15470a`, `633404f`
+- [x] 3. Clock trait and `Instant` elimination — `f2a4bf0`, `f15470a`, `633404f`, `f736e38`
 - [ ] 4. `ATTEND_TEST_MODE` and `ATTEND_CACHE_DIR` env vars
 - [ ] 5. End-to-end test harness
 - [ ] 6. Declarative oracle
@@ -27,7 +27,7 @@
 
 #### Item 3: Clock trait and `Instant` elimination — COMPLETE
 
-Three commits:
+Four commits:
 - `f2a4bf0`: `Clock` trait, `RealClock`, `MockClock`. All four capture threads
   converted. `CaptureConfig` carries `Arc<dyn Clock>`.
 - `f15470a`: `AudioChunk`, `SilenceDetector`, `DaemonState` converted.
@@ -37,6 +37,9 @@ Three commits:
   `narrate.rs` collect_staging, `util.rs` formatting functions,
   `clipboard_capture.rs` image staging. All CLI entry points pass
   `process_clock()`.
+- `f736e38`: Thread `process_clock()` into `daemon()` and
+  `CaptureConfig::production()`. Last place where `RealClock` was
+  constructed directly in production code outside `clock.rs`.
 
 **Exceptions** (documented in `clock.rs`, not converted):
 - `chime.rs`: audio playback sleep, no-op in test mode
@@ -726,21 +729,38 @@ phase is: make the change, get back to green.
 
 **No functional changes.** This phase only adds testability and tests.
 
-#### Existing traits and patterns (already extracted)
+#### Existing traits and patterns
 
-Two capture sources already have clean trait boundaries:
+All capture source traits are now extracted (items 1-3 complete). The
+trait boundaries and supporting infrastructure:
 
-- **`Transcriber` trait** (`src/narrate/transcribe.rs`): defines
-  `transcribe()`, `set_context()`, `bench()`. Both Whisper and Parakeet
-  implement it. Only a `StubTranscriber` is needed for test injection.
+- **`Transcriber` trait** (`src/narrate/transcribe.rs`): `transcribe()`,
+  `set_context()`, `bench()`. Whisper, Parakeet, and `StubTranscriber`
+  implement it. `StubTranscriber` accepts injected text via channel.
 
-- **`ExternalSource` trait** (`src/narrate/ext_capture.rs`): defines
-  `is_available()` and `query()`. The macOS backend implements it;
-  `platform_source()` returns `None` on non-macOS. The spawn function
-  already accepts any `ExternalSource`. This is the pattern to follow
-  for other capture sources.
+- **`ExternalSource` trait** (`src/narrate/ext_capture.rs`):
+  `is_available()` and `query()`. macOS accessibility backend; `None`
+  on non-macOS.
 
-Additionally:
+- **`EditorStateSource` trait** (`src/narrate/editor_capture.rs`):
+  `current(cwd, ignores) → Option<EditorState>`. macOS accessibility
+  backend.
+
+- **`ClipboardSource` trait** (`src/narrate/clipboard_capture.rs`):
+  `get_text()`, `get_image()`. `arboard` backend.
+
+- **`AudioSource` trait** (`src/narrate/audio.rs`): `take_chunks()`,
+  `pause()`, `resume()`, `drain()`, `sample_rate()`. cpal backend.
+
+- **`CaptureConfig`** (`src/narrate/capture.rs`): bundles `Arc<dyn
+  Clock>`, `Box<dyn EditorStateSource>`, `Option<Box<dyn
+  ExternalSource>>`, clipboard factory. `production(clock)` returns
+  real sources; test mode substitutes stubs.
+
+- **`Clock` trait** (`src/clock.rs`): `now() → DateTime<Utc>`,
+  `sleep(Duration)`. `RealClock` for production; `MockClock` (currently
+  `#[cfg(test)]`, will be un-gated in item 4) for tests.
+  `process_clock()` returns the process-wide clock.
 
 - **`CacheDirGuard`** (`src/state.rs`): RAII guard that creates a temp
   dir and installs a thread-local cache dir override via `RefCell`.
@@ -763,7 +783,7 @@ Additionally:
   (`arb_words`, `arb_cursor_snapshot`, `arb_diff`, etc. in
   `src/narrate/merge/tests/prop.rs`), hook sequences
   (`src/hook/tests/prop.rs`), and editor state
-  (`src/state/tests.rs`). ~306 tests total; proptest-heavy.
+  (`src/state/tests.rs`). 486 tests total; proptest-heavy.
 
 - **`build.rs`** currently only checks for a signed Firefox .xpi. It
   does **not** inject a commit hash. Phase A will add commit hash
@@ -772,76 +792,66 @@ Additionally:
 
 #### Items
 
-1. **Trait extraction for capture sources.** Four capture threads need
-   trait-based injection so test mode can substitute stubs. The existing
-   `ExternalSource` trait is the pattern: each trait abstracts the
-   platform/hardware dependency inside the polling loop, not the thread
-   itself.
+1. **Trait extraction for capture sources — COMPLETE.** See items 1a-1d
+   in the status tracker and the "Existing traits and patterns" section
+   above for the extracted traits and `CaptureConfig` struct.
 
-   | Thread | What to abstract | Current dependency | Trait |
-   |--------|------------------|--------------------|-------|
-   | Audio (`audio.rs`) | Microphone input | cpal `Stream` + `AudioChunk` buffer | `AudioSource`: `start()`, `take_chunks()`, `pause()`, `resume()`, `drain()` |
-   | Editor (`editor_capture.rs`) | Editor state query | `EditorState::current()` (macOS accessibility) | `EditorStateSource`: `current(cwd, ignores) → Option<EditorState>` |
-   | Clipboard (`clipboard_capture.rs`) | System clipboard | `arboard::Clipboard` | `ClipboardSource`: `get_text()`, `get_image()` |
-   | Diff (`diff_capture.rs`) | File I/O | `fs::metadata()` + `fs::read_to_string()` | Not needed — diff capture reads real files in both production and test; the test harness controls file content by writing to the isolated cache dir |
+2. **Stub transcriber — COMPLETE.** `StubTranscriber` accepts injected
+   text via a `crossbeam_channel::Receiver<(String, u64)>` and returns
+   the injected words with synthetic timestamps. No model loading, no
+   audio processing.
 
-   Ext capture already has `ExternalSource` — no work needed.
-
-   Introduce a `CaptureConfig` struct that bundles factory functions
-   (or trait objects) for each source. `capture::start()` takes a
-   `CaptureConfig` instead of hard-coding implementations. Production
-   code passes real factories; test mode passes stubs.
-
-   Also: clipboard image staging uses the `image` crate for PNG
-   encoding. Abstract this behind an `ImageStager` trait (or just pass
-   a closure) so tests don't need to encode real PNGs.
-
-2. **Stub transcriber.** The `Transcriber` trait already exists. Add a
-   `StubTranscriber` that accepts injected text from the test harness
-   via a channel: `Inject::Speech { text, duration_ms }` feeds a
-   `crossbeam_channel::Receiver<(String, u64)>`, and `transcribe()`
-   returns the injected words with synthetic timestamps derived from
-   `duration_ms`. No model loading, no audio processing.
-
-3. **Clock trait and `Instant` elimination.** The codebase has:
-   - 19 production uses of `Instant::now()` across 7 files
-     (`record.rs`, `editor_capture.rs`, `ext_capture.rs`, `audio.rs`,
-     `receive/listen.rs`, `watch.rs`)
-   - 14 production uses of `Utc::now()` across 8 files
-     (the capture threads, `record.rs`, `util.rs`, `browser_bridge.rs`,
-     `shell_hook.rs`, `narrate.rs`)
-   - 11 production uses of `thread::sleep()` across 8 files
-     (all capture threads, `record.rs`, `receive/listen.rs`, `chime.rs`,
-     `watch.rs`)
-   - 3 uses of `SystemTime` (`diff_capture.rs` for mtime,
-     `clean.rs` and `hook/session_state.rs` for age cutoffs)
-
-   Replace `Instant::now()` and `Utc::now()` with a `Clock` trait
-   (`now() → DateTime<Utc>`). Replace `thread::sleep()` with
-   `clock.sleep()`. `Instant` is eliminated entirely — all timing
-   uses `DateTime<Utc>` differences. `SystemTime` stays for file
-   mtime (it's the OS metadata type, not a clock choice).
-
-   Production uses real time; test mode uses a mock clock
-   (`Arc<Mutex<DateTime<Utc>>>`) advanced only by `AdvanceTime`.
-
-   Note: `chime.rs` uses `thread::sleep()` to wait for audio playback.
-   In test mode, chime playback is a no-op, so this sleep is skipped
-   entirely (not clock-gated).
-
-   The bench functions in `whisper.rs` and `parakeet.rs` use `Instant`
-   for measurement. These can keep using `Instant` directly — they're
-   developer-facing diagnostics, not part of the daemon loop.
+3. **Clock trait and `Instant` elimination — COMPLETE.** See the item 3
+   detail section in the status tracker. `Clock` trait with `now()` and
+   `sleep()`, `RealClock` for production, `MockClock` for tests
+   (condvar-gated sleep to be added in item 4). `Instant` eliminated
+   from all daemon internals; `SystemTime` retained for file mtime.
 
 4. **`ATTEND_TEST_MODE` and `ATTEND_CACHE_DIR` env vars.**
    `ATTEND_TEST_MODE=1` swaps in stub capture sources (via
-   `CaptureConfig`) and opens the `test-inject.sock` side channel.
+   `CaptureConfig`) and connects to the harness's inject socket.
    `ATTEND_CACHE_DIR` controls the cache directory: set to a path to
    use that path, or set to empty (`""`) to auto-create a random temp
-   directory (useful for parallel test runs). The existing
+   directory (useful for manual testing and parallel runs). The existing
    `CacheDirGuard` pattern handles the in-process override; the env
    var extends this to CLI-spawned subprocesses. No behavioral change
    to production code paths.
+
+   **Inject socket architecture.** The harness is the server: it binds
+   `$ATTEND_CACHE_DIR/test-inject.sock` and accepts connections. Every
+   process spawned with `ATTEND_TEST_MODE=1` (daemon and CLI commands
+   alike) creates a `MockClock`, connects to the inject socket at the
+   top of `main` (before any clock usage), and sends its PID as a JSON
+   struct (`{"pid": N}`). A background thread reads newline-delimited
+   JSON messages from the socket and dispatches
+   them: `AdvanceTime` goes to the `MockClock`, capture injections go
+   to the appropriate stub channels (the daemon routes them; other
+   processes ignore them).
+
+   **Spawn-connect synchronization.** After spawning a subprocess, the
+   harness blocks until that PID connects to the inject socket. This
+   linearizes the test: no events are sent until the new process is
+   listening, eliminating races where execution time could determine
+   which events a subprocess sees.
+
+   **Broadcast-everything.** All inject messages are broadcast to every
+   connected process. The daemon routes capture injections to its stub
+   channels; non-daemon processes ignore them. This is simpler than
+   targeted delivery — the harness doesn't need to track roles.
+
+   **Condvar-gated mock sleep.** `MockClock::sleep(d)` blocks on a
+   condvar until `now() >= start + d`. When `advance()` is called
+   (from the inject socket background thread), it bumps the time and
+   broadcasts the condvar, waking any threads whose sleep deadline
+   has been met. This eliminates both CPU spin and real wall-clock
+   delay — threads proceed in lockstep with harness-driven time.
+   This is critical for proptest at thousands of iterations per second.
+
+   CLI commands (stop, yank, flush) poll sentinel files with
+   `clock.sleep(SENTINEL_POLL_MS)`. With condvar sleep, these block
+   until the harness advances time. The harness advances time for all
+   processes simultaneously, so the daemon processes the sentinel and
+   the CLI's poll loop terminates — no real wall-clock delay anywhere.
 
 5. **End-to-end test harness.** `TestHarness` struct that spawns a real
    daemon in test mode, drives it via real CLI subprocesses, and asserts
@@ -865,16 +875,15 @@ Additionally:
 3. Clock trait                   ├→ 4. Env vars + test-inject.sock → 5. Harness → 6. Oracle → 7. Fuzzer
 ```
 
-Items 1-3 are independent of each other. Item 2 is small (trait already
-exists; just add the stub). Item 1 is moderate (follow `ExternalSource`
-pattern for 3 new traits + `CaptureConfig`). Item 3 is the most
-invasive (touches 11+ production files).
+Items 1-3 are complete and independent of each other.
 
-Item 4 (env vars + inject socket) depends on the traits existing. The
-inject socket is a minor structural change to the daemon: it adds a
-listener thread for `test-inject.sock` that routes injections to the
-stub trait impls via channels. This is the one change in Phase 0 that
-isn't pure refactoring.
+Item 4 (env vars + inject socket) depends on the traits existing (done).
+This is the most structurally significant item in Phase 0: it adds
+cross-process time coordination via `test-inject.sock`, upgrades
+`MockClock` with condvar-gated sleep, and wires `process_clock()` to
+connect to the harness's inject socket in test mode. Every process
+under test becomes an inject socket client. This is the one change in
+Phase 0 that isn't pure refactoring.
 
 **Gate**: the full oracle suite passes reliably before proceeding.
 
@@ -963,8 +972,8 @@ An environment variable `ATTEND_TEST_MODE=1` triggers test configuration:
   returns the injected text directly, bypassing the real model. Chime
   playback is a no-op. This is essential for fuzzing at thousands of
   times realtime.
-- **Editor capture**: replaced with a stub that returns scripted file lists
-  and cursor positions, driven by a fixture file or env var.
+- **Editor capture**: replaced with a stub `EditorStateSource` that returns
+  state injected via the inject socket (`Inject::EditorState`).
 - **External capture (accessibility)**: replaced with a stub `ExternalSource`
   (the trait already exists) that returns scripted selections.
 - **Clipboard capture**: replaced with a stub that emits scripted clipboard
@@ -984,11 +993,18 @@ An environment variable `ATTEND_TEST_MODE=1` triggers test configuration:
 - **Cache directory**: redirected to an isolated temp directory. The existing
   `CacheDirGuard` pattern (`state.rs`) handles this for in-process tests. For
   CLI-invoked tests, `ATTEND_CACHE_DIR` env var overrides `cache_dir()`.
+- **Clock and inject socket**: `process_clock()` returns a `MockClock`
+  (condvar-gated sleep) and connects to the harness's inject socket at
+  `$ATTEND_CACHE_DIR/test-inject.sock`. A background thread reads
+  `AdvanceTime` messages and calls `MockClock::advance()`. This applies
+  to every process — daemon, CLI commands, listener, hooks — so the
+  harness controls time for all of them. See the
+  [Injection](#injection-how-to-feed-events-into-test-processes) section.
 
-The capture sources are already partially behind traits (`ExternalSource`).
-The others (audio, editor, clipboard) need trait extraction or a
-`CaptureConfig` struct that bundles factory functions for each source. The
-env var selects the stub config; production code is the default.
+The capture sources are already behind traits (`ExternalSource`,
+`EditorStateSource`, `ClipboardSource`, `AudioSource`). `CaptureConfig`
+bundles them. The env var selects the stub config; production code is the
+default.
 
 ### Two oracle models
 
@@ -1007,12 +1023,18 @@ sequences. On failure, proptest's shrinking produces the minimal
 reproducing sequence — not a wall of 50 random actions, but the 3-4
 that actually trigger the divergence.
 
+Each binary is a matched pair: the same build is used for both CLI
+commands and the daemon. The oracle never crosses versions (e.g.,
+binary-a's CLI against binary-b's daemon) — that would cause version
+mismatches once Phase A adds commit-hash checking.
+
 For each test case:
 1. proptest generates a random action sequence (with injections).
 2. Spin up two isolated environments (separate `ATTEND_CACHE_DIR`, each
-   set to a fresh temp dir).
+   set to a fresh temp dir, each with its own inject socket).
 3. Run the same action sequence against both binaries via real CLI
-   subprocesses, with `ATTEND_TEST_MODE=1`.
+   subprocesses, with `ATTEND_TEST_MODE=1`. Each environment uses its
+   own binary for all commands.
 4. Compare outputs: delivered narrations, status reports, yank results,
    daemon exit behavior.
 5. On mismatch: proptest shrinks the sequence and reports the minimal
@@ -1094,80 +1116,169 @@ generation and shrinking — a failing invariant produces the minimal action
 sequence that violates it. It's the durable asset; the differential oracle
 is the migration safety net.
 
-### Injection: how to feed events into the daemon
+### Injection: how to feed events into test processes
 
-The daemon's capture sources (audio, editor, ext, clipboard) are in-process
-threads. The test harness can't inject events via the main CLI — it needs a
-side channel into the daemon.
+The test harness needs to inject events into the daemon (speech, editor
+state, etc.) and advance time for *all* processes under test (daemon and
+CLI commands alike). This is a cross-process coordination problem.
 
-In test mode, the daemon opens a second socket: `test-inject.sock` (in the
-same cache dir). The harness sends injection commands over this socket:
+#### Architecture: harness as inject server
+
+The **harness** is the server. It binds
+`$ATTEND_CACHE_DIR/test-inject.sock` before spawning any processes.
+
+Every process spawned with `ATTEND_TEST_MODE=1` — daemon, CLI commands
+(`toggle`, `stop`, `yank`, `flush`, `status`), `listen`, hook processes —
+connects to the inject socket as early as possible in its lifecycle (top
+of `main`, before any clock usage).
+
+#### Inject socket protocol
+
+**Framing**: newline-delimited JSON. Each message is a single JSON
+object followed by `\n`. This applies in both directions (handshake
+client→server, injections server→client). Debuggable with `socat` /
+`jq` — same rationale as the main control socket.
+
+**Handshake**: on connect, the process sends a single JSON struct:
+
+```json
+{"pid": 12345}
+```
+
+After the handshake, the process sends nothing more. It reads a stream
+of `Inject` messages from the harness until the connection closes (which
+happens when the process exits and the socket drops).
+
+**Messages** (harness→process, one JSON object per line):
 
 ```rust
-/// Harness → Daemon (test-inject socket only)
+/// Harness → Process (broadcast to all connections via inject socket)
 #[derive(Serialize, Deserialize)]
 enum Inject {
+    /// Advance the mock clock by this duration. Wakes any threads
+    /// blocked in MockClock::sleep() whose deadline is now met.
+    AdvanceTime { duration_ms: u64 },
+
     /// Inject speech: what was said and how long it took.
+    /// Daemon routes to stub transcriber; others ignore.
     Speech { text: String, duration_ms: u64 },
     /// Inject a period of silence.
+    /// Daemon routes to stub transcriber; others ignore.
     Silence { duration_ms: u64 },
     /// Stub editor capture returns this state on next poll.
+    /// Daemon routes to stub editor source; others ignore.
     EditorState { files: Vec<FileEntry> },
     /// Stub ext capture returns this selection on next poll.
+    /// Daemon routes to stub external source; others ignore.
     ExternalSelection { app: String, text: String },
     /// Stub clipboard capture emits this content on next poll.
+    /// Daemon routes to stub clipboard source; others ignore.
     Clipboard { text: String },
-    /// Advance the daemon's mock clock by this duration. All time-dependent
-    /// behavior (idle timeout, model unload, dwell timers, selection merge
-    /// windows, silence segmentation) sees the jump immediately.
-    AdvanceTime { duration_ms: u64 },
 }
 ```
 
-This is dynamic — the harness can inject events at any point in the action
-sequence, interleaved with CLI commands. The inject socket only exists
-when `ATTEND_TEST_MODE=1`; production builds never open it.
+#### Spawn-connect synchronization
 
-Time manipulation via `AdvanceTime` requires a clock trait behind all time
-sources in the daemon. Production uses real `Utc::now()` /
-`thread::sleep()`; test mode uses a mock clock that only advances when
-`AdvanceTime` is injected. This eliminates real wall-clock delays from
-tests entirely — a sequence that exercises idle timeout and model unloading
-runs in milliseconds.
+When the harness spawns a subprocess whose PID it knows (direct
+`Command::spawn()`), it blocks until that PID's handshake arrives on
+the inject socket. This linearizes the test run: no events are sent
+until the new process is connected and listening.
 
-The clock trait is a single operation:
-- `now()` → `DateTime<Utc>`
+1. Harness calls `Command::new("attend").arg("narrate").arg("stop").spawn()`.
+2. Harness blocks on "wait for PID N to connect to inject socket".
+3. Child process starts, connects to inject socket at top of `main`,
+   sends `{"pid": N}`.
+4. Harness sees PID N, unblocks.
+5. Harness proceeds with the next action (advance time, inject events,
+   spawn another command).
 
-All timeouts and durations are computed as differences between two `now()`
-calls. `Instant::now()` is eliminated entirely — it's opaque, can't be
-serialized or mocked by a known amount, and everything that leaves the
-daemon (narration, archive, status) uses UTC anyway. This is a cleanup
-worth doing independent of the socket migration.
+This eliminates races where a subprocess might miss events that were
+sent before it connected. The harness never sends anything until every
+process it cares about is listening.
 
-`thread::sleep()` is replaced by `clock.sleep(duration)`:
-- Production: real `thread::sleep()`, wall clock advances naturally.
-- Test mode: yields immediately without advancing the clock. Multiple
-  threads sharing a clock sleep concurrently in production; advancing
-  the clock from one thread's sleep would double-count time.
+**Daemon spawn**: some CLI commands spawn the daemon as a detached
+grandchild (`toggle`/`start` call `spawn_daemon()` with
+`process_group(0)` + `setsid()`). The harness doesn't know the daemon's
+PID in advance — it only knows the PID of the CLI command it spawned.
 
-Time advances only from one source: `AdvanceTime` injected by the harness.
-The harness is in full control — it injects events, advances time by known
-amounts, and checks results. The daemon never autonomously decides "5
-minutes have passed"; the harness says so.
+The harness accepts connections from unknown PIDs without error. When
+the daemon starts, it connects to the inject socket and sends its PID
+like any other process. The harness observes a new connection arriving
+after the CLI command's connection.
 
-This means daemon poll loops spin in test mode (sleep returns immediately,
-clock doesn't move). This is fine: capture threads block on stub channels
-waiting for injected events, not on sleep. The main loop blocks on
-`accept()` (socket) or checks sentinels (current impl) each iteration,
-which is a no-op when no commands are pending. CPU spin during tests is
-acceptable for correctness.
+For commands that spawn the daemon (`toggle` when not already running,
+`start`), the harness should wait for the CLI command to exit *and* for
+one additional unknown PID to connect (the daemon). This ensures the
+daemon is receiving broadcasts before the harness proceeds. The harness
+can also verify the daemon is alive by checking the lock file or by
+tracking which connections are still open (the daemon's connection
+persists; the CLI command's drops on exit).
 
-The mock clock is an `Arc<Mutex<DateTime<Utc>>>` that `AdvanceTime` bumps
-forward. Simple, deterministic, no thread-interaction hazards.
+**Process exit**: when a process exits, its inject socket connection
+drops. The harness detects this (read returns EOF / write returns
+EPIPE) and removes the connection from the broadcast set. This is
+normal — ephemeral CLI commands connect briefly and disconnect.
+
+#### Broadcast-everything model
+
+All inject messages are broadcast to every connected process. The daemon
+routes capture injections (speech, editor state, clipboard, ext) to its
+stub channels. Non-daemon processes ignore these — they have no stub
+channels to route to. Time advances are meaningful to everyone.
+
+This is simpler than targeted delivery: the harness doesn't need to
+track which connection is the daemon vs a CLI command. It just writes
+the same message to all connections.
+
+#### Condvar-gated mock sleep
+
+`MockClock::sleep(d)` blocks on a condvar until `now() >= start + d`.
+When the background thread receives `AdvanceTime` and calls `advance()`,
+it bumps the internal time and broadcasts the condvar. All sleeping
+threads wake, check if their deadline is met, and either return or
+re-block.
+
+This eliminates both CPU spin (no-op sleep) and real wall-clock delay.
+Threads proceed in lockstep with harness-driven time. This is critical
+for proptest at thousands of iterations per second.
+
+Example: CLI `stop()` polls a sentinel file with
+`clock.sleep(100ms)` in a loop. With condvar sleep, the thread blocks.
+The harness sends `AdvanceTime { 100 }` to all processes. The daemon's
+main loop wakes, sees the stop sentinel, deletes it. The CLI's sleep
+also wakes (100ms deadline met), checks the sentinel, finds it gone,
+and returns. No real wall-clock time elapsed.
+
+#### Clock internals
+
+The mock clock is `Arc<MockClockInner>`:
+```rust
+struct MockClockInner {
+    state: Mutex<DateTime<Utc>>,
+    condvar: Condvar,
+}
+```
+
+`advance()` locks, bumps time, and calls `condvar.notify_all()`.
+`sleep(d)` records `deadline = now() + d`, then loops on
+`condvar.wait()` until `now() >= deadline`.
+
+Time advances only from one source: `AdvanceTime` injected by the
+harness. The harness is in full control — it injects events, advances
+time by known amounts, and checks results. No process autonomously
+decides "5 minutes have passed"; the harness says so.
+
+**Invariant: the inject socket background thread must never call
+`clock.sleep()`.** It is the only thread that can advance time (by
+calling `MockClock::advance()` on receipt of `AdvanceTime`). If it
+blocked on the condvar, no thread could wake it — deadlock. The
+background thread is a pure read-dispatch loop with no sleeps.
 
 Browser and shell events don't need injection — they're already external
 CLI commands (`attend browser-bridge`, `attend shell-hook`) that the
-harness invokes directly.
+harness invokes directly. These processes still connect to the inject
+socket (for time advances) and the harness still waits for them to
+connect before proceeding.
 
 ### Observation: what the harness can check
 
@@ -1205,28 +1316,52 @@ struct TestHarness {
     binary: Utf8PathBuf,
     /// Isolated temp directory for all cache state.
     cache_dir: TempDir,
+
+    /// Inject socket listener. Bound before any process is spawned.
+    inject_listener: UnixListener,
+    /// Connected processes, keyed by PID. Each stream receives
+    /// broadcast Inject messages. Entries are removed when the
+    /// connection drops (process exits).
+    connections: HashMap<u32, BufWriter<UnixStream>>,
 }
 
 impl TestHarness {
+    /// Create a new harness: sets up isolated cache dir and binds
+    /// the inject socket at `$cache_dir/test-inject.sock`.
+    fn new(binary: Utf8PathBuf) -> Self { ... }
+
     // --- CLI commands (real subprocess invocations) ---
+    //
+    // Each spawns `self.binary` with ATTEND_TEST_MODE=1 and
+    // ATTEND_CACHE_DIR set. Blocks until the child's PID connects
+    // to the inject socket before returning.
 
-    fn toggle(&self) -> Output { ... }
-    fn pause(&self) -> Output { ... }
-    fn yank(&self) -> Output { ... }
-    fn status(&self) -> StatusReport { ... }
-    fn browser_event(&self, url: &str, text: &str) -> Output { ... }
-    fn shell_event(&self, cmd: &str, exit: i32) -> Output { ... }
-    fn collect(&self, session_id: &str) -> Vec<Narration> { ... }
-    fn activate_session(&self, session_id: &str) -> Output { ... }
+    fn toggle(&mut self) -> Output { ... }
+    fn pause(&mut self) -> Output { ... }
+    fn yank(&mut self) -> Output { ... }
+    fn status(&mut self) -> StatusReport { ... }
+    fn browser_event(&mut self, url: &str, text: &str) -> Output { ... }
+    fn shell_event(&mut self, cmd: &str, exit: i32) -> Output { ... }
+    fn collect(&mut self, session_id: &str) -> Vec<Narration> { ... }
+    fn activate_session(&mut self, session_id: &str) -> Output { ... }
 
-    // --- Injections (via test-inject.sock) ---
+    // --- Injections (broadcast to all connected processes) ---
 
-    fn inject_speech(&self, text: &str, duration_ms: u64) { ... }
-    fn inject_silence(&self, duration_ms: u64) { ... }
-    fn inject_editor_state(&self, files: &[FileEntry]) { ... }
-    fn inject_external_selection(&self, app: &str, text: &str) { ... }
-    fn inject_clipboard(&self, text: &str) { ... }
-    fn advance_time(&self, duration_ms: u64) { ... }
+    fn inject_speech(&mut self, text: &str, duration_ms: u64) { ... }
+    fn inject_silence(&mut self, duration_ms: u64) { ... }
+    fn inject_editor_state(&mut self, files: &[FileEntry]) { ... }
+    fn inject_external_selection(&mut self, app: &str, text: &str) { ... }
+    fn inject_clipboard(&mut self, text: &str) { ... }
+    fn advance_time(&mut self, duration_ms: u64) { ... }
+
+    // --- Internal helpers ---
+
+    /// Wait for a specific PID to connect to the inject socket.
+    fn wait_for_pid(&mut self, pid: u32) { ... }
+    /// Wait for any new PID to connect (used for daemon grandchild).
+    fn wait_for_new_connection(&mut self) -> u32 { ... }
+    /// Broadcast an Inject message to all connected processes.
+    fn broadcast(&mut self, msg: &Inject) { ... }
 }
 ```
 
