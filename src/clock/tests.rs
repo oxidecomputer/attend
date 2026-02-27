@@ -60,8 +60,7 @@ fn mock_sleep_blocks_until_deadline() {
         clock2.now()
     });
 
-    // Let the thread enter the condvar wait.
-    std::thread::sleep(Duration::from_millis(50));
+    clock.wait_for_waiters(1);
     clock.advance(Duration::from_secs(10));
 
     let woke_at = handle.join().unwrap();
@@ -78,21 +77,20 @@ fn mock_sleep_partial_advance_stays_blocked() {
     let woke = Arc::new(AtomicBool::new(false));
     let woke2 = Arc::clone(&woke);
 
-    std::thread::spawn(move || {
+    let handle = std::thread::spawn(move || {
         clock2.sleep(Duration::from_secs(10));
         woke2.store(true, Ordering::SeqCst);
     });
 
-    std::thread::sleep(Duration::from_millis(50));
+    clock.wait_for_waiters(1);
     clock.advance(Duration::from_secs(5));
 
     // Thread needs 10s but only 5s have passed — still blocked.
-    std::thread::sleep(Duration::from_millis(50));
     assert!(!woke.load(Ordering::SeqCst));
 
     // Remaining 5s meets the deadline.
     clock.advance(Duration::from_secs(5));
-    std::thread::sleep(Duration::from_millis(50));
+    handle.join().unwrap();
     assert!(woke.load(Ordering::SeqCst));
 }
 
@@ -114,14 +112,14 @@ fn mock_sleep_multiple_threads_different_deadlines() {
         c2.now()
     });
 
-    std::thread::sleep(Duration::from_millis(50));
+    clock.wait_for_waiters(2);
     clock.advance(Duration::from_secs(5));
 
     let t1 = h1.join().unwrap();
     assert_eq!(t1, start + Duration::from_secs(5));
 
     // h2 should still be blocked; advance the remaining 5s.
-    std::thread::sleep(Duration::from_millis(50));
+    clock.wait_for_waiters(1);
     clock.advance(Duration::from_secs(5));
 
     let t2 = h2.join().unwrap();

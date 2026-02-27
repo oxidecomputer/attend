@@ -13,6 +13,7 @@
 //! - `whisper.rs` / `parakeet.rs` bench functions: developer diagnostics.
 //! - `transcribe.rs` model load timing: diagnostic logging.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -75,6 +76,8 @@ pub struct MockClock {
 struct MockClockInner {
     state: Mutex<DateTime<Utc>>,
     condvar: Condvar,
+    /// Number of threads currently blocked inside `sleep()`.
+    waiters: AtomicUsize,
 }
 
 impl MockClock {
@@ -84,6 +87,7 @@ impl MockClock {
             inner: Arc::new(MockClockInner {
                 state: Mutex::new(start),
                 condvar: Condvar::new(),
+                waiters: AtomicUsize::new(0),
             }),
         }
     }
@@ -97,6 +101,17 @@ impl MockClock {
         drop(guard);
         self.inner.condvar.notify_all();
     }
+
+    /// Spin-yield until at least `n` threads are blocked in `sleep()`.
+    ///
+    /// Used by test harnesses to synchronize with worker threads before
+    /// calling `advance()`, replacing wall-clock sleeps with a
+    /// deterministic rendezvous.
+    pub fn wait_for_waiters(&self, n: usize) {
+        while self.inner.waiters.load(Ordering::Acquire) < n {
+            std::thread::yield_now();
+        }
+    }
 }
 
 impl Clock for MockClock {
@@ -107,8 +122,12 @@ impl Clock for MockClock {
     fn sleep(&self, duration: Duration) {
         let mut guard = self.inner.state.lock().unwrap();
         let deadline = *guard + duration;
-        while *guard < deadline {
-            guard = self.inner.condvar.wait(guard).unwrap();
+        if *guard < deadline {
+            self.inner.waiters.fetch_add(1, Ordering::Release);
+            while *guard < deadline {
+                guard = self.inner.condvar.wait(guard).unwrap();
+            }
+            self.inner.waiters.fetch_sub(1, Ordering::Release);
         }
     }
 }
