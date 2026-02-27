@@ -4,7 +4,6 @@
 //! The engine is chosen via `--engine` on the CLI; Parakeet is the default.
 
 mod parakeet;
-#[cfg(test)]
 pub(crate) mod stub;
 mod whisper;
 
