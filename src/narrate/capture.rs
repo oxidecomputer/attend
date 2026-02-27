@@ -1,17 +1,22 @@
 //! Background capture of editor state snapshots, file diffs, and external selections.
 //!
-//! Coordinates up to three capture threads with shared state:
+//! Coordinates up to four capture threads with shared state:
 //! - [`editor_capture`]: polls editor selections, emits `EditorSnapshot`,
 //!   and publishes the current set of open file paths.
 //! - [`diff_capture`]: reads the shared file list (instead of querying the
 //!   editor independently) and watches for content changes via mtime.
 //! - [`ext_capture`]: polls the platform accessibility API for selected text
 //!   in external applications (e.g. iTerm2, Safari).
+//! - [`clipboard_capture`]: polls the system clipboard for text/image changes.
 //!
 //! Clipboard polling is managed separately: the thread is killed on pause
 //! and a fresh one is spawned on resume. This avoids a race where clipboard
 //! changes made while paused (e.g. yank copying rendered narration) would
 //! be captured as events in the next recording period.
+//!
+//! All platform dependencies are behind traits ([`EditorStateSource`],
+//! [`ExternalSource`], [`ClipboardSource`]) so tests can substitute stubs.
+//! The [`CaptureConfig`] struct bundles these for dependency injection.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -19,7 +24,38 @@ use std::thread;
 
 use camino::Utf8PathBuf;
 
+use super::clipboard_capture::ClipboardSource;
+use super::editor_capture::EditorStateSource;
+use super::ext_capture::ExternalSource;
 use super::merge::Event;
+
+/// Bundled capture source factories for dependency injection.
+///
+/// Production code uses [`CaptureConfig::production`]; test mode substitutes
+/// stubs that return scripted state.
+pub(crate) struct CaptureConfig {
+    /// Editor state query source.
+    pub editor_source: Box<dyn EditorStateSource>,
+    /// External selection source, or `None` if unavailable.
+    pub ext_source: Option<Box<dyn ExternalSource>>,
+    /// Factory for clipboard sources. Called on each resume (clipboard thread
+    /// is killed on pause and a fresh one spawned on resume).
+    pub clipboard_factory: Box<dyn Fn() -> Option<Box<dyn ClipboardSource>> + Send>,
+}
+
+impl CaptureConfig {
+    /// Create a config using real platform sources.
+    pub fn production() -> Self {
+        Self {
+            editor_source: Box::new(super::editor_capture::RealEditorSource),
+            ext_source: super::ext_capture::platform_source(),
+            clipboard_factory: Box::new(|| {
+                super::clipboard_capture::ArboardClipboardSource::new()
+                    .map(|s| Box::new(s) as Box<dyn ClipboardSource>)
+            }),
+        }
+    }
+}
 
 /// Handle for the background editor/diff/ext/clipboard polling threads.
 pub(crate) struct CaptureHandle {
