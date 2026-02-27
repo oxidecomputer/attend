@@ -914,21 +914,31 @@ proptest! {
     fn prop_clipboard_in_merge_pipeline(mut events in arb_events()) {
         compress_and_merge(&mut events);
 
-        // Collect normalized texts from richer sources in the output.
+        // Collect normalized texts from richer sources in the output,
+        // excluding empty strings (whitespace-only normalizes to "" and
+        // would vacuously match any other whitespace-only content).
         let mut richer_texts: Vec<String> = Vec::new();
         for e in &events {
             match e {
                 Event::ExternalSelection { text, .. } => {
-                    richer_texts.push(normalize_text(text));
+                    let norm = normalize_text(text);
+                    if !norm.is_empty() {
+                        richer_texts.push(norm);
+                    }
                 }
                 Event::BrowserSelection { plain_text, .. } => {
-                    richer_texts.push(normalize_text(plain_text));
+                    let norm = normalize_text(plain_text);
+                    if !norm.is_empty() {
+                        richer_texts.push(norm);
+                    }
                 }
                 _ => {}
             }
         }
 
         // Check: no text clipboard should match a richer source.
+        // Skip empty normalized text: whitespace-only content normalizes to ""
+        // and would vacuously match any other whitespace-only source.
         for e in &events {
             if let Event::ClipboardSelection {
                 content: ClipboardContent::Text { text },
@@ -936,6 +946,9 @@ proptest! {
             } = e
             {
                 let norm = normalize_text(text);
+                if norm.is_empty() {
+                    continue;
+                }
                 prop_assert!(
                     !richer_texts.contains(&norm),
                     "clipboard text {:?} (normalized: {:?}) should have been deduped \

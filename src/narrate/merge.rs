@@ -758,7 +758,9 @@ pub(crate) fn normalize_text(text: &str) -> String {
 ///
 /// Image clipboard events are never deduped by this pass.
 fn dedup_clipboard_selections(events: &mut Vec<Event>) {
-    // Collect normalized texts from richer sources.
+    // Collect normalized texts from richer sources, excluding empty strings
+    // (whitespace-only text normalizes to "" and would vacuously match
+    // any other whitespace-only content).
     let richer_texts: Vec<String> = events
         .iter()
         .filter_map(|e| match e {
@@ -766,6 +768,7 @@ fn dedup_clipboard_selections(events: &mut Vec<Event>) {
             Event::BrowserSelection { plain_text, .. } => Some(normalize_text(plain_text)),
             _ => None,
         })
+        .filter(|t| !t.is_empty())
         .collect();
 
     if richer_texts.is_empty() {
@@ -781,6 +784,11 @@ fn dedup_clipboard_selections(events: &mut Vec<Event>) {
             return true;
         };
         let norm = normalize_text(text);
+        // Empty normalized text (whitespace-only clipboard) cannot meaningfully
+        // match a richer source: skip dedup to avoid vacuous matches.
+        if norm.is_empty() {
+            return true;
+        }
         !richer_texts.contains(&norm)
     });
 }
