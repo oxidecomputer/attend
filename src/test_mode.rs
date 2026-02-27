@@ -655,31 +655,30 @@ mod tests {
         let clock = super::clock().expect("MockClock not set");
         assert_eq!(clock.now(), chrono::DateTime::UNIX_EPOCH);
 
-        // Helper: send an inject message and spin until the clock reaches
-        // the expected value. No real wall-clock sleeps.
-        let send_and_wait = |msg: &Inject, expected: chrono::DateTime<chrono::Utc>| {
+        // Helper: send an inject message and wait for the clock to advance.
+        //
+        // Uses MockClock::sleep() which blocks on the condvar until advance()
+        // meets the deadline. This isn't circular: the *background reader
+        // thread* calls advance(), not this thread. The deadlock invariant
+        // ("the inject reader must never call clock.sleep()") is respected.
+        let send_and_wait = |msg: &Inject, wait: Duration| {
             let mut json = serde_json::to_vec(msg).unwrap();
             json.push(b'\n');
             (&stream).write_all(&json).unwrap();
-
-            let deadline = std::time::Instant::now() + Duration::from_secs(1);
-            while clock.now() != expected {
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "timed out waiting for clock to reach {expected}"
-                );
-                std::thread::yield_now();
-            }
+            clock.sleep(wait);
         };
 
         let epoch = chrono::DateTime::UNIX_EPOCH;
         send_and_wait(
             &Inject::AdvanceTime { duration_ms: 5000 },
-            epoch + Duration::from_secs(5),
+            Duration::from_secs(5),
         );
+        assert_eq!(clock.now(), epoch + Duration::from_secs(5));
+
         send_and_wait(
             &Inject::AdvanceTime { duration_ms: 3000 },
-            epoch + Duration::from_secs(8),
+            Duration::from_secs(3),
         );
+        assert_eq!(clock.now(), epoch + Duration::from_secs(8));
     }
 }
