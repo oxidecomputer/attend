@@ -15,7 +15,11 @@ mod macos;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use chrono::{DateTime, Utc};
+
+use crate::clock::Clock;
 
 use super::merge::Event;
 
@@ -100,7 +104,7 @@ impl ExtDwellTracker {
     /// Returns `New(snapshot)` immediately if the selected text changed.
     /// Returns `Extend` if unchanged (same text, for `last_seen` update).
     /// Returns `None` if no text is selected.
-    pub fn update(&mut self, snapshot: ExternalSnapshot, _now: Instant) -> ExtUpdate {
+    pub fn update(&mut self, snapshot: ExternalSnapshot, _now: DateTime<Utc>) -> ExtUpdate {
         let current_text = snapshot.selected_text.as_deref();
 
         // No text selected: nothing to emit.
@@ -125,6 +129,7 @@ impl ExtDwellTracker {
 /// until `stop` is set.
 pub(super) fn spawn(
     source: Box<dyn ExternalSource>,
+    clock: Arc<dyn Clock>,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     events: Arc<Mutex<Vec<Event>>>,
@@ -143,13 +148,13 @@ pub(super) fn spawn(
 
         while !stop.load(Ordering::Relaxed) {
             if paused.load(Ordering::Relaxed) {
-                thread::sleep(Duration::from_millis(PAUSED_POLL_MS));
+                clock.sleep(Duration::from_millis(PAUSED_POLL_MS));
                 continue;
             }
 
-            thread::sleep(Duration::from_millis(EXT_POLL_MS));
+            clock.sleep(Duration::from_millis(EXT_POLL_MS));
 
-            let now = Instant::now();
+            let now = clock.now();
 
             // Query the platform backend.
             let Some(snapshot) = source.query() else {
@@ -167,7 +172,7 @@ pub(super) fn spawn(
             // Emit or extend based on tracker result.
             match tracker.update(snapshot, now) {
                 ExtUpdate::New(snapshot) => {
-                    let timestamp = chrono::Utc::now();
+                    let timestamp = clock.now();
                     events.lock().unwrap().push(Event::ExternalSelection {
                         timestamp,
                         last_seen: timestamp,
@@ -177,8 +182,7 @@ pub(super) fn spawn(
                     });
                 }
                 ExtUpdate::Extend => {
-                    // Extend the last event's last_seen timestamp.
-                    let now_utc = chrono::Utc::now();
+                    let now_utc = clock.now();
                     let mut guard = events.lock().unwrap();
                     if let Some(Event::ExternalSelection { last_seen, .. }) = guard.last_mut() {
                         *last_seen = now_utc;

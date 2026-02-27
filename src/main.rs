@@ -10,6 +10,7 @@ extern crate objc;
 mod agent;
 mod browser;
 mod cli;
+mod clock;
 mod config;
 mod editor;
 mod hook;

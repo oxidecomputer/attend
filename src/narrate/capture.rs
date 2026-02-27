@@ -24,6 +24,8 @@ use std::thread;
 
 use camino::Utf8PathBuf;
 
+use crate::clock::Clock;
+
 use super::clipboard_capture::ClipboardSource;
 use super::editor_capture::EditorStateSource;
 use super::ext_capture::ExternalSource;
@@ -34,6 +36,8 @@ use super::merge::Event;
 /// Production code uses [`CaptureConfig::production`]; test mode substitutes
 /// stubs that return scripted state.
 pub(crate) struct CaptureConfig {
+    /// Injectable clock for timestamps and sleep.
+    pub clock: Arc<dyn Clock>,
     /// Editor state query source.
     pub editor_source: Box<dyn EditorStateSource>,
     /// External selection source, or `None` if unavailable.
@@ -47,6 +51,7 @@ impl CaptureConfig {
     /// Create a config using real platform sources.
     pub fn production() -> Self {
         Self {
+            clock: Arc::new(crate::clock::RealClock),
             editor_source: Box::new(super::editor_capture::RealEditorSource),
             ext_source: super::ext_capture::platform_source(),
             clipboard_factory: Box::new(|| {
@@ -77,6 +82,7 @@ pub(crate) struct CaptureHandle {
     clipboard_enabled: bool,
     clipboard_staging_dir: Utf8PathBuf,
     clipboard_factory: Box<dyn Fn() -> Option<Box<dyn ClipboardSource>> + Send>,
+    clock: Arc<dyn Clock>,
 }
 
 impl CaptureHandle {
@@ -147,6 +153,7 @@ impl CaptureHandle {
         self.clipboard_stop = Arc::clone(&stop);
         self.clipboard_thread = super::clipboard_capture::spawn(
             source,
+            Arc::clone(&self.clock),
             stop,
             Arc::clone(&self.clipboard_events),
             self.clipboard_staging_dir.clone(),
@@ -182,6 +189,7 @@ pub(crate) fn start(
 
     let editor_thread = super::editor_capture::spawn(
         config.editor_source,
+        Arc::clone(&config.clock),
         Arc::clone(&stop_flag),
         Arc::clone(&paused_flag),
         cwd,
@@ -190,6 +198,7 @@ pub(crate) fn start(
     );
 
     let diff_thread = super::diff_capture::spawn(
+        Arc::clone(&config.clock),
         Arc::clone(&stop_flag),
         Arc::clone(&paused_flag),
         Arc::clone(&open_paths),
@@ -199,6 +208,7 @@ pub(crate) fn start(
     let ext_thread = if let Some(ext_source) = config.ext_source {
         super::ext_capture::spawn(
             ext_source,
+            Arc::clone(&config.clock),
             Arc::clone(&stop_flag),
             Arc::clone(&paused_flag),
             Arc::clone(&ext_events),
@@ -213,6 +223,7 @@ pub(crate) fn start(
         if let Some(source) = (config.clipboard_factory)() {
             super::clipboard_capture::spawn(
                 source,
+                Arc::clone(&config.clock),
                 Arc::clone(&clipboard_stop),
                 Arc::clone(&clipboard_events),
                 clipboard_staging_dir.clone(),
@@ -239,5 +250,6 @@ pub(crate) fn start(
         clipboard_enabled: clipboard_capture,
         clipboard_staging_dir,
         clipboard_factory: config.clipboard_factory,
+        clock: config.clock,
     })
 }

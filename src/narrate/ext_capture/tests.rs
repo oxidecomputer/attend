@@ -1,10 +1,12 @@
+use chrono::{Duration, Utc};
+
 use super::*;
 
 /// Selections are emitted immediately on change.
 #[test]
 fn selection_emitted_immediately() {
     let mut tracker = ExtDwellTracker::new();
-    let now = Instant::now();
+    let now = Utc::now();
 
     let snap = ExternalSnapshot {
         app: "iTerm2".into(),
@@ -20,7 +22,7 @@ fn selection_emitted_immediately() {
 #[test]
 fn empty_selection_returns_none() {
     let mut tracker = ExtDwellTracker::new();
-    let now = Instant::now();
+    let now = Utc::now();
 
     let empty = ExternalSnapshot {
         app: "iTerm2".into(),
@@ -41,7 +43,7 @@ fn empty_selection_returns_none() {
 #[test]
 fn dedup_same_text() {
     let mut tracker = ExtDwellTracker::new();
-    let now = Instant::now();
+    let now = Utc::now();
 
     let snap = ExternalSnapshot {
         app: "iTerm2".into(),
@@ -57,7 +59,7 @@ fn dedup_same_text() {
 
     // Same text again: Extend (not None).
     assert!(matches!(
-        tracker.update(snap, now + Duration::from_millis(50)),
+        tracker.update(snap, now + Duration::milliseconds(50)),
         ExtUpdate::Extend
     ));
 }
@@ -66,7 +68,7 @@ fn dedup_same_text() {
 #[test]
 fn same_text_returns_extend() {
     let mut tracker = ExtDwellTracker::new();
-    let now = Instant::now();
+    let now = Utc::now();
 
     let snap = ExternalSnapshot {
         app: "iTerm2".into(),
@@ -82,7 +84,7 @@ fn same_text_returns_extend() {
 
     // Same text again: Extend (not None).
     assert!(matches!(
-        tracker.update(snap, now + Duration::from_millis(50)),
+        tracker.update(snap, now + Duration::milliseconds(50)),
         ExtUpdate::Extend
     ));
 }
@@ -91,7 +93,7 @@ fn same_text_returns_extend() {
 #[test]
 fn different_texts_all_emitted() {
     let mut tracker = ExtDwellTracker::new();
-    let now = Instant::now();
+    let now = Utc::now();
 
     let snap1 = ExternalSnapshot {
         app: "iTerm2".into(),
@@ -111,11 +113,11 @@ fn different_texts_all_emitted() {
 
     assert!(matches!(tracker.update(snap1, now), ExtUpdate::New(_)));
     assert!(matches!(
-        tracker.update(snap2, now + Duration::from_millis(30)),
+        tracker.update(snap2, now + Duration::milliseconds(30)),
         ExtUpdate::New(_)
     ));
     assert!(matches!(
-        tracker.update(snap3, now + Duration::from_millis(60)),
+        tracker.update(snap3, now + Duration::milliseconds(60)),
         ExtUpdate::New(_)
     ));
 }

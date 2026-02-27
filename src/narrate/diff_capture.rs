@@ -11,12 +11,12 @@ use std::collections::HashMap;
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::Duration;
 
 use camino::Utf8PathBuf;
 
 use super::merge::Event;
+use crate::clock::Clock;
 
 /// How often to poll for file content changes (secs).
 const FILE_DIFF_POLL_SECS: u64 = 1;
@@ -31,12 +31,13 @@ const PAUSED_POLL_MS: u64 = 500;
 /// Returns the join handle. The thread pushes `FileDiff` events into
 /// `events` until `stop` is set.
 pub(super) fn spawn(
+    clock: Arc<dyn Clock>,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     open_paths: Arc<Mutex<Vec<Utf8PathBuf>>>,
     events: Arc<Mutex<Vec<Event>>>,
-) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
         let mut file_contents: HashMap<Utf8PathBuf, String> = HashMap::new();
         let mut file_mtimes: HashMap<Utf8PathBuf, std::time::SystemTime> = HashMap::new();
 
@@ -57,11 +58,11 @@ pub(super) fn spawn(
 
         while !stop.load(Ordering::Relaxed) {
             if paused.load(Ordering::Relaxed) {
-                thread::sleep(Duration::from_millis(PAUSED_POLL_MS));
+                clock.sleep(Duration::from_millis(PAUSED_POLL_MS));
                 continue;
             }
 
-            thread::sleep(Duration::from_secs(FILE_DIFF_POLL_SECS));
+            clock.sleep(Duration::from_secs(FILE_DIFF_POLL_SECS));
 
             // Read the current file list from the editor capture thread.
             let paths = open_paths.lock().unwrap().clone();
@@ -92,7 +93,7 @@ pub(super) fn spawn(
                 if let Some(old_content) = file_contents.get(path)
                     && *old_content != new_content
                 {
-                    let timestamp = chrono::Utc::now();
+                    let timestamp = clock.now();
                     // Keep absolute path — filtering deferred to receive.
                     let display_path = path.as_str().to_string();
                     events.lock().unwrap().push(Event::FileDiff {

@@ -1,5 +1,36 @@
 # Socket-Based Daemon Redesign
 
+## Status
+
+<!-- Keep this section current. Update after every commit. -->
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Phase 0: Test infrastructure | **In progress** | Items 1-2 complete; item 3 (Clock trait) in progress: capture threads done, record.rs + CLI next |
+| Phase A: Socket control plane | Not started | Blocked on Phase 0 gate |
+| Phase B: External event ingestion | Not started | Blocked on Phase A |
+| Phase C: Narration delivery | Not started | Blocked on Phase B |
+| Phase D: Cleanup | Not started | Blocked on Phase C |
+
+### Phase 0 items
+
+- [x] 1a. Extract `EditorStateSource` trait — `3c4f05b`
+- [x] 1b. Extract `ClipboardSource` trait — `69553a6`
+- [x] 1c. Extract `AudioSource` trait — `023c84d`
+- [x] 1d. Wire `CaptureConfig` into `capture::start()` — `6ccb168`
+- [x] 2. Add `StubTranscriber` — `3ca31b6`
+- [ ] 3. Clock trait and `Instant` elimination
+- [ ] 4. `ATTEND_TEST_MODE` and `ATTEND_CACHE_DIR` env vars
+- [ ] 5. End-to-end test harness
+- [ ] 6. Declarative oracle
+- [ ] 7. Proptest action-sequence fuzzer
+
+### Bug fixes discovered during implementation
+
+- `92f8cc7` — Fix vacuous empty-string match in clipboard dedup
+- `c383639` — Fix cross-run clipboard dedup: promote to global pass
+- `cd5c577` — Gate stub module behind `#[cfg(test)]`, document build verification
+
 ## Current architecture
 
 This section describes how things work today, for context. If you're
@@ -1338,11 +1369,16 @@ session. To enable clean handoff:
 
 1. **This document is the source of truth.** The implementing agent should
    read this file first. It contains the full design, all resolved
-   decisions, and the migration ordering.
+   decisions, and the migration ordering. **Always plan in this file,
+   never in ephemeral agent plan mode.** Committing plans to the repo
+   ensures state persists across agent sessions and is reviewable by
+   humans. When something needs planning, update this document directly.
 
-2. **Phase status tracker.** Each phase has a gate (oracle suites pass
-   green). Update the status at the top of this file and mark completed
-   phases as done, with the commit hash where the gate was met.
+2. **Phase status tracker.** The [Status](#status) section at the top of
+   this file tracks phase-level and item-level progress. **Update it
+   after every commit** — check off completed items with their commit
+   hash, update the phase status, and log bug fixes. The next agent
+   reads this section first to understand where things stand.
 
 3. **Per-phase notes.** When a phase is in progress, keep a short log of
    implementation decisions and deviations at the bottom of this file
@@ -1353,7 +1389,8 @@ session. To enable clean handoff:
    invariant should be its own commit. This gives the next agent a clear
    `git log` to understand progress.
 
-   **Build verification before every commit.** Run the full `cargo clippy`
+   **Build verification before every commit.** Use `cargo nextest run`
+   (not `cargo test`) as the test runner. Run the full `cargo clippy`
    and `cargo nextest run` output **unfiltered** — no `| tail`, `| head`,
    `| grep`, or other pipes that could hide warnings or failures. Zero
    clippy warnings, zero test failures. Proptest suites are

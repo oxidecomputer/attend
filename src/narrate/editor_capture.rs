@@ -9,12 +9,13 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use camino::{Utf8Path, Utf8PathBuf};
+use chrono::{DateTime, TimeDelta, Utc};
 
 use super::merge::Event;
+use crate::clock::Clock;
 use crate::state::{self, EditorState};
 use crate::view;
 
@@ -74,16 +75,16 @@ enum EditorUpdate {
 /// (new editor state). When either method returns `Some`, the caller should
 /// emit that snapshot.
 struct DwellTracker {
-    dwell_duration: Duration,
+    dwell_duration: TimeDelta,
     /// Last emitted-or-stored file state, used for deduplication.
     prev_files: Option<Vec<state::FileEntry>>,
     /// A cursor-only snapshot waiting for the dwell timeout.
-    pending_cursor: Option<(Instant, Vec<state::FileEntry>)>,
+    pending_cursor: Option<(DateTime<Utc>, Vec<state::FileEntry>)>,
 }
 
 impl DwellTracker {
     /// Create a new tracker with the given dwell duration.
-    fn new(dwell_duration: Duration) -> Self {
+    fn new(dwell_duration: TimeDelta) -> Self {
         Self {
             dwell_duration,
             prev_files: None,
@@ -95,9 +96,9 @@ impl DwellTracker {
     ///
     /// Returns `Some(files)` if the pending snapshot should be emitted now,
     /// clearing the pending state. Returns `None` otherwise.
-    fn tick(&mut self, now: Instant) -> Option<Vec<state::FileEntry>> {
+    fn tick(&mut self, now: DateTime<Utc>) -> Option<Vec<state::FileEntry>> {
         if let Some((changed_at, _)) = &self.pending_cursor
-            && now.duration_since(*changed_at) >= self.dwell_duration
+            && (now - *changed_at) >= self.dwell_duration
         {
             return self.pending_cursor.take().map(|(_, files)| files);
         }
@@ -111,7 +112,7 @@ impl DwellTracker {
     /// Returns `Extend` if unchanged but has real selections (for `last_seen`).
     /// Cursor-only snapshots are stored as pending and will be emitted later
     /// via [`tick`]. Returns `None` for cursor-only or truly unchanged cursors.
-    fn update(&mut self, files: Vec<state::FileEntry>, now: Instant) -> EditorUpdate {
+    fn update(&mut self, files: Vec<state::FileEntry>, now: DateTime<Utc>) -> EditorUpdate {
         // Check if unchanged from last state.
         if self.prev_files.as_ref() == Some(&files) {
             // If the unchanged state has real selections, signal Extend
@@ -156,29 +157,30 @@ const PAUSED_POLL_MS: u64 = 500;
 /// file paths into `open_paths` for the diff capture thread to read.
 pub(super) fn spawn(
     source: Box<dyn EditorStateSource>,
+    clock: Arc<dyn Clock>,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     cwd: Option<Utf8PathBuf>,
     events: Arc<Mutex<Vec<Event>>>,
     open_paths: Arc<Mutex<Vec<Utf8PathBuf>>>,
-) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
         let mut lang_cache = view::LanguageCache::new();
-        let mut tracker = DwellTracker::new(Duration::from_millis(CURSOR_DWELL_MS));
+        let mut tracker = DwellTracker::new(TimeDelta::milliseconds(CURSOR_DWELL_MS as i64));
 
         while !stop.load(Ordering::Relaxed) {
             if paused.load(Ordering::Relaxed) {
-                thread::sleep(Duration::from_millis(PAUSED_POLL_MS));
+                clock.sleep(Duration::from_millis(PAUSED_POLL_MS));
                 continue;
             }
 
-            thread::sleep(Duration::from_millis(EDITOR_POLL_MS));
+            clock.sleep(Duration::from_millis(EDITOR_POLL_MS));
 
-            let now = Instant::now();
+            let now = clock.now();
 
             // Flush a dwelled cursor-only snapshot if enough time has passed.
             if let Some(files) = tracker.tick(now) {
-                let timestamp = chrono::Utc::now();
+                let timestamp = clock.now();
                 let regions = capture_snapshot_regions(&files, None, &mut lang_cache);
                 events.lock().unwrap().push(Event::EditorSnapshot {
                     timestamp,
@@ -198,7 +200,7 @@ pub(super) fn spawn(
 
             match tracker.update(state.files, now) {
                 EditorUpdate::Emit(files) => {
-                    let timestamp = chrono::Utc::now();
+                    let timestamp = clock.now();
                     let regions = capture_snapshot_regions(&files, None, &mut lang_cache);
                     events.lock().unwrap().push(Event::EditorSnapshot {
                         timestamp,
@@ -208,8 +210,7 @@ pub(super) fn spawn(
                     });
                 }
                 EditorUpdate::Extend => {
-                    // Extend the last event's last_seen timestamp.
-                    let now_utc = chrono::Utc::now();
+                    let now_utc = clock.now();
                     let mut guard = events.lock().unwrap();
                     if let Some(Event::EditorSnapshot { last_seen, .. }) = guard.last_mut() {
                         *last_seen = now_utc;
@@ -239,6 +240,7 @@ mod tests {
     use super::*;
     use crate::state::{FileEntry, Position, Selection};
     use camino::Utf8PathBuf;
+    use chrono::Duration;
 
     /// Build a cursor-only FileEntry (zero-width cursor at line:col).
     fn cursor_entry(path: &str, line: usize, col: usize) -> FileEntry {
@@ -273,9 +275,9 @@ mod tests {
     /// timeout elapses.
     #[test]
     fn cursor_only_deferred() {
-        let dwell = Duration::from_millis(100);
+        let dwell = Duration::milliseconds(100);
         let mut tracker = DwellTracker::new(dwell);
-        let now = Instant::now();
+        let now = Utc::now();
 
         let files = vec![cursor_entry("foo.rs", 1, 1)];
 
@@ -299,9 +301,9 @@ mod tests {
     /// Updates with real selections (non-cursor-like) emit immediately.
     #[test]
     fn selection_immediate() {
-        let dwell = Duration::from_millis(100);
+        let dwell = Duration::milliseconds(100);
         let mut tracker = DwellTracker::new(dwell);
-        let now = Instant::now();
+        let now = Utc::now();
 
         let files = vec![selection_entry("foo.rs", 1, 1, 1, 10)];
 
@@ -313,9 +315,9 @@ mod tests {
     /// position is emitted once the timeout elapses.
     #[test]
     fn rapid_cursor_changes() {
-        let dwell = Duration::from_millis(100);
+        let dwell = Duration::milliseconds(100);
         let mut tracker = DwellTracker::new(dwell);
-        let now = Instant::now();
+        let now = Utc::now();
 
         let first = vec![cursor_entry("foo.rs", 1, 1)];
         let second = vec![cursor_entry("foo.rs", 5, 1)];
@@ -324,19 +326,19 @@ mod tests {
         // Each cursor-only update returns None and replaces the pending.
         assert!(matches!(tracker.update(first, now), EditorUpdate::None));
         assert!(matches!(
-            tracker.update(second, now + Duration::from_millis(30)),
+            tracker.update(second, now + Duration::milliseconds(30)),
             EditorUpdate::None
         ));
         assert!(matches!(
-            tracker.update(third.clone(), now + Duration::from_millis(60)),
+            tracker.update(third.clone(), now + Duration::milliseconds(60)),
             EditorUpdate::None
         ));
 
         // tick before dwell from the *last* update returns None.
-        assert_eq!(tracker.tick(now + Duration::from_millis(60 + 50)), None);
+        assert_eq!(tracker.tick(now + Duration::milliseconds(60 + 50)), None);
 
         // tick after dwell from the last update returns only the last files.
-        let emitted = tracker.tick(now + Duration::from_millis(60 + 100));
+        let emitted = tracker.tick(now + Duration::milliseconds(60 + 100));
         assert_eq!(emitted, Some(third));
     }
 
@@ -344,9 +346,9 @@ mod tests {
     /// before the dwell timeout.
     #[test]
     fn cursor_then_selection() {
-        let dwell = Duration::from_millis(100);
+        let dwell = Duration::milliseconds(100);
         let mut tracker = DwellTracker::new(dwell);
-        let now = Instant::now();
+        let now = Utc::now();
 
         let cursor = vec![cursor_entry("foo.rs", 1, 1)];
         let sel = vec![selection_entry("foo.rs", 1, 1, 1, 10)];
@@ -355,7 +357,7 @@ mod tests {
         assert!(matches!(tracker.update(cursor, now), EditorUpdate::None));
 
         // Selection arrives before dwell timeout: emits immediately.
-        let result = tracker.update(sel.clone(), now + Duration::from_millis(50));
+        let result = tracker.update(sel.clone(), now + Duration::milliseconds(50));
         assert!(matches!(result, EditorUpdate::Emit(ref f) if f == &sel));
 
         // tick after original dwell timeout returns None (cursor was discarded).
@@ -366,9 +368,9 @@ mod tests {
     /// Extend (for last_seen tracking), not None.
     #[test]
     fn unchanged_selection_state_extends() {
-        let dwell = Duration::from_millis(100);
+        let dwell = Duration::milliseconds(100);
         let mut tracker = DwellTracker::new(dwell);
-        let now = Instant::now();
+        let now = Utc::now();
 
         let files = vec![selection_entry("foo.rs", 1, 1, 1, 10)];
 
@@ -380,7 +382,7 @@ mod tests {
 
         // Same state again with real selections: Extend.
         assert!(matches!(
-            tracker.update(files, now + Duration::from_millis(50)),
+            tracker.update(files, now + Duration::milliseconds(50)),
             EditorUpdate::Extend
         ));
     }
@@ -388,9 +390,9 @@ mod tests {
     /// Updating with the same cursor-only file state returns None (not Extend).
     #[test]
     fn unchanged_cursor_state() {
-        let dwell = Duration::from_millis(100);
+        let dwell = Duration::milliseconds(100);
         let mut tracker = DwellTracker::new(dwell);
-        let now = Instant::now();
+        let now = Utc::now();
 
         let files = vec![cursor_entry("foo.rs", 1, 1)];
 
@@ -402,7 +404,7 @@ mod tests {
 
         // Same cursor-only state: still None.
         assert!(matches!(
-            tracker.update(files, now + Duration::from_millis(50)),
+            tracker.update(files, now + Duration::milliseconds(50)),
             EditorUpdate::None
         ));
     }
@@ -411,9 +413,9 @@ mod tests {
     /// starts a fresh dwell period.
     #[test]
     fn selection_then_cursor() {
-        let dwell = Duration::from_millis(100);
+        let dwell = Duration::milliseconds(100);
         let mut tracker = DwellTracker::new(dwell);
-        let now = Instant::now();
+        let now = Utc::now();
 
         let sel = vec![selection_entry("foo.rs", 1, 1, 1, 10)];
         let cursor = vec![cursor_entry("foo.rs", 5, 1)];
@@ -425,7 +427,7 @@ mod tests {
         ));
 
         // Cursor-only: deferred.
-        let t1 = now + Duration::from_millis(200);
+        let t1 = now + Duration::milliseconds(200);
         assert!(matches!(
             tracker.update(cursor.clone(), t1),
             EditorUpdate::None

@@ -14,10 +14,10 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::Duration;
 
 use super::merge::{ClipboardContent, Event};
+use crate::clock::Clock;
 
 /// Source of clipboard content.
 ///
@@ -187,18 +187,19 @@ const CLIPBOARD_POLL_MS: u64 = 500;
 /// in the next recording period.
 pub(super) fn spawn(
     mut source: Box<dyn ClipboardSource>,
+    clock: Arc<dyn Clock>,
     stop: Arc<AtomicBool>,
     events: Arc<Mutex<Vec<Event>>>,
     staging_dir: camino::Utf8PathBuf,
-) -> Option<thread::JoinHandle<()>> {
+) -> Option<std::thread::JoinHandle<()>> {
     // Seed with current clipboard content (no event emitted).
     let seed_text = source.get_text();
     let seed_image = source.get_image();
     let mut tracker = ClipboardTracker::new_seeded(seed_text.as_deref(), seed_image.as_ref());
 
-    Some(thread::spawn(move || {
+    Some(std::thread::spawn(move || {
         while !stop.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_millis(CLIPBOARD_POLL_MS));
+            clock.sleep(Duration::from_millis(CLIPBOARD_POLL_MS));
 
             // Try text first, then image. First success wins.
             let text = source.get_text();
@@ -206,7 +207,7 @@ pub(super) fn spawn(
 
             match tracker.check(text.as_deref(), image_data.as_ref()) {
                 ClipboardUpdate::Changed(ClipboardContent::Text { text }) => {
-                    let timestamp = chrono::Utc::now();
+                    let timestamp = clock.now();
                     events.lock().unwrap().push(Event::ClipboardSelection {
                         timestamp,
                         content: ClipboardContent::Text { text },
@@ -220,7 +221,7 @@ pub(super) fn spawn(
                     let Some(path) = stage_image_png(img, &staging_dir) else {
                         continue;
                     };
-                    let timestamp = chrono::Utc::now();
+                    let timestamp = clock.now();
                     events.lock().unwrap().push(Event::ClipboardSelection {
                         timestamp,
                         content: ClipboardContent::Image { path },
