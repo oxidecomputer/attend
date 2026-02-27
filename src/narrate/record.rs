@@ -1114,6 +1114,7 @@ pub fn daemon() -> anyhow::Result<()> {
     let clipboard_enabled = config.clipboard_capture.unwrap_or(true);
     let clipboard_staging = super::clipboard_staging_dir(session_id.as_ref());
     let editor_events = capture::start(
+        capture::CaptureConfig::production(),
         None,
         config.ext_ignore_apps.clone(),
         clipboard_enabled,

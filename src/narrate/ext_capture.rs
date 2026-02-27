@@ -120,17 +120,16 @@ impl ExtDwellTracker {
 
 /// Spawn the external selection polling thread.
 ///
-/// Returns the join handle, or `None` if the platform has no backend or
-/// accessibility permission is not granted. The thread pushes
-/// `ExternalSelection` events into `events` until `stop` is set.
+/// Returns the join handle, or `None` if accessibility permission is not
+/// granted. The thread pushes `ExternalSelection` events into `events`
+/// until `stop` is set.
 pub(super) fn spawn(
+    source: Box<dyn ExternalSource>,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     events: Arc<Mutex<Vec<Event>>>,
     ignore_apps: Vec<String>,
 ) -> Option<thread::JoinHandle<()>> {
-    let source = platform_source()?;
-
     if !source.is_available() {
         eprintln!(
             "External text capture requires Accessibility permission for your terminal. \

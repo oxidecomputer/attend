@@ -76,6 +76,7 @@ pub(crate) struct CaptureHandle {
     clipboard_thread: Option<thread::JoinHandle<()>>,
     clipboard_enabled: bool,
     clipboard_staging_dir: Utf8PathBuf,
+    clipboard_factory: Box<dyn Fn() -> Option<Box<dyn ClipboardSource>> + Send>,
 }
 
 impl CaptureHandle {
@@ -139,13 +140,13 @@ impl CaptureHandle {
         if !self.clipboard_enabled {
             return;
         }
-        let Some(source) = super::clipboard_capture::ArboardClipboardSource::new() else {
+        let Some(source) = (self.clipboard_factory)() else {
             return;
         };
         let stop = Arc::new(AtomicBool::new(false));
         self.clipboard_stop = Arc::clone(&stop);
         self.clipboard_thread = super::clipboard_capture::spawn(
-            Box::new(source),
+            source,
             stop,
             Arc::clone(&self.clipboard_events),
             self.clipboard_staging_dir.clone(),
@@ -162,6 +163,7 @@ impl CaptureHandle {
 ///
 /// Pass `None` for `cwd` to keep paths absolute (filtering deferred to receive).
 pub(crate) fn start(
+    config: CaptureConfig,
     cwd: Option<Utf8PathBuf>,
     ext_ignore_apps: Vec<String>,
     clipboard_capture: bool,
@@ -179,7 +181,7 @@ pub(crate) fn start(
     let open_paths: Arc<Mutex<Vec<Utf8PathBuf>>> = Arc::new(Mutex::new(Vec::new()));
 
     let editor_thread = super::editor_capture::spawn(
-        Box::new(super::editor_capture::RealEditorSource),
+        config.editor_source,
         Arc::clone(&stop_flag),
         Arc::clone(&paused_flag),
         cwd,
@@ -194,18 +196,23 @@ pub(crate) fn start(
         Arc::clone(&diff_events),
     );
 
-    let ext_thread = super::ext_capture::spawn(
-        Arc::clone(&stop_flag),
-        Arc::clone(&paused_flag),
-        Arc::clone(&ext_events),
-        ext_ignore_apps,
-    );
+    let ext_thread = if let Some(ext_source) = config.ext_source {
+        super::ext_capture::spawn(
+            ext_source,
+            Arc::clone(&stop_flag),
+            Arc::clone(&paused_flag),
+            Arc::clone(&ext_events),
+            ext_ignore_apps,
+        )
+    } else {
+        None
+    };
 
     let clipboard_stop = Arc::new(AtomicBool::new(false));
     let clipboard_thread = if clipboard_capture {
-        if let Some(source) = super::clipboard_capture::ArboardClipboardSource::new() {
+        if let Some(source) = (config.clipboard_factory)() {
             super::clipboard_capture::spawn(
-                Box::new(source),
+                source,
                 Arc::clone(&clipboard_stop),
                 Arc::clone(&clipboard_events),
                 clipboard_staging_dir.clone(),
@@ -231,5 +238,6 @@ pub(crate) fn start(
         clipboard_thread,
         clipboard_enabled: clipboard_capture,
         clipboard_staging_dir,
+        clipboard_factory: config.clipboard_factory,
     })
 }
