@@ -53,6 +53,7 @@ Four commits:
 - `92f8cc7` — Fix vacuous empty-string match in clipboard dedup
 - `c383639` — Fix cross-run clipboard dedup: promote to global pass
 - `cd5c577` — Gate stub module behind `#[cfg(test)]`, document build verification
+- `f68eaec` — Fix panic on multi-byte UTF-8 in editor snapshot annotation
 
 ## Current architecture
 
@@ -821,9 +822,9 @@ trait boundaries and supporting infrastructure:
    `$ATTEND_CACHE_DIR/test-inject.sock` and accepts connections. Every
    process spawned with `ATTEND_TEST_MODE=1` (daemon and CLI commands
    alike) creates a `MockClock`, connects to the inject socket at the
-   top of `main` (before any clock usage), and sends its PID as a JSON
-   struct (`{"pid": N}`). A background thread reads newline-delimited
-   JSON messages from the socket and dispatches
+   top of `main` (before any clock usage), and sends its PID and argv
+   as a JSON struct (`{"pid": N, "argv": [...]}`). A background thread
+   reads newline-delimited JSON messages from the socket and dispatches
    them: `AdvanceTime` goes to the `MockClock`, capture injections go
    to the appropriate stub channels (the daemon routes them; other
    processes ignore them).
@@ -1139,11 +1140,17 @@ object followed by `\n`. This applies in both directions (handshake
 client→server, injections server→client). Debuggable with `socat` /
 `jq` — same rationale as the main control socket.
 
-**Handshake**: on connect, the process sends a single JSON struct:
+**Handshake**: on connect, the process sends a single JSON struct with
+its PID and full command line (`argv`):
 
 ```json
-{"pid": 12345}
+{"pid": 12345, "argv": ["attend", "narrate", "_daemon"]}
 ```
+
+The `argv` field lets the harness positively identify the daemon
+connection (its argv ends with `narrate _daemon`) vs CLI commands. The
+harness asserts that unknown PIDs (those not from a `Command::spawn()`
+it initiated) always have daemon argv — any other unknown PID is a bug.
 
 After the handshake, the process sends nothing more. It reads a stream
 of `Inject` messages from the harness until the connection closes (which
@@ -1187,7 +1194,7 @@ until the new process is connected and listening.
 1. Harness calls `Command::new("attend").arg("narrate").arg("stop").spawn()`.
 2. Harness blocks on "wait for PID N to connect to inject socket".
 3. Child process starts, connects to inject socket at top of `main`,
-   sends `{"pid": N}`.
+   sends `{"pid": N, "argv": ["attend", "narrate", "stop"]}`.
 4. Harness sees PID N, unblocks.
 5. Harness proceeds with the next action (advance time, inject events,
    spawn another command).
@@ -1201,18 +1208,22 @@ grandchild (`toggle`/`start` call `spawn_daemon()` with
 `process_group(0)` + `setsid()`). The harness doesn't know the daemon's
 PID in advance — it only knows the PID of the CLI command it spawned.
 
-The harness accepts connections from unknown PIDs without error. When
-the daemon starts, it connects to the inject socket and sends its PID
-like any other process. The harness observes a new connection arriving
-after the CLI command's connection.
+The harness accepts connections from unknown PIDs, but validates them:
+it checks the `argv` field and asserts that any unknown PID has daemon
+argv (`narrate _daemon`). Any other unknown argv is a test bug.
 
-For commands that spawn the daemon (`toggle` when not already running,
-`start`), the harness should wait for the CLI command to exit *and* for
-one additional unknown PID to connect (the daemon). This ensures the
-daemon is receiving broadcasts before the harness proceeds. The harness
-can also verify the daemon is alive by checking the lock file or by
-tracking which connections are still open (the daemon's connection
-persists; the CLI command's drops on exit).
+The harness tracks which connection is the daemon (the one with daemon
+argv that persists after CLI commands disconnect). This lets it decide
+whether to wait for a daemon connection:
+
+- **`toggle`/`start` when daemon is not connected**: the harness waits
+  for the CLI command's PID, then additionally waits for one new
+  connection with daemon argv. Only then does it proceed.
+- **`toggle`/`start` when daemon is already connected**: the harness
+  only waits for the CLI command's PID. The daemon is already
+  receiving broadcasts.
+- **`stop`/`yank`/`pause`/etc.**: the harness only waits for the CLI
+  command's PID. No new daemon is expected.
 
 **Process exit**: when a process exits, its inject socket connection
 drops. The harness detects this (read returns EOF / write returns
@@ -1323,6 +1334,10 @@ struct TestHarness {
     /// broadcast Inject messages. Entries are removed when the
     /// connection drops (process exits).
     connections: HashMap<u32, BufWriter<UnixStream>>,
+    /// PID of the daemon, if connected. Identified by argv containing
+    /// "narrate _daemon". Used to decide whether toggle/start should
+    /// wait for a new daemon connection.
+    daemon_pid: Option<u32>,
 }
 
 impl TestHarness {
