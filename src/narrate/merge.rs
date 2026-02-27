@@ -691,9 +691,6 @@ fn collapse_ext_selections(selections: Vec<Event>) -> Vec<Event> {
     // same text within 500ms, drop the ExternalSelection (browser is richer).
     dedup_browser_vs_external(&mut result);
 
-    // Clipboard dedup: drop text clipboard events that match richer sources.
-    dedup_clipboard_selections(&mut result);
-
     result
 }
 
@@ -931,7 +928,12 @@ pub fn compress_and_merge(events: &mut Vec<Event>) {
         output.extend(process_run(run));
     }
 
-    // Step 4: drop trailing cursor-only snapshot when speech is present.
+    // Step 4: global clipboard dedup — drop text clipboard events whose
+    // normalized text matches any ExternalSelection or BrowserSelection
+    // across the entire output (not just within each run).
+    dedup_clipboard_selections(&mut output);
+
+    // Step 5: drop trailing cursor-only snapshot when speech is present.
     // The stop hook already provides the latest editor context, which is
     // more up-to-date. For code-only narrations (no speech), keep everything.
     let has_words = output.iter().any(|e| matches!(e, Event::Words { .. }));
