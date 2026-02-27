@@ -1,12 +1,12 @@
 use std::io::IsTerminal;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
 use std::time::Duration;
 
 use camino::Utf8Path;
 
 use crate::cli::Format;
+use crate::clock::Clock;
 use crate::state::EditorState;
 use crate::terminal::{AlternateScreen, clear_screen, fit_to_terminal, flush_stdout};
 
@@ -44,9 +44,11 @@ struct WatchConfig<'a> {
     full: bool,
     before: Option<usize>,
     after: Option<usize>,
+    clock: &'a dyn Clock,
 }
 
 /// Entry point for the watch loop (used by Glance --watch, Look --watch, and Meditate).
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     mode: WatchMode,
     dir: Option<&Utf8Path>,
@@ -55,6 +57,7 @@ pub fn run(
     full: bool,
     before: Option<usize>,
     after: Option<usize>,
+    clock: Arc<dyn Clock>,
 ) -> anyhow::Result<()> {
     let cfg = WatchConfig {
         mode,
@@ -64,6 +67,7 @@ pub fn run(
         full,
         before,
         after,
+        clock: &*clock,
     };
 
     validate_options(&cfg)?;
@@ -130,7 +134,7 @@ fn run_poll(
     refresh(cfg, &mut prev, is_tty, true);
 
     while !interrupted.load(Ordering::Relaxed) {
-        sleep_interruptible(poll_dur, interrupted, resized);
+        sleep_interruptible(poll_dur, interrupted, resized, cfg.clock);
         if interrupted.load(Ordering::Relaxed) {
             break;
         }
@@ -141,17 +145,26 @@ fn run_poll(
     Ok(())
 }
 
-fn sleep_interruptible(duration: Duration, interrupted: &AtomicBool, resized: &AtomicBool) {
-    let deadline = std::time::Instant::now() + duration;
+fn sleep_interruptible(
+    duration: Duration,
+    interrupted: &AtomicBool,
+    resized: &AtomicBool,
+    clock: &dyn Clock,
+) {
+    let timeout = chrono::TimeDelta::from_std(duration).unwrap_or(chrono::TimeDelta::MAX);
+    let deadline = clock.now() + timeout;
     loop {
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        if remaining.is_zero()
+        let remaining = deadline - clock.now();
+        if remaining <= chrono::TimeDelta::zero()
             || interrupted.load(Ordering::Relaxed)
             || resized.load(Ordering::Relaxed)
         {
             break;
         }
-        thread::sleep(remaining.min(Duration::from_millis(SLEEP_GRANULARITY_MS)));
+        let remaining_std = remaining
+            .to_std()
+            .unwrap_or(Duration::from_millis(SLEEP_GRANULARITY_MS));
+        clock.sleep(remaining_std.min(Duration::from_millis(SLEEP_GRANULARITY_MS)));
     }
 }
 
@@ -183,7 +196,7 @@ fn refresh(cfg: &WatchConfig, prev: &mut Option<EditorState>, is_tty: bool, forc
                     Format::Human => format!("{s}"),
                     Format::Json => {
                         let payload = crate::state::CompactPayload::from_state(s);
-                        let wrapped = crate::util::Timestamped::now(payload);
+                        let wrapped = crate::util::Timestamped::at(cfg.clock.now(), payload);
                         if is_tty {
                             serde_json::to_string_pretty(&wrapped)
                                 .expect("serialization of known type")
@@ -222,7 +235,7 @@ fn refresh(cfg: &WatchConfig, prev: &mut Option<EditorState>, is_tty: bool, forc
                     },
                     Format::Json => match crate::view::render_json(&s.files, cfg.dir, extent) {
                         Ok(payload) => {
-                            let wrapped = crate::util::Timestamped::now(payload);
+                            let wrapped = crate::util::Timestamped::at(cfg.clock.now(), payload);
                             let output = if is_tty {
                                 serde_json::to_string_pretty(&wrapped)
                                     .expect("serialization of known type")

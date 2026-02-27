@@ -75,7 +75,7 @@ pub(super) fn run() -> anyhow::Result<()> {
     // Browser selections are not delivered directly to the agent; they
     // accumulate in a staging directory and are included when the user
     // manually concludes narration (stop/flush).
-    let now = chrono::Utc::now();
+    let now = crate::clock::process_clock().now();
     let events = vec![Event::BrowserSelection {
         // Placeholder: the recording daemon overwrites this with the
         // UTC timestamp parsed from the staging filename.
@@ -88,7 +88,7 @@ pub(super) fn run() -> anyhow::Result<()> {
     }];
 
     let json = serde_json::to_string(&events)?;
-    let ts = util::utc_now_nanos().replace(':', "-");
+    let ts = util::format_utc_nanos(now).replace(':', "-");
     let id = uuid::Uuid::new_v4();
     let dir = browser_staging_dir(session_id.as_ref());
     fs::create_dir_all(&dir)?;

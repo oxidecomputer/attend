@@ -38,7 +38,6 @@ pub trait Clock: Send + Sync {
 ///
 /// Returns `RealClock` in production. Phase 0 item 4 will check
 /// `ATTEND_TEST_MODE` and return a `MockClock` instead.
-#[allow(dead_code)] // Used once remaining CLI call sites are converted.
 pub fn process_clock() -> Arc<dyn Clock> {
     Arc::new(RealClock)
 }

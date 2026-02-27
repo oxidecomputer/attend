@@ -4,7 +4,7 @@ use std::path::Path;
 use std::{fs, io};
 
 use camino::{Utf8Path, Utf8PathBuf};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 /// Write to a file atomically by writing to a temporary sibling first.
@@ -54,17 +54,17 @@ pub(crate) fn atomic_replace_dir(dir: impl AsRef<Path>, files: &[(&str, &str)]) 
     fs::rename(&staging, dir)
 }
 
-/// Return the current UTC time as an ISO 8601 string (e.g. `2026-02-18T15:30:45Z`).
-pub fn utc_now() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+/// Format a UTC timestamp as ISO 8601 (e.g. `2026-02-18T15:30:45Z`).
+pub fn format_utc(time: DateTime<Utc>) -> String {
+    time.format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
-/// Return the current UTC time with nanosecond precision
+/// Format a UTC timestamp with nanosecond precision
 /// (e.g. `2026-02-18T15:30:45.123456789Z`).
 ///
 /// Used for staging filenames where sub-second ordering matters.
-pub fn utc_now_nanos() -> String {
-    Utc::now().format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string()
+pub fn format_utc_nanos(time: DateTime<Utc>) -> String {
+    time.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string()
 }
 
 /// XDG config home: `$XDG_CONFIG_HOME` if set, otherwise `~/.config`.
@@ -101,10 +101,10 @@ pub struct Timestamped<T: Serialize> {
 }
 
 impl<T: Serialize> Timestamped<T> {
-    /// Wrap a payload with the current UTC timestamp.
-    pub fn now(inner: T) -> Self {
+    /// Wrap a payload with the given UTC timestamp.
+    pub fn at(time: DateTime<Utc>, inner: T) -> Self {
         Self {
-            timestamp: utc_now(),
+            timestamp: format_utc(time),
             inner,
         }
     }

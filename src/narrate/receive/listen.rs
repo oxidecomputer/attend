@@ -5,6 +5,7 @@
 //! prevent duplicate listeners.
 
 use std::fs;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -12,6 +13,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 
 use super::pending::{archive_pending, auto_prune, collect_pending};
 use super::read_pending;
+use crate::clock::Clock;
 use crate::config::Config;
 use crate::narrate::transcribe::Engine;
 use crate::narrate::{receive_lock_path, resolve_session};
@@ -69,11 +71,11 @@ pub fn stop(session_filter: Option<String>) -> anyhow::Result<()> {
 ///
 /// Without `--wait`: check once, print if found, exit.
 /// With `--wait`: poll until narration arrives or session is stolen.
-pub fn run(wait: bool, session_flag: Option<String>) -> anyhow::Result<()> {
+pub fn run(wait: bool, session_flag: Option<String>, clock: Arc<dyn Clock>) -> anyhow::Result<()> {
     let session_id = resolve_session(session_flag);
 
     if wait {
-        run_wait(session_id)
+        run_wait(session_id, clock)
     } else {
         run_once(session_id)
     }
@@ -109,7 +111,7 @@ fn run_once(session_id: Option<SessionId>) -> anyhow::Result<()> {
 }
 
 /// Polling wait: hold a lock, poll for narration, detect session steal.
-fn run_wait(session_id: Option<SessionId>) -> anyhow::Result<()> {
+fn run_wait(session_id: Option<SessionId>, clock: Arc<dyn Clock>) -> anyhow::Result<()> {
     let session_id = match session_id {
         Some(s) => s,
         None => {
@@ -152,7 +154,7 @@ fn run_wait(session_id: Option<SessionId>) -> anyhow::Result<()> {
     // holds the lock briefly until it detects the session change and exits
     // (~500ms). Rather than failing immediately, we wait for the handoff.
     let lock_path = receive_lock_path();
-    let _lock = match acquire_lock_with_retry(&lock_path, &session_id) {
+    let _lock = match acquire_lock_with_retry(&lock_path, &session_id, &*clock) {
         Some(guard) => guard,
         None => return Ok(()),
     };
@@ -178,7 +180,7 @@ fn run_wait(session_id: Option<SessionId>) -> anyhow::Result<()> {
             return Ok(());
         }
 
-        thread::sleep(poll_interval);
+        clock.sleep(poll_interval);
     }
 }
 
@@ -189,6 +191,7 @@ fn run_wait(session_id: Option<SessionId>) -> anyhow::Result<()> {
 fn acquire_lock_with_retry(
     lock_path: &Utf8Path,
     session_id: &SessionId,
+    clock: &dyn Clock,
 ) -> Option<lockfile::Lockfile> {
     // Fast path: try once.
     if let Some(guard) = try_lock(lock_path) {
@@ -200,10 +203,11 @@ fn acquire_lock_with_retry(
         Some(current) if current == *session_id => {
             // Same session — the old listener should notice the session
             // change and exit soon. Wait for the handoff.
-            let deadline = std::time::Instant::now() + Duration::from_millis(LOCK_RETRY_TIMEOUT_MS);
+            let timeout = chrono::TimeDelta::milliseconds(LOCK_RETRY_TIMEOUT_MS as i64);
+            let deadline = clock.now() + timeout;
             let retry_interval = Duration::from_millis(LOCK_RETRY_POLL_MS);
-            while std::time::Instant::now() < deadline {
-                thread::sleep(retry_interval);
+            while clock.now() < deadline {
+                clock.sleep(retry_interval);
                 if let Some(guard) = try_lock(lock_path) {
                     return Some(guard);
                 }

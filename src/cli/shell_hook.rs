@@ -78,10 +78,11 @@ fn stage_event(
         .and_then(|p| p.to_str().map(String::from))
         .unwrap_or_default();
 
+    let now = crate::clock::process_clock().now();
     let events = vec![Event::ShellCommand {
         // Placeholder: the recording daemon overwrites this with the
         // UTC timestamp parsed from the staging filename.
-        timestamp: chrono::Utc::now(),
+        timestamp: now,
         shell,
         command,
         cwd,
@@ -90,7 +91,7 @@ fn stage_event(
     }];
 
     let json = serde_json::to_string(&events)?;
-    let ts = util::utc_now_nanos().replace(':', "-");
+    let ts = util::format_utc_nanos(now).replace(':', "-");
     let id = uuid::Uuid::new_v4();
     let dir = shell_staging_dir(session_id.as_ref());
     fs::create_dir_all(&dir)?;

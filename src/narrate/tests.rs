@@ -3,6 +3,7 @@ use std::io::Write;
 
 use camino::Utf8PathBuf;
 
+use crate::clock::RealClock;
 use crate::state::{CacheDirGuard, SessionId};
 
 use super::*;
@@ -339,7 +340,7 @@ fn stop_while_paused_is_accepted() {
     assert!(pause_sentinel_path().exists());
 
     // Stop writes the stop sentinel even while paused.
-    record::stop().unwrap();
+    record::stop(&RealClock).unwrap();
 }
 
 /// The pause sentinel path lives under the overridden cache directory,
@@ -372,7 +373,7 @@ fn pause_sentinel_under_cache_dir() {
 #[test]
 fn yank_not_recording_is_noop() {
     let _g = CacheDirGuard::new();
-    record::yank().unwrap();
+    record::yank(&RealClock).unwrap();
     // No sentinel should exist — yank exits early when not recording.
     assert!(!super::yank_sentinel_path().exists());
 }
@@ -385,7 +386,7 @@ fn yank_writes_sentinel() {
     // Use a dead PID so yank() doesn't wait 5 seconds for a daemon.
     write_fake_lock(i32::MAX);
 
-    record::yank().unwrap();
+    record::yank(&RealClock).unwrap();
     // Sentinel is cleaned up by the CLI after it detects daemon exit,
     // but the daemon (dead PID) never ran, so the sentinel may or may not
     // remain. The key assertion: yank didn't panic and ran to completion.
@@ -403,7 +404,7 @@ fn yank_while_paused_is_accepted() {
     assert!(pause_sentinel_path().exists());
 
     // Yank while paused should succeed.
-    record::yank().unwrap();
+    record::yank(&RealClock).unwrap();
 }
 
 /// The yank sentinel path lives under the overridden cache directory.
@@ -829,7 +830,11 @@ fn collect_staging_uuid_suffix_prevents_collision() {
     fs::write(&path_a, serde_json::to_string(&preexec).unwrap()).unwrap();
     fs::write(&path_b, serde_json::to_string(&postexec).unwrap()).unwrap();
 
-    let result = collect_shell_staging(Some(&session), chrono::DateTime::UNIX_EPOCH);
+    let result = collect_shell_staging(
+        Some(&session),
+        chrono::DateTime::UNIX_EPOCH,
+        chrono::Utc::now(),
+    );
     assert_eq!(
         result.events.len(),
         2,
@@ -860,7 +865,11 @@ fn collect_staging_nanos_timestamp_parsed() {
     let path = dir.join("2026-02-25T23-45-00.500000000Z-some-uuid.json");
     fs::write(&path, serde_json::to_string(&event).unwrap()).unwrap();
 
-    let result = collect_shell_staging(Some(&session), chrono::DateTime::UNIX_EPOCH);
+    let result = collect_shell_staging(
+        Some(&session),
+        chrono::DateTime::UNIX_EPOCH,
+        chrono::Utc::now(),
+    );
     assert_eq!(result.events.len(), 1);
 
     // The event timestamp should be from the filename, not UNIX_EPOCH.
@@ -895,7 +904,11 @@ fn collect_staging_legacy_timestamp_parsed() {
     let path = dir.join("2026-02-25T23-45-00Z.json");
     fs::write(&path, serde_json::to_string(&event).unwrap()).unwrap();
 
-    let result = collect_shell_staging(Some(&session), chrono::DateTime::UNIX_EPOCH);
+    let result = collect_shell_staging(
+        Some(&session),
+        chrono::DateTime::UNIX_EPOCH,
+        chrono::Utc::now(),
+    );
     assert_eq!(result.events.len(), 1);
 
     let ts = result.events[0].timestamp();

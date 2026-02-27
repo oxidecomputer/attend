@@ -24,7 +24,7 @@ impl ListenArgs {
         } else {
             // check → one-shot (old `receive` without --wait)
             // default → wait (old `receive --wait`)
-            crate::narrate::receive::run(!self.check, self.session)
+            crate::narrate::receive::run(!self.check, self.session, crate::clock::process_clock())
         }
     }
 }

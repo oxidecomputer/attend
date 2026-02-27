@@ -6,7 +6,7 @@
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| Phase 0: Test infrastructure | **In progress** | Items 1-2 complete; item 3 (Clock trait) in progress — see detailed status below |
+| Phase 0: Test infrastructure | **In progress** | Items 1-3 complete; items 4-7 not started |
 | Phase A: Socket control plane | Not started | Blocked on Phase 0 gate |
 | Phase B: External event ingestion | Not started | Blocked on Phase A |
 | Phase C: Narration delivery | Not started | Blocked on Phase B |
@@ -19,55 +19,31 @@
 - [x] 1c. Extract `AudioSource` trait — `023c84d`
 - [x] 1d. Wire `CaptureConfig` into `capture::start()` — `6ccb168`
 - [x] 2. Add `StubTranscriber` — `3ca31b6`
-- [ ] 3. Clock trait and `Instant` elimination (see progress below)
+- [x] 3. Clock trait and `Instant` elimination — `f2a4bf0`, `f15470a`, and next commit
 - [ ] 4. `ATTEND_TEST_MODE` and `ATTEND_CACHE_DIR` env vars
 - [ ] 5. End-to-end test harness
 - [ ] 6. Declarative oracle
 - [ ] 7. Proptest action-sequence fuzzer
 
-#### Item 3 progress: Clock trait and `Instant` elimination
+#### Item 3: Clock trait and `Instant` elimination — COMPLETE
 
-**Committed** (`f2a4bf0`): `Clock` trait in `src/clock.rs` with `RealClock`
-and `MockClock` (test-gated). `process_clock()` factory returns `Arc<dyn
-Clock>` — item 4 will replace its body with env var check. All four capture
-threads converted: `editor_capture`, `diff_capture`, `ext_capture`,
-`clipboard_capture`. `CaptureConfig` carries `Arc<dyn Clock>` and threads
-it to all spawns including clipboard respawn-on-resume.
-
-**Uncommitted** (compiles, 0 warnings, 486 tests pass):
-- `AudioChunk.instant: Instant` → `AudioChunk.timestamp: DateTime<Utc>`
-- `SilenceDetector` converted: `silence_start_instant` → `silence_start`,
-  `feed()` returns `Option<DateTime<Utc>>`, all silence tests updated
-- `DaemonState` in `record.rs` fully converted:
-  - `period_start: Instant` + `period_start_utc` merged → `period_start: DateTime<Utc>`
-  - `last_drain: Instant` → `DateTime<Utc>`
-  - `idle_since: Option<Instant>` → `Option<DateTime<Utc>>`
-  - All `Utc::now()` → `self.clock.now()`, `thread::sleep()` → `self.clock.sleep()`
-  - `clock: Arc<dyn Clock>` field on `DaemonState`, created via `RealClock` in `daemon()`
-- `receive/listen.rs`: import changes started but function signatures not yet updated
-
-**Remaining** (not yet touched):
-- `receive/listen.rs`: thread `Arc<dyn Clock>` through `run()`, `run_wait()`,
-  `acquire_lock_with_retry()`. Replace `thread::sleep()` → `clock.sleep()`,
-  `Instant::now()` → `clock.now()` for deadline tracking.
-- `watch.rs`: thread clock through `watch()` and `sleep_interruptible()`.
-  Replace `Instant::now()` → `clock.now()`, `thread::sleep()` → `clock.sleep()`.
-- `record.rs` CLI functions (`stop()`, `flush()`, `start()`): sentinel polling
-  `thread::sleep()` → `clock.sleep()`. Accept clock param, callers pass
+Three commits:
+- `f2a4bf0`: `Clock` trait, `RealClock`, `MockClock`. All four capture threads
+  converted. `CaptureConfig` carries `Arc<dyn Clock>`.
+- `f15470a`: `AudioChunk`, `SilenceDetector`, `DaemonState` converted.
+  `Instant` fully eliminated from daemon internals.
+- Next commit: remaining files converted — `receive/listen.rs`, `watch.rs`,
+  `record.rs` CLI functions, `cli/shell_hook.rs`, `cli/browser_bridge.rs`,
+  `narrate.rs` collect_staging, `util.rs` formatting functions,
+  `clipboard_capture.rs` image staging. All CLI entry points pass
   `process_clock()`.
-- `cli/shell_hook.rs`: `chrono::Utc::now()` → `clock.now()` for event timestamp.
-- `cli/browser_bridge.rs`: `chrono::Utc::now()` → `clock.now()` for event timestamp.
-- `narrate.rs`: `chrono::Utc::now()` fallback timestamp → `clock.now()`.
-- `util.rs`: `utc_now()` / `utc_now_nanos()` use `Utc::now()` for file naming.
-- `audio.rs` cpal callback: `Utc::now()` in hardware callback — stays since
-  `AudioSource` trait replaces this entirely in test mode.
-- CLI entry points (`cli/listen.rs`, `cli.rs`): create `process_clock()` and
-  pass to callees.
 
 **Exceptions** (documented in `clock.rs`, not converted):
 - `chime.rs`: audio playback sleep, no-op in test mode
 - `whisper.rs` / `parakeet.rs` bench functions: developer diagnostics
 - `transcribe.rs` model load timing: diagnostic logging
+- `audio.rs` cpal callback: replaced by `AudioSource` trait in test mode
+- `look.rs` / `glance.rs` one-shot JSON: `Utc::now()` for display timestamp
 
 ### Bug fixes discovered during implementation
 

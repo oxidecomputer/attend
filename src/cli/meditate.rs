@@ -18,6 +18,7 @@ impl MeditateArgs {
             false,
             None,
             None,
+            crate::clock::process_clock(),
         )
     }
 }

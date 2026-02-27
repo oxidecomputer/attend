@@ -246,6 +246,7 @@ impl StagingResult {
 fn collect_staging(
     dir: &Utf8Path,
     period_start_utc: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
 ) -> StagingResult {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return StagingResult::default();
@@ -281,7 +282,7 @@ fn collect_staging(
             continue;
         }
 
-        let timestamp = file_time.unwrap_or(chrono::Utc::now());
+        let timestamp = file_time.unwrap_or(now);
 
         if let Ok(content) = std::fs::read_to_string(path)
             && let Ok(file_events) = serde_json::from_str::<Vec<merge::Event>>(&content)
@@ -312,16 +313,26 @@ fn collect_staging(
 pub(crate) fn collect_browser_staging(
     session_id: Option<&SessionId>,
     period_start_utc: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
 ) -> StagingResult {
-    collect_staging(browser_staging_dir(session_id).as_ref(), period_start_utc)
+    collect_staging(
+        browser_staging_dir(session_id).as_ref(),
+        period_start_utc,
+        now,
+    )
 }
 
 /// Collect staged shell command events for a session.
 pub(crate) fn collect_shell_staging(
     session_id: Option<&SessionId>,
     period_start_utc: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
 ) -> StagingResult {
-    collect_staging(shell_staging_dir(session_id).as_ref(), period_start_utc)
+    collect_staging(
+        shell_staging_dir(session_id).as_ref(),
+        period_start_utc,
+        now,
+    )
 }
 
 /// Resolve the session ID from flag, listening file, or None.

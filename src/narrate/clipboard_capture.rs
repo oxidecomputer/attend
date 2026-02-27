@@ -218,7 +218,7 @@ pub(super) fn spawn(
                     let Some(ref img) = image_data else {
                         continue;
                     };
-                    let Some(path) = stage_image_png(img, &staging_dir) else {
+                    let Some(path) = stage_image_png(img, &staging_dir, clock.now()) else {
                         continue;
                     };
                     let timestamp = clock.now();
@@ -236,7 +236,11 @@ pub(super) fn spawn(
 /// Encode image data to PNG and write to the clipboard staging directory.
 ///
 /// Returns the absolute path to the staged file, or `None` on failure.
-fn stage_image_png(img: &ImageData, staging_dir: &camino::Utf8Path) -> Option<String> {
+fn stage_image_png(
+    img: &ImageData,
+    staging_dir: &camino::Utf8Path,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<String> {
     use image::{ImageBuffer, Rgba};
 
     let buf: ImageBuffer<Rgba<u8>, _> =
@@ -247,7 +251,7 @@ fn stage_image_png(img: &ImageData, staging_dir: &camino::Utf8Path) -> Option<St
         return None;
     }
 
-    let ts = crate::util::utc_now_nanos().replace(':', "-");
+    let ts = crate::util::format_utc_nanos(now).replace(':', "-");
     let id = uuid::Uuid::new_v4();
     let path = staging_dir.join(format!("{ts}-{id}.png"));
 
