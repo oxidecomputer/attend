@@ -19,6 +19,50 @@ use std::time::Duration;
 
 use super::merge::{ClipboardContent, Event};
 
+/// Source of clipboard content.
+///
+/// Abstracts the platform clipboard so tests can substitute a stub that
+/// returns scripted content without touching the real system clipboard.
+/// The production implementation wraps [`arboard::Clipboard`].
+pub trait ClipboardSource: Send {
+    /// Read the current clipboard text, if any.
+    fn get_text(&mut self) -> Option<String>;
+    /// Read the current clipboard image, if any.
+    fn get_image(&mut self) -> Option<ImageData>;
+}
+
+/// Production implementation: reads from the system clipboard via arboard.
+pub(crate) struct ArboardClipboardSource {
+    clipboard: arboard::Clipboard,
+}
+
+impl ArboardClipboardSource {
+    /// Create a new source, or `None` if the clipboard is unavailable.
+    pub fn new() -> Option<Self> {
+        match arboard::Clipboard::new() {
+            Ok(clipboard) => Some(Self { clipboard }),
+            Err(e) => {
+                tracing::warn!("Clipboard capture unavailable: {e}");
+                None
+            }
+        }
+    }
+}
+
+impl ClipboardSource for ArboardClipboardSource {
+    fn get_text(&mut self) -> Option<String> {
+        self.clipboard.get_text().ok()
+    }
+
+    fn get_image(&mut self) -> Option<ImageData> {
+        self.clipboard.get_image().ok().map(|img| ImageData {
+            width: img.width,
+            height: img.height,
+            bytes: img.bytes.into_owned(),
+        })
+    }
+}
+
 /// What kind of content was last seen on the clipboard.
 #[derive(Debug)]
 enum LastContent {
@@ -133,8 +177,7 @@ const CLIPBOARD_POLL_MS: u64 = 500;
 
 /// Spawn the clipboard polling thread.
 ///
-/// Returns the join handle, or `None` if the clipboard cannot be accessed
-/// (e.g. headless environment). The thread pushes `ClipboardSelection`
+/// Returns the join handle. The thread pushes `ClipboardSelection`
 /// events into `events` until `stop` is set.
 ///
 /// Unlike other capture threads, clipboard polling has no paused state.
@@ -143,25 +186,14 @@ const CLIPBOARD_POLL_MS: u64 = 500;
 /// (e.g. yank copying rendered narration) would be captured as events
 /// in the next recording period.
 pub(super) fn spawn(
+    mut source: Box<dyn ClipboardSource>,
     stop: Arc<AtomicBool>,
     events: Arc<Mutex<Vec<Event>>>,
     staging_dir: camino::Utf8PathBuf,
 ) -> Option<thread::JoinHandle<()>> {
-    let mut clipboard = match arboard::Clipboard::new() {
-        Ok(cb) => cb,
-        Err(e) => {
-            tracing::warn!("Clipboard capture unavailable: {e}");
-            return None;
-        }
-    };
-
     // Seed with current clipboard content (no event emitted).
-    let seed_text = clipboard.get_text().ok();
-    let seed_image = clipboard.get_image().ok().map(|img| ImageData {
-        width: img.width,
-        height: img.height,
-        bytes: img.bytes.into_owned(),
-    });
+    let seed_text = source.get_text();
+    let seed_image = source.get_image();
     let mut tracker = ClipboardTracker::new_seeded(seed_text.as_deref(), seed_image.as_ref());
 
     Some(thread::spawn(move || {
@@ -169,12 +201,8 @@ pub(super) fn spawn(
             thread::sleep(Duration::from_millis(CLIPBOARD_POLL_MS));
 
             // Try text first, then image. First success wins.
-            let text = clipboard.get_text().ok();
-            let image_data = clipboard.get_image().ok().map(|img| ImageData {
-                width: img.width,
-                height: img.height,
-                bytes: img.bytes.into_owned(),
-            });
+            let text = source.get_text();
+            let image_data = source.get_image();
 
             match tracker.check(text.as_deref(), image_data.as_ref()) {
                 ClipboardUpdate::Changed(ClipboardContent::Text { text }) => {

@@ -103,9 +103,13 @@ impl CaptureHandle {
         if !self.clipboard_enabled {
             return;
         }
+        let Some(source) = super::clipboard_capture::ArboardClipboardSource::new() else {
+            return;
+        };
         let stop = Arc::new(AtomicBool::new(false));
         self.clipboard_stop = Arc::clone(&stop);
         self.clipboard_thread = super::clipboard_capture::spawn(
+            Box::new(source),
             stop,
             Arc::clone(&self.clipboard_events),
             self.clipboard_staging_dir.clone(),
@@ -163,11 +167,16 @@ pub(crate) fn start(
 
     let clipboard_stop = Arc::new(AtomicBool::new(false));
     let clipboard_thread = if clipboard_capture {
-        super::clipboard_capture::spawn(
-            Arc::clone(&clipboard_stop),
-            Arc::clone(&clipboard_events),
-            clipboard_staging_dir.clone(),
-        )
+        if let Some(source) = super::clipboard_capture::ArboardClipboardSource::new() {
+            super::clipboard_capture::spawn(
+                Box::new(source),
+                Arc::clone(&clipboard_stop),
+                Arc::clone(&clipboard_events),
+                clipboard_staging_dir.clone(),
+            )
+        } else {
+            None
+        }
     } else {
         None
     };
