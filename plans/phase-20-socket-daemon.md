@@ -29,8 +29,7 @@ Sub-items (each a commit):
 - [x] 4a. MockClock: un-gate from `#[cfg(test)]`, add condvar-gated sleep — `6b1d1b0`
 - [x] 4b. `ATTEND_CACHE_DIR` env var in `cache_dir()` — `bf383d3`
 - [x] 4c. Un-gate `StubTranscriber` from `#[cfg(test)]` — `d17d11a`
-- [ ] 4d. Inject protocol types + stub capture sources (channel-based stubs
-  for `EditorStateSource`, `ClipboardSource`, `ExternalSource`, `AudioSource`)
+- [x] 4d. Inject protocol types + stub capture sources — `309cee4`
 - [ ] 4e. `test_mode` module: `init()`, inject socket client, background
   reader thread, `OnceLock<Arc<MockClock>>`, inject router for daemon stubs
 - [ ] 4f. Wire `ATTEND_TEST_MODE`: `process_clock()` checks env,

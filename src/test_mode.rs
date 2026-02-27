@@ -16,10 +16,181 @@
 //! injections (speech, editor, clipboard, ext) go to stub channels that
 //! only the daemon routes to its capture sources. Non-daemon processes
 //! silently ignore capture injections.
+//!
+//! # Invariant
+//!
+//! The inject socket background thread must **never** call `clock.sleep()`.
+//! It is the only thread that calls `MockClock::advance()`. If it blocked
+//! on the condvar, no thread could wake it — deadlock.
+
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::state::FileEntry;
+use crate::clock::MockClock;
+use crate::narrate::ext_capture::ExternalSnapshot;
+use crate::narrate::transcribe::stub::Injection;
+use crate::state::{EditorState, FileEntry};
+
+// ---------------------------------------------------------------------------
+// Global state
+// ---------------------------------------------------------------------------
+
+/// Process-wide MockClock, set once by `init()`.
+static CLOCK: OnceLock<Arc<MockClock>> = OnceLock::new();
+
+/// Daemon's inject router, set once by `register_router()`.
+static INJECT_ROUTER: OnceLock<InjectRouter> = OnceLock::new();
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/// Check if test mode is active.
+pub fn is_active() -> bool {
+    std::env::var("ATTEND_TEST_MODE").is_ok_and(|v| v == "1")
+}
+
+/// Return the test-mode MockClock, if initialized.
+pub fn clock() -> Option<Arc<MockClock>> {
+    CLOCK.get().cloned()
+}
+
+/// Initialize test mode: create MockClock, connect to inject socket,
+/// spawn background reader thread.
+///
+/// Must be called at the top of `main()`, before any clock usage.
+/// Panics if `ATTEND_CACHE_DIR` is not set or the inject socket is
+/// unreachable.
+pub fn init() {
+    let cache_dir =
+        crate::state::cache_dir().expect("ATTEND_CACHE_DIR must be set in test mode");
+    let sock_path = cache_dir.join("test-inject.sock");
+
+    // Create and store the mock clock (start at Unix epoch).
+    let start = chrono::DateTime::UNIX_EPOCH;
+    let clock = Arc::new(MockClock::new(start));
+    CLOCK
+        .set(Arc::clone(&clock))
+        .expect("test_mode::init called twice");
+
+    // Connect to inject socket.
+    let mut stream = UnixStream::connect(sock_path.as_std_path())
+        .unwrap_or_else(|e| panic!("failed to connect to inject socket at {sock_path}: {e}"));
+
+    // Send handshake (newline-delimited JSON).
+    let handshake = Handshake {
+        pid: std::process::id(),
+        argv: std::env::args().collect(),
+    };
+    serde_json::to_writer(&stream, &handshake).expect("failed to write handshake");
+    stream.write_all(b"\n").expect("failed to write newline");
+    stream.flush().expect("failed to flush handshake");
+
+    // Spawn background reader thread.
+    std::thread::Builder::new()
+        .name("test-inject".into())
+        .spawn(move || reader_loop(stream, clock))
+        .expect("failed to spawn inject reader thread");
+}
+
+/// Register the daemon's inject router.
+///
+/// Called by the daemon after setting up capture stubs. The background
+/// reader thread routes capture injections to the router's shared state.
+pub fn register_router(router: InjectRouter) {
+    if INJECT_ROUTER.set(router).is_err() {
+        panic!("inject router already registered");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Background reader thread
+// ---------------------------------------------------------------------------
+
+/// Read inject messages from the harness and dispatch them.
+///
+/// Runs until the connection closes (process exit or harness teardown).
+/// Never calls `clock.sleep()` — see module-level invariant.
+fn reader_loop(stream: UnixStream, clock: Arc<MockClock>) {
+    let reader = BufReader::new(stream);
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break, // Connection closed.
+        };
+        if line.is_empty() {
+            continue;
+        }
+        let msg: Inject = match serde_json::from_str(&line) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!("inject socket: bad message: {e}");
+                continue;
+            }
+        };
+        match msg {
+            Inject::AdvanceTime { duration_ms } => {
+                clock.advance(Duration::from_millis(duration_ms));
+            }
+            capture_msg => {
+                // Route to daemon stubs if registered; silently ignore otherwise.
+                if let Some(router) = INJECT_ROUTER.get() {
+                    router.dispatch(capture_msg);
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Inject router (daemon only)
+// ---------------------------------------------------------------------------
+
+/// Routes capture injections from the inject socket to the daemon's
+/// stub channels. Non-daemon processes never register a router.
+pub struct InjectRouter {
+    pub transcriber_tx: std::sync::mpsc::Sender<Injection>,
+    pub editor_state: Arc<Mutex<Option<EditorState>>>,
+    pub ext_snapshot: Arc<Mutex<Option<ExternalSnapshot>>>,
+    pub clipboard_text: Arc<Mutex<Option<String>>>,
+}
+
+impl InjectRouter {
+    fn dispatch(&self, msg: Inject) {
+        match msg {
+            Inject::Speech { text, duration_ms } => {
+                let _ = self.transcriber_tx.send(Injection { text, duration_ms });
+            }
+            Inject::Silence { duration_ms } => {
+                let _ = self.transcriber_tx.send(Injection {
+                    text: String::new(),
+                    duration_ms,
+                });
+            }
+            Inject::EditorState { files } => {
+                *self.editor_state.lock().unwrap() = Some(EditorState {
+                    files,
+                    cwd: None,
+                });
+            }
+            Inject::ExternalSelection { app, text } => {
+                *self.ext_snapshot.lock().unwrap() = Some(ExternalSnapshot {
+                    app,
+                    window_title: String::new(),
+                    selected_text: Some(text),
+                });
+            }
+            Inject::Clipboard { text } => {
+                *self.clipboard_text.lock().unwrap() = Some(text);
+            }
+            Inject::AdvanceTime { .. } => unreachable!("handled before dispatch"),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Inject socket protocol
