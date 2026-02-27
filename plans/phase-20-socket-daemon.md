@@ -1,9 +1,5 @@
 # Socket-Based Daemon Redesign
 
-Status: **Draft** (2026-02-26)
-
-Supersedes: Phase 18 (Persistent Daemon)
-
 ## Current architecture
 
 This section describes how things work today, for context. If you're
