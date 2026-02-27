@@ -1353,6 +1353,24 @@ session. To enable clean handoff:
    invariant should be its own commit. This gives the next agent a clear
    `git log` to understand progress.
 
+   **Build verification before every commit.** Run the full `cargo clippy`
+   and `cargo nextest run` output **unfiltered** — no `| tail`, `| head`,
+   `| grep`, or other pipes that could hide warnings or failures. Zero
+   clippy warnings, zero test failures. Proptest suites are
+   nondeterministic by design: a test that passed on the last run can
+   fail on the next with a different seed. Always check the full output,
+   and if a proptest failure appears, investigate it — it may be a
+   pre-existing issue surfaced by a new seed, or it may be a regression
+   you introduced. Either way, fix it before committing.
+
+   **Never delete proptest regression files.** The `proptest-regressions/`
+   directory contains seed files that reproduce past failures. Proptest
+   automatically replays these seeds before generating new cases —
+   they're a permanent regression suite. Always commit new regression
+   entries alongside the fix. Never remove entries, even if you believe
+   the underlying issue is fixed — the seeds are cheap and serve as
+   regression guards forever.
+
 5. **CLAUDE.md / memory.** Update the project memory file with the current
    phase and any gotchas discovered during implementation.
 
