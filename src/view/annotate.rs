@@ -251,7 +251,11 @@ fn emit_annotated_line(
     }
 
     for &(col, kind) in events {
-        let byte_pos = (col.get() - 1).min(line.len());
+        let raw = (col.get() - 1).min(line.len());
+        // Snap to a char boundary: byte-based Col values can land mid-character
+        // for multi-byte UTF-8 (e.g. box-drawing chars). Floor to the start of
+        // the containing character.
+        let byte_pos = floor_char_boundary(line, raw);
 
         if byte_pos > pos {
             out.push_str(&line[pos..byte_pos]);
@@ -317,4 +321,16 @@ fn next_char_end(s: &str, pos: usize) -> usize {
     let mut iter = s[pos..].char_indices();
     iter.next();
     iter.next().map(|(i, _)| pos + i).unwrap_or(s.len())
+}
+
+/// Floor a byte index to the nearest char boundary at or before `pos`.
+fn floor_char_boundary(s: &str, pos: usize) -> usize {
+    if pos >= s.len() {
+        return s.len();
+    }
+    let mut i = pos;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
 }
