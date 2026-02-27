@@ -19,7 +19,7 @@
 - [x] 1c. Extract `AudioSource` trait — `023c84d`
 - [x] 1d. Wire `CaptureConfig` into `capture::start()` — `6ccb168`
 - [x] 2. Add `StubTranscriber` — `3ca31b6`
-- [x] 3. Clock trait and `Instant` elimination — `f2a4bf0`, `f15470a`, and next commit
+- [x] 3. Clock trait and `Instant` elimination — `f2a4bf0`, `f15470a`, `633404f`
 - [ ] 4. `ATTEND_TEST_MODE` and `ATTEND_CACHE_DIR` env vars
 - [ ] 5. End-to-end test harness
 - [ ] 6. Declarative oracle
@@ -32,7 +32,7 @@ Three commits:
   converted. `CaptureConfig` carries `Arc<dyn Clock>`.
 - `f15470a`: `AudioChunk`, `SilenceDetector`, `DaemonState` converted.
   `Instant` fully eliminated from daemon internals.
-- Next commit: remaining files converted — `receive/listen.rs`, `watch.rs`,
+- `633404f`: remaining files converted — `receive/listen.rs`, `watch.rs`,
   `record.rs` CLI functions, `cli/shell_hook.rs`, `cli/browser_bridge.rs`,
   `narrate.rs` collect_staging, `util.rs` formatting functions,
   `clipboard_capture.rs` image staging. All CLI entry points pass
