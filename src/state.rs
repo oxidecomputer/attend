@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
+use std::sync::OnceLock;
 use std::{fs, io};
 
 use camino::{Utf8Path, Utf8PathBuf};
@@ -91,7 +92,41 @@ impl Drop for CacheDirGuard {
     }
 }
 
+/// Cached result of checking `ATTEND_CACHE_DIR`. Evaluated once per process.
+static ENV_CACHE_DIR: OnceLock<Option<Utf8PathBuf>> = OnceLock::new();
+
+/// Check the `ATTEND_CACHE_DIR` env var (once per process).
+///
+/// - Not set: returns `None` (fall through to platform default).
+/// - Set to a path: uses that path directly.
+/// - Set to empty string: auto-creates a random temp directory (useful for
+///   manual testing and parallel runs). The temp dir is leaked intentionally
+///   so it persists for the process lifetime.
+fn env_cache_dir() -> Option<&'static Utf8PathBuf> {
+    ENV_CACHE_DIR
+        .get_or_init(|| {
+            let val = std::env::var("ATTEND_CACHE_DIR").ok()?;
+            if val.is_empty() {
+                let tmp = tempfile::tempdir().expect("failed to create temp dir");
+                let path = Utf8PathBuf::try_from(tmp.path().to_path_buf())
+                    .expect("non-UTF-8 temp dir");
+                // Leak: directory persists for process lifetime without cleanup.
+                std::mem::forget(tmp);
+                Some(path)
+            } else {
+                Some(Utf8PathBuf::from(val))
+            }
+        })
+        .as_ref()
+}
+
 /// Return the platform cache directory for attend.
+///
+/// Resolution order:
+/// 1. Thread-local override (unit tests via [`CacheDirGuard`]).
+/// 2. `ATTEND_CACHE_DIR` env var (e2e test harness, manual testing).
+/// 3. Platform default (`~/Library/Caches/attend` on macOS,
+///    `$XDG_CACHE_HOME/attend` on Linux).
 pub fn cache_dir() -> Option<Utf8PathBuf> {
     #[cfg(test)]
     {
@@ -99,6 +134,9 @@ pub fn cache_dir() -> Option<Utf8PathBuf> {
         if let Some(dir) = override_dir {
             return Some(dir);
         }
+    }
+    if let Some(dir) = env_cache_dir() {
+        return Some(dir.clone());
     }
     let dir = dirs::cache_dir()?;
     let dir = Utf8PathBuf::try_from(dir).ok()?;

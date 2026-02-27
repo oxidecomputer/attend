@@ -26,7 +26,7 @@
 
 Sub-items (each a commit):
 
-- [ ] 4a. MockClock: un-gate from `#[cfg(test)]`, add condvar-gated sleep
+- [x] 4a. MockClock: un-gate from `#[cfg(test)]`, add condvar-gated sleep — `6b1d1b0`
 - [ ] 4b. `ATTEND_CACHE_DIR` env var in `cache_dir()`
 - [ ] 4c. Un-gate `StubTranscriber` from `#[cfg(test)]`
 - [ ] 4d. Inject protocol types + stub capture sources (channel-based stubs
