@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use camino::Utf8Path;
 
-use super::audio::{self, AudioChunk};
+use super::audio::{self, AudioChunk, AudioSource};
 use super::capture;
 use super::chime::Chime;
 use super::merge::{self, Event};
@@ -102,7 +102,7 @@ impl DeferredTranscriber {
 struct DaemonState {
     transcriber: DeferredTranscriber,
     /// Audio capture handle. `Some` during recording, `None` after finalize.
-    audio_capture: Option<audio::CaptureHandle>,
+    audio_capture: Option<Box<dyn audio::AudioSource>>,
     /// Editor/diff capture handle. `Some` during recording, `None` after finalize.
     editor_capture: Option<capture::CaptureHandle>,
     /// Set by the SIGTERM handler for graceful shutdown.
@@ -334,11 +334,12 @@ impl DaemonState {
         let _ = chime.play();
 
         // Grab any final chunks that arrived after the last ingest.
-        let capture = self
+        let recording = self
             .audio_capture
-            .take()
-            .expect("audio capture already stopped");
-        let recording = capture.stop();
+            .as_mut()
+            .expect("audio capture already stopped")
+            .stop();
+        self.audio_capture = None;
         self.buffered_chunks.extend(recording.chunks);
         // Best-effort cleanup.
         let _ = fs::remove_file(sentinel);
@@ -1146,7 +1147,7 @@ pub fn daemon() -> anyhow::Result<()> {
     let now = Instant::now();
     let mut state = DaemonState {
         transcriber,
-        audio_capture: Some(capture),
+        audio_capture: Some(Box::new(capture)),
         editor_capture: Some(editor_events),
         terminated,
         silence_detector,

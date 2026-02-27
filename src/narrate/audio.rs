@@ -1,11 +1,42 @@
 //! Microphone capture and resampling.
 //!
-//! Uses cpal for audio input, accumulating mono f32 samples with wall-clock
-//! timestamps. After recording stops, resamples to 16 kHz via rubato for
-//! Whisper consumption.
+//! Captures audio from the default input device, accumulating mono f32
+//! samples with wall-clock timestamps. After recording stops, resamples
+//! to 16 kHz via rubato for transcription.
+//!
+//! The platform dependency (cpal) is behind the [`AudioSource`] trait so
+//! tests can substitute a stub that returns scripted audio chunks.
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+/// Source of audio input samples.
+///
+/// Abstracts the microphone/audio device so tests can substitute a stub
+/// that returns scripted audio chunks without any sound card.
+pub trait AudioSource: Send {
+    /// Take all accumulated chunks, leaving the buffer empty.
+    ///
+    /// The source keeps running — new samples accumulate after this call.
+    fn take_chunks(&self) -> Vec<AudioChunk>;
+
+    /// The native sample rate of the audio source (Hz).
+    fn sample_rate(&self) -> u32;
+
+    /// Drain accumulated audio without stopping the source.
+    fn drain(&self) -> Recording;
+
+    /// Pause the audio source.
+    fn pause(&self) -> anyhow::Result<()>;
+
+    /// Resume the audio source after a pause.
+    fn resume(&self) -> anyhow::Result<()>;
+
+    /// Stop the audio source and return all remaining audio.
+    ///
+    /// The source is unusable after this call.
+    fn stop(&mut self) -> Recording;
+}
 
 // ---------------------------------------------------------------------------
 // Resampler constants (rubato sinc interpolation)
@@ -112,70 +143,55 @@ pub fn start_capture() -> anyhow::Result<CaptureHandle> {
     stream.play()?;
 
     Ok(CaptureHandle {
-        stream,
+        stream: Some(stream),
         chunks,
         sample_rate,
     })
 }
 
-/// Handle to an in-progress audio capture.
+/// Handle to an in-progress audio capture via cpal.
 pub struct CaptureHandle {
-    stream: cpal::Stream,
+    /// The cpal stream. `None` after `stop()`.
+    stream: Option<cpal::Stream>,
     chunks: Arc<Mutex<Vec<AudioChunk>>>,
     sample_rate: u32,
 }
 
-impl CaptureHandle {
-    /// Take all accumulated chunks, leaving the buffer empty.
-    ///
-    /// The cpal stream keeps running — new samples accumulate into the
-    /// now-empty Vec. Use this for incremental processing during recording.
-    pub fn take_chunks(&self) -> Vec<AudioChunk> {
+impl AudioSource for CaptureHandle {
+    fn take_chunks(&self) -> Vec<AudioChunk> {
         std::mem::take(&mut *self.chunks.lock().unwrap())
     }
 
-    /// The native sample rate of the input device.
-    pub fn sample_rate(&self) -> u32 {
+    fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
 
-    /// Drain accumulated audio without stopping the capture stream.
-    ///
-    /// Returns a `Recording` of everything captured so far, then resets the
-    /// internal buffer. The cpal stream keeps running — new samples accumulate
-    /// into the now-empty Vec. No audio is lost.
-    pub fn drain(&self) -> Recording {
+    fn drain(&self) -> Recording {
         let chunks = std::mem::take(&mut *self.chunks.lock().unwrap());
-
         Recording { chunks }
     }
 
-    /// Pause the audio stream.
-    ///
-    /// Stops the cpal callback, saving CPU/power and on macOS turning off the
-    /// mic indicator dot. Chunks already in the buffer are preserved.
-    pub fn pause(&self) -> anyhow::Result<()> {
+    fn pause(&self) -> anyhow::Result<()> {
         use cpal::traits::StreamTrait;
-        self.stream.pause()?;
+        if let Some(ref stream) = self.stream {
+            stream.pause()?;
+        }
         Ok(())
     }
 
-    /// Resume the audio stream after a pause.
-    pub fn resume(&self) -> anyhow::Result<()> {
+    fn resume(&self) -> anyhow::Result<()> {
         use cpal::traits::StreamTrait;
-        self.stream.play()?;
+        if let Some(ref stream) = self.stream {
+            stream.play()?;
+        }
         Ok(())
     }
 
-    /// Stop recording and return the accumulated audio data.
-    pub fn stop(self) -> Recording {
-        drop(self.stream);
+    fn stop(&mut self) -> Recording {
+        // Drop the stream to release the audio device.
+        drop(self.stream.take());
 
-        let chunks = match Arc::try_unwrap(self.chunks) {
-            Ok(mutex) => mutex.into_inner().unwrap_or_default(),
-            Err(arc) => arc.lock().unwrap().clone(),
-        };
-
+        let chunks = std::mem::take(&mut *self.chunks.lock().unwrap());
         Recording { chunks }
     }
 }
