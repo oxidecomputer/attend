@@ -11,6 +11,7 @@
 | Phase B: External event ingestion | Not started | Blocked on Phase A |
 | Phase C: Narration delivery | Not started | Blocked on Phase B |
 | Phase D: Cleanup | Not started | Blocked on Phase C |
+| Phase E: Gate test infrastructure | Not started | Blocked on Phase D |
 
 ### Phase 0 items
 
@@ -19,8 +20,8 @@
 - [x] 3. Clock trait and `Instant` elimination — `f2a4bf0`, `f15470a`, `633404f`, `f736e38`
 - [x] 4. `ATTEND_TEST_MODE` / `ATTEND_CACHE_DIR` / inject socket — `6b1d1b0`..`3215798` (8 commits)
 - [x] 5. End-to-end test harness — `086fac1`..`6722d81` (3 commits)
-- [ ] 6. Declarative oracle
-- [ ] 7. Proptest action-sequence fuzzer
+- [ ] 6. Differential oracle (shared run infrastructure + self-diff)
+- [ ] 7. Declarative oracle (invariant assertions on RunTrace)
 
 ### Bug fixes discovered during implementation
 
@@ -59,37 +60,36 @@ commands, editor state, and clipboard content alongside speech.
 | Listener | `src/narrate/receive/listen.rs` | Background process that blocks until narration is ready |
 | Browser bridge | `src/cli/browser_bridge.rs` | Native messaging host for browser extension |
 | Shell hooks | `src/cli/shell_hook.rs` | Captures shell commands (fish/zsh preexec/postexec) |
-| CLI | `src/cli/narrate.rs` | CLI command dispatch (toggle, pause, yank, status) |
+| CLI | `src/cli/narrate.rs` | CLI command dispatch (toggle, start, stop, pause, yank, status) |
 | State/paths | `src/state.rs` | Cache dir, session IDs, listening state |
 | Path constants | `src/narrate.rs` | All filesystem paths (sentinel, staging, pending, archive) |
 | Chime | `src/narrate/chime.rs` | Audio feedback on start/stop |
 
 ### Daemon state machine
 
-```
-                    ┌─────────┐
-                    │  idle   │◄──── daemon spawned, no recording yet
-                    └────┬────┘
-                         │ toggle
-                         ▼
-                    ┌──────────┐
-              ┌────►│recording │◄────┐
-              │     └────┬─────┘     │
-              │          │ pause     │ resume (toggle while paused)
-              │          ▼           │
-              │     ┌──────────┐     │
-              │     │  paused  │─────┘
-              │     └──────────┘
-              │
-              │ toggle (while recording) or flush
-              ▼
-        ┌────────────┐
-        │ finalizing │──→ transcribe → write narration → idle
-        └────────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> recording : start / toggle
+    recording --> recording : start (finalize + resume)
+    recording --> paused : pause
+    recording --> idle : stop / toggle
+    paused --> recording : start / toggle / pause (resume)
+    paused --> idle : stop (finalize + stop)
+    idle --> recording : start / toggle
 ```
 
+Note: `stop` while idle is a no-op.
+
+**Behavior fix (Phase A):** In the current sentinel-based implementation,
+`stop` while paused is a no-op because the pause sentinel and idle state
+are conflated (same file). The socket redesign separates pause and idle
+into distinct daemon-resident states, which lets `stop` from paused do
+the right thing: finalize whatever was captured and transition to idle.
+The diagram above reflects the intended behavior, not the current bug.
+
 The daemon also supports `yank` (finalize + copy to clipboard instead of
-writing to pending) and `flush` (finalize + resume recording).
+writing to pending). The `start` command doubles as a flush: if already
+recording, it finalizes and resumes.
 
 ### How narration reaches the agent
 
@@ -222,10 +222,10 @@ files for narration delivery. This works but has three problems:
          ┌─────────────────────────────────┼──────────────────────┐
          │              │                  │           │          │
       CLI tool    browser bridge      shell hook   listener   hook layer
-      (toggle,    (sends selections)  (sends cmds) (Wait for  (Activate,
-       pause,                                       Ok)       Deactivate,
-       yank,                                                  Collect,
-       status)                                                Status)
+      (recording  (sends selections)  (sends cmds) (Wait for  (Activate,
+       control,                                     Ok)       Deactivate,
+       status)                                                Collect,
+                                                              Status)
 ```
 
 All communication flows through a single Unix domain socket. The daemon
@@ -236,9 +236,9 @@ message identifying itself and its intent.
 
 | Current mechanism | Replacement |
 |-------------------|-------------|
-| `daemon/stop` sentinel | `Command::Toggle` message |
+| `daemon/stop` sentinel | `Command::Stop` message |
 | `daemon/pause` sentinel | `Command::Pause` message |
-| `daemon/flush` sentinel | `Command::Flush` message |
+| `daemon/flush` sentinel | `Command::Start` (flush if already recording) |
 | `daemon/yank` sentinel | `Command::Yank` message |
 | `daemon/lock` (PID file) | Socket bind exclusivity |
 | `hooks/listening` (session file) | Daemon-resident state; queried via socket |
@@ -274,7 +274,7 @@ polling to a blocking socket read:
 1. `attend listen` connects to the daemon socket and sends
    `Command::Wait`. It does not know or send a session ID.
 2. The daemon holds this connection open.
-3. When narration is ready (stop, flush, or silence-triggered segment), the
+3. When narration is ready (stop or start-while-recording), the
    daemon sends `Response::Ok` to the waiting connection.
 4. `attend listen` receives `Ok` and exits, causing the agent framework
    to fire the next tool use.
@@ -417,11 +417,11 @@ struct Request {
 
 #[derive(Serialize, Deserialize)]
 enum Command {
-    // Recording control (Toggle and Pause are idempotent toggles —
-    // the daemon decides the transition based on current state)
-    Toggle,
-    Pause,
-    Flush,
+    // Recording control
+    Toggle,  // context-dependent: starts if idle, stops if recording
+    Start,   // starts if idle, flushes (finalize + resume) if recording
+    Stop,    // no-op if idle
+    Pause,   // toggles pause state
     Yank,
 
     // External events
@@ -495,6 +495,8 @@ request.
 | Client | Pattern | Lifecycle |
 |--------|---------|-----------|
 | `attend narrate toggle` | Connect → send `Toggle` → receive `Ok` → disconnect | Ephemeral |
+| `attend narrate start` | Connect → send `Start` → receive `Ok` → disconnect | Ephemeral |
+| `attend narrate stop` | Connect → send `Stop` → receive `Ok` → disconnect | Ephemeral |
 | `attend narrate pause` | Connect → send `Pause` → receive `Ok` → disconnect | Ephemeral |
 | `attend narrate yank` | Connect → send `Yank` → receive `Ok` (daemon copies to clipboard) → disconnect | Ephemeral |
 | `attend narrate status` | Connect → send `Status` → receive `Status` → disconnect | Ephemeral |
@@ -696,11 +698,11 @@ no async runtime overhead.
 
 ## Migration path
 
-Red-green is the north star. The oracle test suite must pass against the
+Red-green is the north star. Both oracle suites must pass against the
 current implementation before any functional changes begin. Each subsequent
 phase is: make the change, get back to green.
 
-### Phase 0: Test infrastructure and oracle suite
+### Phase 0: Test infrastructure and oracle suites
 
 **No functional changes.** This phase only adds testability and tests.
 
@@ -733,9 +735,9 @@ trait boundaries and supporting infrastructure:
   real sources; test mode substitutes stubs.
 
 - **`Clock` trait** (`src/clock.rs`): `now() → DateTime<Utc>`,
-  `sleep(Duration)`. `RealClock` for production; `MockClock` (currently
-  `#[cfg(test)]`, will be un-gated in item 4) for tests.
-  `process_clock()` returns the process-wide clock.
+  `sleep(Duration)`. `RealClock` for production; `MockClock` (un-gated
+  in item 4, with condvar-gated sleep) for tests. `process_clock()`
+  returns the process-wide clock.
 
 - **`CacheDirGuard`** (`src/state.rs`): RAII guard that creates a temp
   dir and installs a thread-local cache dir override via `RefCell`.
@@ -779,7 +781,7 @@ trait boundaries and supporting infrastructure:
 3. **Clock trait and `Instant` elimination — COMPLETE.** See the item 3
    detail section in the status tracker. `Clock` trait with `now()` and
    `sleep()`, `RealClock` for production, `MockClock` for tests
-   (condvar-gated sleep to be added in item 4). `Instant` eliminated
+   (condvar-gated sleep added in item 4). `Instant` eliminated
    from all daemon internals; `SystemTime` retained for file mtime.
 
 4. **`ATTEND_TEST_MODE` and `ATTEND_CACHE_DIR` env vars.**
@@ -822,7 +824,7 @@ trait boundaries and supporting infrastructure:
    delay — threads proceed in lockstep with harness-driven time.
    This is critical for proptest at thousands of iterations per second.
 
-   CLI commands (stop, yank, flush) poll sentinel files with
+   CLI commands (stop, start, yank) poll sentinel files with
    `clock.sleep(SENTINEL_POLL_MS)`. With condvar sleep, these block
    until the harness advances time. The harness advances time for all
    processes simultaneously, so the daemon processes the sentinel and
@@ -834,23 +836,32 @@ trait boundaries and supporting infrastructure:
    uses). The harness reuses the hook test harness's `Outcome` type
    for parsing hook stdout/stderr.
 
-6. **Declarative oracle.** State-machine invariants as proptest
-   postconditions. Must pass green against the current implementation.
+6. **Differential oracle.** Builds the shared run infrastructure in
+   `crates/test-harness/`: a `run(binary, actions) -> RunTrace` function
+   that executes an action sequence and returns a raw observation record,
+   plus the `Action` enum and proptest strategies. The differential oracle
+   itself is a workspace member binary (`attend-oracle-diff`) that calls
+   `run()` twice (two binaries, same actions) and asserts the `RunTrace`
+   values match. Self-diff (same binary as both sides) validates the
+   harness under proptest's thousands of iterations. Must pass green.
 
-7. **Proptest action-sequence fuzzer.** Random interleavings of
-   toggle/pause/yank/browser-event/shell-event/wait/collect/status
-   plus injections (transcript, editor, ext, clipboard, time). Asserts
-   invariants after each sequence. Must pass green.
+7. **Declarative oracle.** An integration test module in
+   `crates/test-harness/` that calls `run()` once and checks the
+   `RunTrace` against state-machine invariants. Parses raw stdout using
+   the application's existing hook output code. Must pass green against
+   the current implementation.
 
 #### Dependency order within Phase 0
 
 ```
 1. Trait extraction (capture)  ──┐
 2. Stub transcriber              ┤
-3. Clock trait                   ├→ 4. Env vars + test-inject.sock → 5. Harness → 6. Oracle → 7. Fuzzer
+3. Clock trait                   ├→ 4. Env vars + test-inject.sock → 5. Harness → 6. Diff oracle → 7. Decl oracle
 ```
 
-Items 1-3 are complete and independent of each other.
+Items 1-3 are complete and independent of each other. Item 7 depends on
+item 6: the differential oracle builds the shared `run()` + `RunTrace`
+infrastructure that the declarative oracle reuses.
 
 Item 4 (env vars + inject socket) depends on the traits existing (done).
 This is the most structurally significant item in Phase 0: it adds
@@ -860,12 +871,12 @@ connect to the harness's inject socket in test mode. Every process
 under test becomes an inject socket client. This is the one change in
 Phase 0 that isn't pure refactoring.
 
-**Gate**: the full oracle suite passes reliably before proceeding.
+**Gate**: both oracle suites pass reliably before proceeding.
 
 ### Phase A: Socket control plane
 
 Replace sentinel files with socket-based commands. The daemon listens on a
-Unix domain socket. CLI commands (`toggle`, `pause`, `flush`, `yank`)
+Unix domain socket. CLI commands (`toggle`, `start`, `stop`, `pause`, `yank`)
 connect and send typed messages instead of writing sentinel files.
 
 - Lock file → socket bind exclusivity
@@ -874,6 +885,9 @@ connect and send typed messages instead of writing sentinel files.
 - Version handshake on every connection (commit hash)
 - `version.json` switches from cargo semver to commit hash
 - Service manager auto-management on macOS (launchd) and Linux (systemd)
+- **Behavior fix:** `stop` while paused now finalizes and stops (was a
+  no-op due to pause/idle sentinel conflation; separate daemon-resident
+  states fix this)
 - Staging directories for browser/shell remain (Phase B)
 - `pending/` files remain (Phase C)
 
@@ -886,7 +900,7 @@ instead of writing to staging directories.
 
 - `staging/browser/` eliminated
 - `staging/shell/` eliminated
-- Events are merged in real-time (no deferred collection on flush)
+- Events are merged in real-time (no deferred collection on stop)
 - Timestamps come from the event itself, not from file mtime
 - With a service manager (launchd or systemd), the socket is always
   available; connecting wakes the daemon. On the fallback path (no service
@@ -920,7 +934,56 @@ The hook process collects narration via `Collect` instead of reading
 - Update `docs/setup.md` and troubleshooting
 - Update `attend narrate status` output (socket path, connection state)
 
-**Gate**: both oracle suites pass green. Final audit.
+**Gate**: both oracle suites pass green.
+
+### Phase E: Gate test infrastructure behind feature flag
+
+All test-mode infrastructure in the `attend` crate is currently activated
+by the `ATTEND_TEST_MODE=1` env var at runtime. This means every release
+binary carries dead code for mock clocks, stub capture sources, inject
+socket clients, etc. Phase E converts these runtime checks to
+compile-time `#[cfg(feature = "test-mode")]` gates so that release builds
+contain none of this code.
+
+Add a `test-mode` Cargo feature to the `attend` crate. Gate behind it:
+
+- `MockClock` and condvar-gated sleep infrastructure
+- Inject socket client (connects to `test-inject.sock` at startup)
+- Stub capture sources (`StubTranscriber`, stub `EditorStateSource`,
+  stub `ExternalSource`, stub `ClipboardSource`)
+- Stub clipboard write (yank output to file instead of system clipboard)
+- `ATTEND_TEST_MODE` env var checking
+- `CaptureConfig::test_mode()` constructor
+
+**Keep ungated** (useful in production):
+
+- `ATTEND_CACHE_DIR` env var override (users may want a custom cache
+  location)
+
+**Build workflow after this phase:**
+
+```bash
+# Optimized binary for oracle testing
+cargo build --release --features test-mode
+
+# Clean release binary (no test infrastructure)
+cargo build --release
+```
+
+The oracle binaries and integration tests enable the feature via
+Cargo dependency (`attend = { features = ["test-mode"] }`) or by
+building the binary under test with `--features test-mode`.
+
+**Verification:**
+
+- `cargo build --release` produces a binary where `ATTEND_TEST_MODE=1`
+  has no effect (all test code paths compiled out)
+- Both oracle suites pass with `--features test-mode` enabled
+- Binary size comparison: release vs release+test-mode, to confirm
+  dead code is actually eliminated
+
+**Gate**: both oracle suites pass green with `--features test-mode`.
+Release binary builds clean without the feature. Final audit.
 
 Note: [`narration_protocol.md`](../src/agent/messages/narration_protocol.md)
 should **not** need changes. The agent-facing behavior is identical:
@@ -983,48 +1046,114 @@ default.
 
 ### Two oracle models
 
-#### Oracle 1: Differential binary
+Both oracles are built on a shared `run()` function and `RunTrace` type.
+The differential oracle is built first (item 6) because it validates the
+harness infrastructure via self-diff before we layer invariant assertions
+on top.
 
-A standalone binary (`attend-oracle-diff`) that takes two `attend` binary
-paths and fuzzes them against each other:
+#### Shared run infrastructure
+
+All shared types (`RunTrace`, `StepOutput`, `Action`, etc.) and the
+`run()` function live in `crates/test-harness/`, alongside the existing
+`TestHarness`.
+
+The core abstraction is a function that executes an action sequence
+against a single binary and returns a **raw** record of every observable
+output — no parsing, no interpretation:
+
+```rust
+/// Execute an action sequence and collect all observable outputs.
+fn run(binary: &Utf8Path, actions: &[Action]) -> RunTrace { ... }
+
+/// The complete raw record of one action-sequence execution.
+/// Fields are raw bytes/strings — no parsing of hook output,
+/// narration content, or status reports. Oracles interpret them.
+struct RunTrace {
+    /// Output from each action, in order.
+    steps: Vec<StepOutput>,
+    /// Post-sequence state.
+    final_state: FinalState,
+}
+
+/// What the harness observed after executing one action.
+enum StepOutput {
+    /// CLI command completed (toggle, start, stop, pause, yank, status, hooks, etc.)
+    /// stdout and stderr are raw bytes, not parsed.
+    Command { stdout: Vec<u8>, stderr: Vec<u8>, exit_code: i32 },
+    /// Injection broadcast (no observable output).
+    Injected,
+}
+
+/// State observed after the full sequence completes.
+struct FinalState {
+    daemon_alive: bool,
+    archive_contents: Vec<(String, Vec<u8>)>,
+    yank_clipboard: Option<String>,
+}
+```
+
+`run()` manages the full lifecycle: creates a `TestHarness`, executes
+each action via the harness's CLI helpers, records raw outputs, tears
+down the daemon, and snapshots final state. This is the bulk of the
+implementation work — each oracle is a thin assertion layer on top.
+
+Because `RunTrace` is raw data, the **differential oracle needs no
+parsing** — it compares `RunTrace` values byte-for-byte via `PartialEq`.
+The **declarative oracle** parses stdout fields using the application's
+existing hook output code (the same parser that the hook test harness
+uses for `Outcome` types) to extract structured narration, then asserts
+invariants on the parsed result.
+
+The `run()` function also makes proptest shrinking effective: on failure,
+proptest replays shorter action sequences through the same `run()`, and
+the oracle checks the same `RunTrace`. Minimal reproducing sequences
+fall out naturally.
+
+#### Oracle 1 (item 6): Differential
+
+A standalone binary (`attend-oracle-diff`) that uses proptest internally
+to generate, execute, and shrink action sequences. It takes two `attend`
+binary paths and fuzzes them against each other across many iterations:
 
 ```
 attend-oracle-diff --binary-a ./target/release/attend-old \
                    --binary-b ./target/release/attend-new
 ```
 
-Internally, this binary uses proptest to generate and shrink action
-sequences. On failure, proptest's shrinking produces the minimal
-reproducing sequence — not a wall of 50 random actions, but the 3-4
-that actually trigger the divergence.
+For each proptest case:
+1. Generate a random action sequence.
+2. Call `run(binary_a, &actions)` and `run(binary_b, &actions)` — these
+   can run concurrently (separate `TestHarness` instances, separate temp
+   dirs, separate inject sockets).
+3. Assert the two `RunTrace` values match via `PartialEq`.
+4. On mismatch: proptest shrinks the action sequence and reports the
+   minimal failing case.
 
 Each binary is a matched pair: the same build is used for both CLI
 commands and the daemon. The oracle never crosses versions (e.g.,
 binary-a's CLI against binary-b's daemon) — that would cause version
 mismatches once Phase A adds commit-hash checking.
 
-For each test case:
-1. proptest generates a random action sequence (with injections).
-2. Spin up two isolated environments (separate `ATTEND_CACHE_DIR`, each
-   set to a fresh temp dir, each with its own inject socket).
-3. Run the same action sequence against both binaries via real CLI
-   subprocesses, with `ATTEND_TEST_MODE=1`. Each environment uses its
-   own binary for all commands.
-4. Compare outputs: delivered narrations, status reports, yank results,
-   daemon exit behavior.
-5. On mismatch: proptest shrinks the sequence and reports the minimal
-   failing case.
+This is a workspace member binary crate (e.g., `crates/oracle-diff/`),
+not a `#[test]`. It depends on `crates/test-harness/` for `run()` and
+`RunTrace`, but has no dependency on the main `attend` crate's internals
+— it only shells out to the two binaries. This means it works across any
+two commits: build the old commit, build the new one, point the oracle
+at both.
 
-This is a separate binary (in `src/bin/` or a workspace member), not a
-`#[test]`. It has no dependency on `attend` internals — it only shells out
-to the two binaries. This means it works across any two commits: build the
-old commit, build the new one, point the oracle at both.
+**Self-diff as harness validation**: Running the same binary as both sides
+must produce all-green. If it doesn't, either `run()` has nondeterminism
+bugs or the daemon's test mode is non-deterministic. Self-diff is the
+primary harness validation tool — it stress-tests the inject socket,
+broadcast, spawn-connect synchronization, and time coordination under
+proptest's thousands of iterations. This is why the differential oracle
+is built first: we need confidence in the infrastructure before layering
+invariant assertions on top.
 
-**Self-diff as smoke test**: The oracle's own validation is running the
-same binary against itself. This must produce all-green. If it doesn't,
-the oracle has nondeterminism bugs. But passing self-diff is necessary,
-not sufficient — the assertions must be tight enough to catch real
-divergences. Key differential assertions:
+Passing self-diff is necessary but not sufficient — the `RunTrace` fields
+must be tight enough that swapping in a broken binary would fail. The
+comparison is raw `PartialEq` on `RunTrace`; the following properties
+explain why byte equality catches real divergences:
 
 - Collected narration contains exactly the same events in the same order
 - Each injected transcript string appears verbatim in the output
@@ -1034,22 +1163,19 @@ divergences. Key differential assertions:
 - Archive directory contains the same files with the same content
 - Daemon exit behavior matches (alive vs exited, exit code)
 
-If these all pass when diffing a binary against itself, and they're
-tight enough that swapping in a broken binary would fail, the oracle is
-sound.
-
 The typical workflow during migration:
 
 ```bash
 # Build baseline in a worktree (one-time setup)
 git worktree add ../attend-baseline main
-cargo build --release --manifest-path ../attend-baseline/Cargo.toml
+cargo build --release --features test-mode \
+    --manifest-path ../attend-baseline/Cargo.toml
 
 # Build current work
-cargo build --release
+cargo build --release --features test-mode
 
 # Diff them
-cargo run --bin attend-oracle-diff -- \
+cargo run --release --bin attend-oracle-diff -- \
     --binary-a ../attend-baseline/target/release/attend \
     --binary-b ./target/release/attend
 ```
@@ -1064,10 +1190,27 @@ oracle compares Phase 0+ against Phase A+, not pre-Phase-0 code. This
 is why Phase 0 must be fully complete and green before any migration
 phase begins.
 
-#### Oracle 2: Declarative specification
+#### Oracle 2 (item 7): Declarative specification
 
-A state-machine specification that describes expected behavior independently
-of either implementation. For example:
+A state-machine specification that describes expected behavior
+independently of either implementation. It operates on the same raw
+`RunTrace` that `run()` returns, but **parses** the stdout fields
+using the application's existing hook output parser to extract
+structured narration content, then asserts invariants on the result.
+
+This lives as an integration test module in `crates/test-harness/`
+(e.g., `tests/oracle_spec.rs`), not a separate binary. It depends on
+the main `attend` crate for the hook output parser.
+
+For each proptest case:
+1. Generate a random action sequence.
+2. Call `run(binary, &actions)`.
+3. Parse relevant `StepOutput::Command` stdout fields into structured
+   narration / status types using application code.
+4. Check the parsed results against state-machine invariants.
+5. On violation: proptest shrinks and reports the minimal failing case.
+
+Example invariants:
 
 - "After Toggle (start) + Toggle (stop), at most one narration should be
   collectible, and if words were spoken, exactly one will be."
@@ -1076,20 +1219,17 @@ of either implementation. For example:
 - "After Toggle (start) + BrowserEvent + Toggle (stop) + Collect, the
   delivered narration contains the browser event."
 - "After Yank, clipboard is non-empty."
-- "Start while already recording is a no-op."
+- "Start while already recording finalizes and resumes (flush)."
 - "Stop while idle is a no-op."
-- "Wait without pending narrations blocks until the next flush."
+- "Wait without pending narrations blocks until the next stop or start-while-recording."
 
-These are invariants, not exact output comparisons. They can be expressed as
-proptest postconditions on the action sequence. This oracle survives
-implementation changes (e.g., if we later change merge ordering or timestamp
-precision) where the differential oracle would break.
+These are invariants, not exact output comparisons. They can be expressed
+as proptest postconditions on the `RunTrace`. This oracle survives
+implementation changes (e.g., if we later change merge ordering or
+timestamp precision) where the differential oracle would break.
 
-The declarative oracle is also a standalone binary (`attend-oracle-spec`)
-that takes a single `attend` binary path. It uses proptest internally for
-generation and shrinking — a failing invariant produces the minimal action
-sequence that violates it. It's the durable asset; the differential oracle
-is the migration safety net.
+The declarative oracle is the durable asset; the differential oracle is
+the migration safety net.
 
 ### Injection: how to feed events into test processes
 
@@ -1103,7 +1243,7 @@ The **harness** is the server. It binds
 `$ATTEND_CACHE_DIR/test-inject.sock` before spawning any processes.
 
 Every process spawned with `ATTEND_TEST_MODE=1` — daemon, CLI commands
-(`toggle`, `stop`, `yank`, `flush`, `status`), `listen`, hook processes —
+(`toggle`, `start`, `stop`, `yank`, `status`), `listen`, hook processes —
 connects to the inject socket as early as possible in its lifecycle (top
 of `main`, before any clock usage).
 
@@ -1265,92 +1405,95 @@ harness invokes directly. These processes still connect to the inject
 socket (for time advances) and the harness still waits for them to
 connect before proceeding.
 
-### Observation: what the harness can check
+### Observation: the `RunTrace`
 
-Both oracles are black-box: they only observe externally visible behavior.
+Both oracles are black-box: they only observe externally visible behavior,
+captured as raw data in the `RunTrace` returned by `run()`.
 
-| Observable | How | Checked by |
-|-----------|-----|-----------|
-| CLI stdout/stderr | Capture `Command` output | Both oracles |
-| CLI exit code | `Command` status | Both oracles |
-| Collected narration content | `attend hook pre-tool-use` stdout | Both oracles |
-| Narration contains injected transcript | String match on collected text | Both oracles |
-| Narration contains injected events | Check for browser/shell/editor/ext events | Both oracles |
-| Clipboard content (after yank) | Read from stub buffer (not real clipboard) | Both oracles |
-| Archive files on disk | Read `archive/` in isolated cache dir | Both oracles |
-| Daemon process liveness | Check PID / process status | Both oracles |
-| Status report fields | Parse `attend narrate status` output | Both oracles |
+| `RunTrace` field | Source |
+|-----------------|--------|
+| `StepOutput::Command { stdout, stderr, exit_code }` | Each CLI invocation (toggle, start, stop, pause, yank, hook, status, etc.) |
+| `FinalState::daemon_alive` | PID / process status after sequence |
+| `FinalState::archive_contents` | Files in `archive/` in isolated cache dir |
+| `FinalState::yank_clipboard` | Stub clipboard file in cache dir |
 
-The harness cannot observe daemon-internal state (in-memory buffers, thread
-state, model load status). This is intentional — the oracle validates the
-contract, not the implementation.
+The **differential oracle** compares two `RunTrace` values via
+`PartialEq` — raw byte comparison, no parsing needed. If the same
+action sequence produces different stdout bytes from two binaries,
+that's a failure.
 
-For the **differential oracle**, observations from both binaries are compared
-field by field. For the **declarative oracle**, observations are checked
-against invariants.
+The **declarative oracle** parses `StepOutput::Command` stdout fields
+using the application's hook output parser (the same code that
+produces `Outcome` types in `src/hook/tests/harness.rs`) to extract
+structured narration content, status reports, etc. Invariants are
+asserted on the parsed result.
+
+The harness cannot observe daemon-internal state (in-memory buffers,
+thread state, model load status). This is intentional — the `RunTrace`
+captures the contract, not the implementation.
 
 ### Test harness
 
-Both oracles share the same harness for driving a single `attend` binary:
+The `TestHarness` (already implemented in `crates/test-harness/`) drives
+a single `attend` binary. The oracle's `run()` function wraps it — creating
+a harness, executing actions, and collecting outputs into a `RunTrace`.
+
+A background accept thread runs a blocking accept loop on the inject
+socket. Each new connection is read for its handshake (PID + argv),
+then inserted into shared state behind `Arc<(Mutex<SharedState>, Condvar)>`.
+The foreground test thread waits on the condvar for specific PIDs or
+daemon connections.
 
 ```rust
-/// E2E test fixture: starts a daemon in test mode with isolated cache dir,
-/// provides helpers to invoke CLI commands and assert on outputs.
 struct TestHarness {
-    /// Path to the `attend` binary under test.
     binary: Utf8PathBuf,
-    /// Isolated temp directory for all cache state.
-    cache_dir: TempDir,
+    _cache_dir: TempDir,
+    cache_path: Utf8PathBuf,
+    /// Shared with the background accept thread.
+    shared: Arc<(Mutex<SharedState>, Condvar)>,
+}
 
-    /// Inject socket listener. Bound before any process is spawned.
-    inject_listener: UnixListener,
-    /// Connected processes, keyed by PID. Each stream receives
-    /// broadcast Inject messages. Entries are removed when the
-    /// connection drops (process exits).
-    connections: HashMap<u32, BufWriter<UnixStream>>,
-    /// PID of the daemon, if connected. Identified by argv containing
-    /// "narrate _daemon". Used to decide whether toggle/start should
-    /// wait for a new daemon connection.
+struct SharedState {
+    connections: HashMap<u32, Connection>,
     daemon_pid: Option<u32>,
 }
 
-impl TestHarness {
-    /// Create a new harness: sets up isolated cache dir and binds
-    /// the inject socket at `$cache_dir/test-inject.sock`.
-    fn new(binary: Utf8PathBuf) -> Self { ... }
+struct Connection {
+    writer: BufWriter<UnixStream>,
+    argv: Vec<String>,
+}
 
-    // --- CLI commands (real subprocess invocations) ---
-    //
-    // Each spawns `self.binary` with ATTEND_TEST_MODE=1 and
-    // ATTEND_CACHE_DIR set. Blocks until the child's PID connects
-    // to the inject socket before returning.
+impl TestHarness {
+    fn new(binary: impl Into<Utf8PathBuf>) -> Self { ... }
+
+    // --- CLI commands (spawn + wait for inject connect + tick until exit) ---
 
     fn toggle(&mut self) -> Output { ... }
+    fn start(&mut self) -> Output { ... }
+    fn stop(&mut self) -> Output { ... }
     fn pause(&mut self) -> Output { ... }
     fn yank(&mut self) -> Output { ... }
-    fn status(&mut self) -> StatusReport { ... }
-    fn browser_event(&mut self, url: &str, text: &str) -> Output { ... }
-    fn shell_event(&mut self, cmd: &str, exit: i32) -> Output { ... }
-    fn collect(&mut self, session_id: &str) -> Vec<Narration> { ... }
+    fn status(&mut self) -> String { ... }
+    fn browser_event(&mut self, url: &str, title: &str, html: &str, text: &str) { ... }
+    fn shell_event(&mut self, shell: &str, cmd: &str, exit: i32, dur: f64) { ... }
+
+    // --- Hook helpers ---
+
     fn activate_session(&mut self, session_id: &str) -> Output { ... }
+    fn deactivate_session(&mut self, session_id: &str) -> Output { ... }
+    fn collect(&mut self, session_id: &str) -> String { ... }
+    fn fire_pre_tool_use(&mut self, session_id: &str) -> String { ... }
+    fn listen(&mut self, session_id: &str) -> Child { ... }
+    fn wait_child(&mut self, child: Child) -> Output { ... }
 
     // --- Injections (broadcast to all connected processes) ---
 
+    fn advance_time(&mut self, duration_ms: u64) { ... }
     fn inject_speech(&mut self, text: &str, duration_ms: u64) { ... }
     fn inject_silence(&mut self, duration_ms: u64) { ... }
-    fn inject_editor_state(&mut self, files: &[FileEntry]) { ... }
+    fn inject_editor_state(&mut self, files: Vec<FileEntry>) { ... }
     fn inject_external_selection(&mut self, app: &str, text: &str) { ... }
     fn inject_clipboard(&mut self, text: &str) { ... }
-    fn advance_time(&mut self, duration_ms: u64) { ... }
-
-    // --- Internal helpers ---
-
-    /// Wait for a specific PID to connect to the inject socket.
-    fn wait_for_pid(&mut self, pid: u32) { ... }
-    /// Wait for any new PID to connect (used for daemon grandchild).
-    fn wait_for_new_connection(&mut self) -> u32 { ... }
-    /// Broadcast an Inject message to all connected processes.
-    fn broadcast(&mut self, msg: &Inject) { ... }
 }
 ```
 
@@ -1363,13 +1506,14 @@ The harness is agnostic to the IPC mechanism — it only cares about CLI
 inputs and observable outputs. This is what makes the differential oracle
 work across implementation boundaries.
 
-**Daemon lifecycle per test case:** Each proptest case gets a fresh daemon.
-The harness spawns the daemon at the start of the case and sends SIGTERM
-(or, in the socket world, a shutdown command) at the end. To keep this
-fast, the daemon in test mode should start up quickly (no model loading,
-no real audio init). If startup latency is still a concern, the harness
-could reuse a daemon across cases by sending a `Reset` inject command
-that clears all state — but start with the simple approach first.
+**Harness lifecycle per test case:** Each proptest case gets a fresh
+`TestHarness`. The daemon starts when the first toggle/start action
+executes (not at harness creation). On teardown, the harness sends
+SIGTERM to the daemon if one is connected. To keep this fast, the
+daemon in test mode should start up quickly (no model loading, no real
+audio init). If startup latency is still a concern, the harness could
+reuse a daemon across cases by sending a `Reset` inject command that
+clears all state — but start with the simple approach first.
 
 **How `collect()` works:** The harness always invokes the real
 `attend hook pre-tool-use --agent claude` as a subprocess and captures
@@ -1402,16 +1546,17 @@ real CLI commands and hooks, never shortcut to socket commands.
 (`src/hook/tests/harness.rs`) already has types for hook outcomes:
 `Outcome` (Decision/Narration/Activation), `HookDecision` (approve/
 block with guidance reason), and assertion helpers (`assert_narration`,
-`assert_decision`, `assert_activation`). The e2e harness should parse
-the hook's stdout/stderr back into these same types and reuse the
-assertion vocabulary. This avoids reimplementing hook response parsing
-and keeps the e2e invariants consistent with the unit-level hook tests.
+`assert_decision`, `assert_activation`). The declarative oracle should
+parse raw hook stdout/stderr (from `StepOutput::Command` fields) back
+into these same types and reuse the assertion vocabulary. This avoids
+reimplementing hook response parsing and keeps the e2e invariants
+consistent with the unit-level hook tests.
 
 The hook outputs structured text (guidance for the agent, narration
-content in `<narration>` tags, blocking messages). The e2e harness
-needs a parser that maps this output back to `Outcome` variants.
-This parser should live in a shared crate or module accessible to both
-the hook unit tests and the e2e oracle binaries.
+content in `<narration>` tags, blocking messages). The declarative
+oracle needs a parser that maps this output back to `Outcome` variants.
+This parser should live in a shared module accessible to both the hook
+unit tests and the declarative oracle's integration tests.
 
 ### Proptest fuzzing
 
@@ -1424,8 +1569,9 @@ enum Action {
 
     // Recording control
     Toggle,
+    Start,
+    Stop,
     Pause,
-    Flush,
     Yank,
 
     // External events (via CLI)
@@ -1453,15 +1599,16 @@ while idle). The proptest strategy should generate *structured*
 sequences with random perturbations:
 
 1. Activate a session (random UUID, constant within the sequence).
-2. Toggle (start recording).
+2. Start or Toggle (start recording).
 3. Random interleaving of injections and external events.
-4. Toggle (stop) or Yank.
+4. Stop or Toggle (stop) or Yank.
 5. Wait + Collect.
 6. Optionally repeat 2-5.
 7. Optionally DeactivateSession.
 
 Each step can be randomly omitted or reordered to test error handling
-(e.g., Collect without prior Toggle, double Toggle, Wait without
+and edge cases (e.g., Start while recording triggers flush, Stop while idle is a no-op,
+Collect without prior Toggle, double Toggle, Wait without
 ActivateSession). The structured shape biases toward realistic
 sequences while still exploring edge cases. Proptest shrinking will
 strip away the random perturbations to find minimal failing cases.
@@ -1476,12 +1623,13 @@ strip away the random perturbations to find minimal failing cases.
   before activate, pause while idle, etc.). Most sequences will be
   nonsensical — that's the point.
 
-Used by both oracles:
-- **Differential**: generate sequence, run against both binaries, diff.
-- **Declarative**: generate sequence, run against one binary, assert
-  invariants.
+Both oracles use the same `run()` function and the same proptest
+strategies. The difference is only in what they assert on the `RunTrace`:
 
-Invariants checked after each sequence:
+- **Differential**: `run(binary_a, &actions) == run(binary_b, &actions)`
+- **Declarative**: `invariants(&actions, &run(binary, &actions))`
+
+Declarative invariants checked after each sequence:
 - No panics in daemon (process alive or exited cleanly)
 - No orphaned temp files outside expected dirs
 - Delivered narrations contain all injected events (no loss)

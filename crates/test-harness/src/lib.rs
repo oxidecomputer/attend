@@ -240,7 +240,7 @@ impl TestHarness {
         output
     }
 
-    /// Start recording (no-op if already recording).
+    /// Start recording, or finalize and resume if already recording.
     pub fn start(&mut self) -> Output {
         let had_daemon = self.has_daemon();
         let output = self.run_command(&["narrate", "start"]);
