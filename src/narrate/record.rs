@@ -1077,7 +1077,7 @@ fn collect_json_files(dir: &camino::Utf8Path) -> Vec<std::path::PathBuf> {
 /// When silence-based segmentation is enabled (the default), completed speech
 /// segments are transcribed on the fly and their audio is freed. At stop/flush,
 /// only the current in-progress segment needs transcription.
-pub fn daemon() -> anyhow::Result<()> {
+pub fn daemon(clock: Arc<dyn Clock>) -> anyhow::Result<()> {
     // Create a new session so the daemon survives if the parent's process
     // group is killed (e.g. Zed's task runner cleaning up after toggle exits).
     // Intentionally ignored: may fail if already session leader (e.g. run manually).
@@ -1127,7 +1127,7 @@ pub fn daemon() -> anyhow::Result<()> {
     let clipboard_enabled = config.clipboard_capture.unwrap_or(true);
     let clipboard_staging = super::clipboard_staging_dir(session_id.as_ref());
     let editor_events = capture::start(
-        capture::CaptureConfig::production(),
+        capture::CaptureConfig::production(Arc::clone(&clock)),
         None,
         config.ext_ignore_apps.clone(),
         clipboard_enabled,
@@ -1158,7 +1158,6 @@ pub fn daemon() -> anyhow::Result<()> {
         None
     };
 
-    let clock: Arc<dyn Clock> = Arc::new(crate::clock::RealClock);
     let now = clock.now();
     let mut state = DaemonState {
         clock,

@@ -49,9 +49,9 @@ pub(crate) struct CaptureConfig {
 
 impl CaptureConfig {
     /// Create a config using real platform sources.
-    pub fn production() -> Self {
+    pub fn production(clock: Arc<dyn Clock>) -> Self {
         Self {
-            clock: Arc::new(crate::clock::RealClock),
+            clock,
             editor_source: Box::new(super::editor_capture::RealEditorSource),
             ext_source: super::ext_capture::platform_source(),
             clipboard_factory: Box::new(|| {

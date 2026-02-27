@@ -69,7 +69,7 @@ impl NarrateCommand {
             NarrateCommand::Yank => record::yank(&*clock),
             NarrateCommand::Status => crate::narrate::status(),
             NarrateCommand::Clean { older_than } => crate::narrate::clean(older_than),
-            NarrateCommand::RecordDaemon => record::daemon(),
+            NarrateCommand::RecordDaemon => record::daemon(clock),
             NarrateCommand::Bench => bench(),
         }
     }
