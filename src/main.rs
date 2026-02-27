@@ -35,6 +35,12 @@ fn main() -> anyhow::Result<()> {
 
     if test_mode::is_active() {
         test_mode::init();
+        // The daemon defers connect() to after initialization so the
+        // harness knows "connected" = "ready". All other processes
+        // connect immediately.
+        if !std::env::args().any(|a| a == "_record-daemon") {
+            test_mode::connect();
+        }
     }
 
     Cli::parse().run()?;

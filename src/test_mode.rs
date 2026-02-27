@@ -42,8 +42,16 @@ use crate::state::{EditorState, FileEntry};
 /// Process-wide MockClock, set once by `init()`.
 static CLOCK: OnceLock<Arc<MockClock>> = OnceLock::new();
 
-/// Daemon's inject router, set once by `register_router()`.
+/// Inject router, set once by `init()`. Routes capture injections from
+/// the inject socket to shared state that stubs read from. Registered
+/// at the top of main so no messages are lost during daemon initialization.
 static INJECT_ROUTER: OnceLock<InjectRouter> = OnceLock::new();
+
+/// StubTranscriber created during `init()`, taken once by the daemon via
+/// `take_stub_transcriber()`. Non-daemon processes leave this untouched.
+static STUB_TRANSCRIBER: OnceLock<
+    Mutex<Option<crate::narrate::transcribe::stub::StubTranscriber>>,
+> = OnceLock::new();
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -59,16 +67,12 @@ pub fn clock() -> Option<Arc<MockClock>> {
     CLOCK.get().cloned()
 }
 
-/// Initialize test mode: create MockClock, connect to inject socket,
-/// spawn background reader thread.
+/// Initialize test mode: create MockClock, inject router, and stub
+/// transcriber. Does NOT connect to the inject socket — call `connect()`
+/// for that.
 ///
 /// Must be called at the top of `main()`, before any clock usage.
-/// Panics if `ATTEND_CACHE_DIR` is not set or the inject socket is
-/// unreachable.
 pub fn init() {
-    let cache_dir = crate::state::cache_dir().expect("ATTEND_CACHE_DIR must be set in test mode");
-    let sock_path = cache_dir.join("test-inject.sock");
-
     // Create and store the mock clock (start at Unix epoch).
     let start = chrono::DateTime::UNIX_EPOCH;
     let clock = Arc::new(MockClock::new(start));
@@ -76,11 +80,48 @@ pub fn init() {
         .set(Arc::clone(&clock))
         .expect("test_mode::init called twice");
 
-    // Connect to inject socket.
+    // Create the inject router and stub transcriber. The router is
+    // registered now so the reader thread (started by connect()) can
+    // dispatch from its first message. The StubTranscriber is stored
+    // for the daemon to take via take_stub_transcriber().
+    let editor_state: Arc<Mutex<Option<crate::state::EditorState>>> = Arc::default();
+    let ext_snapshot: Arc<Mutex<Option<crate::narrate::ext_capture::ExternalSnapshot>>> =
+        Arc::default();
+    let clipboard_text: Arc<Mutex<Option<String>>> = Arc::default();
+    let (stub_transcriber, transcriber_tx) =
+        crate::narrate::transcribe::stub::StubTranscriber::new();
+
+    INJECT_ROUTER
+        .set(InjectRouter {
+            transcriber_tx,
+            editor_state,
+            ext_snapshot,
+            clipboard_text,
+        })
+        .expect("inject router already registered");
+    STUB_TRANSCRIBER
+        .set(Mutex::new(Some(stub_transcriber)))
+        .expect("stub transcriber already set");
+}
+
+/// Connect to the harness's inject socket, send the handshake, and spawn
+/// the background reader thread.
+///
+/// Non-daemon processes call this at the top of main (right after `init()`).
+/// The daemon calls this after initialization is complete, so the harness
+/// knows "daemon connected" means "daemon ready."
+pub fn connect() {
+    let cache_dir = crate::state::cache_dir().expect("ATTEND_CACHE_DIR must be set in test mode");
+    let sock_path = cache_dir.join("test-inject.sock");
+
+    let clock = CLOCK
+        .get()
+        .expect("test_mode::connect called before init")
+        .clone();
+
     let mut stream = UnixStream::connect(sock_path.as_std_path())
         .unwrap_or_else(|e| panic!("failed to connect to inject socket at {sock_path}: {e}"));
 
-    // Send handshake (newline-delimited JSON).
     let handshake = Handshake {
         pid: std::process::id(),
         argv: std::env::args().collect(),
@@ -89,21 +130,27 @@ pub fn init() {
     stream.write_all(b"\n").expect("failed to write newline");
     stream.flush().expect("failed to flush handshake");
 
-    // Spawn background reader thread.
     std::thread::Builder::new()
         .name("test-inject".into())
         .spawn(move || reader_loop(stream, clock))
         .expect("failed to spawn inject reader thread");
 }
 
-/// Register the daemon's inject router.
-///
-/// Called by the daemon after setting up capture stubs. The background
-/// reader thread routes capture injections to the router's shared state.
-pub fn register_router(router: InjectRouter) {
-    if INJECT_ROUTER.set(router).is_err() {
-        panic!("inject router already registered");
-    }
+/// Take the stub transcriber created during `init()`. Called once by the
+/// daemon during capture setup. Panics if not in test mode or already taken.
+pub fn take_stub_transcriber() -> crate::narrate::transcribe::stub::StubTranscriber {
+    STUB_TRANSCRIBER
+        .get()
+        .expect("test_mode::init not called")
+        .lock()
+        .unwrap()
+        .take()
+        .expect("stub transcriber already taken")
+}
+
+/// Get the inject router (for `CaptureConfig::test_mode()` to read shared state).
+pub fn router() -> &'static InjectRouter {
+    INJECT_ROUTER.get().expect("test_mode::init not called")
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +163,10 @@ pub fn register_router(router: InjectRouter) {
 /// Never calls `clock.sleep()` — see module-level invariant.
 fn reader_loop(stream: UnixStream, clock: Arc<MockClock>) {
     let reader = BufReader::new(stream);
+    // The router is registered during init(), before this thread starts
+    // reading, so it's always available.
+    let router = INJECT_ROUTER.get();
+
     for line in reader.lines() {
         let line = match line {
             Ok(l) => l,
@@ -136,10 +187,10 @@ fn reader_loop(stream: UnixStream, clock: Arc<MockClock>) {
                 clock.advance(Duration::from_millis(duration_ms));
             }
             capture_msg => {
-                // Route to daemon stubs if registered; silently ignore otherwise.
-                if let Some(router) = INJECT_ROUTER.get() {
-                    router.dispatch(capture_msg);
+                if let Some(r) = router {
+                    r.dispatch(capture_msg);
                 }
+                // Non-daemon processes have no router; silently ignore.
             }
         }
     }
@@ -151,6 +202,7 @@ fn reader_loop(stream: UnixStream, clock: Arc<MockClock>) {
 
 /// Routes capture injections from the inject socket to the daemon's
 /// stub channels. Non-daemon processes never register a router.
+#[derive(Debug)]
 pub struct InjectRouter {
     pub transcriber_tx: std::sync::mpsc::Sender<Injection>,
     pub editor_state: Arc<Mutex<Option<EditorState>>>,
@@ -235,495 +287,7 @@ pub enum Inject {
     Clipboard { text: String },
 }
 
-// ---------------------------------------------------------------------------
-// Stub capture sources
-// ---------------------------------------------------------------------------
-
-pub mod stubs {
-    //! Stub implementations of capture source traits for test mode.
-    //!
-    //! Each stub holds shared state (`Arc<Mutex<...>>`) that the inject
-    //! router writes to and the capture thread reads from. This decouples
-    //! the inject socket background thread from the capture polling loops.
-    //!
-    //! **Why mutexes (latest-wins) rather than channels?** Editor state,
-    //! clipboard content, and external selections are *snapshots*, not
-    //! events. In production, if the editor changes three times between
-    //! polls, only the final state is observed. The mutex model faithfully
-    //! mirrors this: inject sets the current state, and every poll returns
-    //! it until overwritten. The harness controls time via condvar-gated
-    //! `MockClock`, so it can advance by exactly one poll interval between
-    //! injections when ordering matters.
-    //!
-    //! Speech/silence injections are different — they're events that must
-    //! not be lost. Those use a channel (`mpsc::Sender`) in
-    //! [`StubTranscriber`](crate::narrate::transcribe::stub::StubTranscriber),
-    //! which drains all pending injections on each `transcribe()` call.
-
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex};
-
-    use camino::{Utf8Path, Utf8PathBuf};
-
-    use crate::clock::Clock;
-    use crate::narrate::audio::{AudioChunk, AudioSource, Recording};
-    use crate::narrate::clipboard_capture::{ClipboardSource, ImageData};
-    use crate::narrate::editor_capture::EditorStateSource;
-    use crate::narrate::ext_capture::{ExternalSnapshot, ExternalSource};
-    use crate::state::EditorState;
-
-    // -- Editor ---------------------------------------------------------------
-
-    /// Stub editor source: returns the most recently injected state.
-    pub struct StubEditorSource {
-        state: Arc<Mutex<Option<EditorState>>>,
-    }
-
-    impl StubEditorSource {
-        pub fn new(state: Arc<Mutex<Option<EditorState>>>) -> Self {
-            Self { state }
-        }
-    }
-
-    impl EditorStateSource for StubEditorSource {
-        fn current(
-            &self,
-            _cwd: Option<&Utf8Path>,
-            _include_dirs: &[Utf8PathBuf],
-        ) -> anyhow::Result<Option<EditorState>> {
-            Ok(self.state.lock().unwrap().clone())
-        }
-    }
-
-    // -- Clipboard ------------------------------------------------------------
-
-    /// Stub clipboard source: returns the most recently injected text.
-    pub struct StubClipboardSource {
-        text: Arc<Mutex<Option<String>>>,
-    }
-
-    impl StubClipboardSource {
-        pub fn new(text: Arc<Mutex<Option<String>>>) -> Self {
-            Self { text }
-        }
-    }
-
-    impl ClipboardSource for StubClipboardSource {
-        fn get_text(&mut self) -> Option<String> {
-            self.text.lock().unwrap().clone()
-        }
-
-        fn get_image(&mut self) -> Option<ImageData> {
-            // Image injection not supported in test mode.
-            None
-        }
-    }
-
-    // -- External selection ---------------------------------------------------
-
-    /// Stub external source: returns the most recently injected snapshot.
-    pub struct StubExternalSource {
-        snapshot: Arc<Mutex<Option<ExternalSnapshot>>>,
-    }
-
-    impl StubExternalSource {
-        pub fn new(snapshot: Arc<Mutex<Option<ExternalSnapshot>>>) -> Self {
-            Self { snapshot }
-        }
-    }
-
-    impl ExternalSource for StubExternalSource {
-        fn is_available(&self) -> bool {
-            true
-        }
-
-        fn query(&self) -> Option<ExternalSnapshot> {
-            self.snapshot.lock().unwrap().clone()
-        }
-    }
-
-    // -- Audio ----------------------------------------------------------------
-
-    /// Stub audio source: produces a tiny silent chunk on each poll so the
-    /// normal transcription pipeline fires. The `StubTranscriber` ignores
-    /// the actual audio data and returns injected words instead.
-    ///
-    /// Respects pause/resume: produces nothing while paused, matching
-    /// the real audio source's behaviour.
-    pub struct StubAudioSource {
-        sample_rate: u32,
-        clock: Arc<dyn Clock>,
-        paused: Arc<AtomicBool>,
-    }
-
-    impl StubAudioSource {
-        pub fn new(sample_rate: u32, clock: Arc<dyn Clock>) -> Self {
-            Self {
-                sample_rate,
-                clock,
-                paused: Arc::new(AtomicBool::new(false)),
-            }
-        }
-    }
-
-    impl AudioSource for StubAudioSource {
-        fn take_chunks(&self) -> Vec<AudioChunk> {
-            if self.paused.load(Ordering::Relaxed) {
-                return Vec::new();
-            }
-            // One sample of silence, timestamped from the mock clock.
-            vec![AudioChunk {
-                timestamp: self.clock.now(),
-                samples: vec![0.0],
-            }]
-        }
-
-        fn sample_rate(&self) -> u32 {
-            self.sample_rate
-        }
-
-        fn drain(&self) -> Recording {
-            if self.paused.load(Ordering::Relaxed) {
-                return Recording { chunks: Vec::new() };
-            }
-            Recording {
-                chunks: vec![AudioChunk {
-                    timestamp: self.clock.now(),
-                    samples: vec![0.0],
-                }],
-            }
-        }
-
-        fn pause(&self) -> anyhow::Result<()> {
-            self.paused.store(true, Ordering::Relaxed);
-            Ok(())
-        }
-
-        fn resume(&self) -> anyhow::Result<()> {
-            self.paused.store(false, Ordering::Relaxed);
-            Ok(())
-        }
-
-        fn stop(&mut self) -> Recording {
-            Recording { chunks: Vec::new() }
-        }
-    }
-}
+pub mod stubs;
 
 #[cfg(test)]
-mod tests {
-    use std::io::{BufRead, BufReader, Write};
-    use std::os::unix::net::UnixListener;
-    use std::sync::{Arc, Mutex};
-    use std::time::Duration;
-
-    use camino::Utf8PathBuf;
-
-    use super::*;
-    use crate::clock::Clock;
-    use crate::narrate::audio::AudioSource;
-    use crate::narrate::clipboard_capture::ClipboardSource;
-    use crate::narrate::editor_capture::EditorStateSource;
-    use crate::narrate::ext_capture::{ExternalSnapshot, ExternalSource};
-    use crate::narrate::transcribe::stub::Injection;
-    use crate::state;
-
-    // -- Serde round-trip -----------------------------------------------------
-
-    /// Inject variants survive JSON serialization round-trip.
-    #[test]
-    fn inject_serde_round_trip() {
-        let cases = vec![
-            Inject::AdvanceTime { duration_ms: 100 },
-            Inject::Speech {
-                text: "hello world".into(),
-                duration_ms: 2000,
-            },
-            Inject::Silence { duration_ms: 500 },
-            Inject::EditorState {
-                files: vec![state::FileEntry {
-                    path: Utf8PathBuf::from("/tmp/foo.rs"),
-                    selections: vec![],
-                }],
-            },
-            Inject::ExternalSelection {
-                app: "Safari".into(),
-                text: "selected text".into(),
-            },
-            Inject::Clipboard {
-                text: "clipboard content".into(),
-            },
-        ];
-        for msg in &cases {
-            let json = serde_json::to_string(msg).unwrap();
-            let _round_tripped: Inject = serde_json::from_str(&json).unwrap();
-        }
-    }
-
-    /// Handshake survives JSON serialization round-trip.
-    #[test]
-    fn handshake_serde_round_trip() {
-        let hs = Handshake {
-            pid: 12345,
-            argv: vec!["attend".into(), "narrate".into(), "_daemon".into()],
-        };
-        let json = serde_json::to_string(&hs).unwrap();
-        let rt: Handshake = serde_json::from_str(&json).unwrap();
-        assert_eq!(rt.pid, 12345);
-        assert_eq!(rt.argv, vec!["attend", "narrate", "_daemon"]);
-    }
-
-    // -- Stub capture sources -------------------------------------------------
-
-    /// StubEditorSource returns the most recently injected state.
-    #[test]
-    fn stub_editor_source_returns_injected_state() {
-        let shared: Arc<Mutex<Option<EditorState>>> = Arc::default();
-        let stub = stubs::StubEditorSource::new(Arc::clone(&shared));
-
-        // Initially empty.
-        assert!(stub.current(None, &[]).unwrap().is_none());
-
-        // Inject a state.
-        *shared.lock().unwrap() = Some(EditorState {
-            files: vec![state::FileEntry {
-                path: Utf8PathBuf::from("/tmp/test.rs"),
-                selections: vec![],
-            }],
-            cwd: None,
-        });
-
-        let state = stub.current(None, &[]).unwrap().unwrap();
-        assert_eq!(state.files.len(), 1);
-        assert_eq!(state.files[0].path, "/tmp/test.rs");
-
-        // Returns the same state on repeated polls (latest-wins).
-        let state2 = stub.current(None, &[]).unwrap().unwrap();
-        assert_eq!(state2.files[0].path, "/tmp/test.rs");
-    }
-
-    /// StubClipboardSource returns injected text, never images.
-    #[test]
-    fn stub_clipboard_source_returns_injected_text() {
-        let shared: Arc<Mutex<Option<String>>> = Arc::default();
-        let mut stub = stubs::StubClipboardSource::new(Arc::clone(&shared));
-
-        assert!(stub.get_text().is_none());
-        assert!(stub.get_image().is_none());
-
-        *shared.lock().unwrap() = Some("pasted".into());
-
-        assert_eq!(stub.get_text().unwrap(), "pasted");
-        assert!(stub.get_image().is_none()); // Never returns images.
-    }
-
-    /// StubExternalSource returns injected snapshot and reports available.
-    #[test]
-    fn stub_external_source_returns_injected_snapshot() {
-        let shared: Arc<Mutex<Option<ExternalSnapshot>>> = Arc::default();
-        let stub = stubs::StubExternalSource::new(Arc::clone(&shared));
-
-        assert!(stub.is_available());
-        assert!(stub.query().is_none());
-
-        *shared.lock().unwrap() = Some(ExternalSnapshot {
-            app: "iTerm2".into(),
-            window_title: "shell".into(),
-            selected_text: Some("hello".into()),
-        });
-
-        let snap = stub.query().unwrap();
-        assert_eq!(snap.app, "iTerm2");
-        assert_eq!(snap.selected_text.unwrap(), "hello");
-    }
-
-    /// StubAudioSource produces a tiny chunk when not paused, nothing when paused.
-    #[test]
-    fn stub_audio_source_produces_chunks_when_active() {
-        let clock = Arc::new(crate::clock::MockClock::new(chrono::DateTime::UNIX_EPOCH));
-        let mut stub = stubs::StubAudioSource::new(16000, clock);
-
-        assert_eq!(stub.sample_rate(), 16000);
-
-        // Active: produces a chunk.
-        let chunks = stub.take_chunks();
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].samples, vec![0.0]);
-
-        // Drain also produces a chunk.
-        assert_eq!(stub.drain().chunks.len(), 1);
-
-        // Paused: produces nothing.
-        assert!(stub.pause().is_ok());
-        assert!(stub.take_chunks().is_empty());
-        assert!(stub.drain().chunks.is_empty());
-
-        // Resumed: produces again.
-        assert!(stub.resume().is_ok());
-        assert_eq!(stub.take_chunks().len(), 1);
-
-        // Stop always returns empty.
-        assert!(stub.stop().chunks.is_empty());
-    }
-
-    // -- InjectRouter dispatch ------------------------------------------------
-
-    /// InjectRouter dispatches Speech to the transcriber channel.
-    #[test]
-    fn router_dispatches_speech() {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let router = InjectRouter {
-            transcriber_tx: tx,
-            editor_state: Arc::default(),
-            ext_snapshot: Arc::default(),
-            clipboard_text: Arc::default(),
-        };
-
-        router.dispatch(Inject::Speech {
-            text: "hello".into(),
-            duration_ms: 1000,
-        });
-
-        let inj = rx.try_recv().unwrap();
-        assert_eq!(inj.text, "hello");
-        assert_eq!(inj.duration_ms, 1000);
-    }
-
-    /// InjectRouter dispatches Silence as empty-text Injection.
-    #[test]
-    fn router_dispatches_silence() {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let router = InjectRouter {
-            transcriber_tx: tx,
-            editor_state: Arc::default(),
-            ext_snapshot: Arc::default(),
-            clipboard_text: Arc::default(),
-        };
-
-        router.dispatch(Inject::Silence { duration_ms: 500 });
-
-        let inj = rx.try_recv().unwrap();
-        assert_eq!(inj.text, "");
-        assert_eq!(inj.duration_ms, 500);
-    }
-
-    /// InjectRouter dispatches EditorState to the shared mutex.
-    #[test]
-    fn router_dispatches_editor_state() {
-        let editor_state: Arc<Mutex<Option<EditorState>>> = Arc::default();
-        let router = InjectRouter {
-            transcriber_tx: std::sync::mpsc::channel::<Injection>().0,
-            editor_state: Arc::clone(&editor_state),
-            ext_snapshot: Arc::default(),
-            clipboard_text: Arc::default(),
-        };
-
-        router.dispatch(Inject::EditorState {
-            files: vec![state::FileEntry {
-                path: Utf8PathBuf::from("/src/main.rs"),
-                selections: vec![],
-            }],
-        });
-
-        let state = editor_state.lock().unwrap();
-        let files = &state.as_ref().unwrap().files;
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].path, "/src/main.rs");
-    }
-
-    /// InjectRouter dispatches ExternalSelection to the shared mutex.
-    #[test]
-    fn router_dispatches_external_selection() {
-        let ext: Arc<Mutex<Option<ExternalSnapshot>>> = Arc::default();
-        let router = InjectRouter {
-            transcriber_tx: std::sync::mpsc::channel::<Injection>().0,
-            editor_state: Arc::default(),
-            ext_snapshot: Arc::clone(&ext),
-            clipboard_text: Arc::default(),
-        };
-
-        router.dispatch(Inject::ExternalSelection {
-            app: "Safari".into(),
-            text: "selected".into(),
-        });
-
-        let snap = ext.lock().unwrap().clone().unwrap();
-        assert_eq!(snap.app, "Safari");
-        assert_eq!(snap.selected_text.unwrap(), "selected");
-    }
-
-    /// InjectRouter dispatches Clipboard text to the shared mutex.
-    #[test]
-    fn router_dispatches_clipboard() {
-        let clip: Arc<Mutex<Option<String>>> = Arc::default();
-        let router = InjectRouter {
-            transcriber_tx: std::sync::mpsc::channel::<Injection>().0,
-            editor_state: Arc::default(),
-            ext_snapshot: Arc::default(),
-            clipboard_text: Arc::clone(&clip),
-        };
-
-        router.dispatch(Inject::Clipboard {
-            text: "copied".into(),
-        });
-
-        assert_eq!(clip.lock().unwrap().as_deref(), Some("copied"));
-    }
-
-    // -- init() + inject socket integration -----------------------------------
-
-    /// Full round-trip: init() connects to inject socket, sends handshake,
-    /// background reader processes AdvanceTime and advances the MockClock.
-    #[test]
-    fn init_connects_and_processes_inject_messages() {
-        let guard = state::CacheDirGuard::new();
-        let sock_path = guard.cache.join("test-inject.sock");
-
-        // Bind the inject socket (harness role).
-        let listener = UnixListener::bind(sock_path.as_std_path()).unwrap();
-
-        // init() connects, sends handshake, spawns reader thread.
-        init();
-
-        // Accept the connection.
-        let (stream, _) = listener.accept().unwrap();
-        let mut reader = BufReader::new(&stream);
-
-        // Read the handshake.
-        let mut line = String::new();
-        reader.read_line(&mut line).unwrap();
-        let hs: Handshake = serde_json::from_str(&line).unwrap();
-        assert_eq!(hs.pid, std::process::id());
-        assert!(!hs.argv.is_empty());
-
-        // Verify the MockClock was created (starts at epoch).
-        let clock = super::clock().expect("MockClock not set");
-        assert_eq!(clock.now(), chrono::DateTime::UNIX_EPOCH);
-
-        // Helper: send an inject message and wait for the clock to advance.
-        //
-        // Uses MockClock::sleep() which blocks on the condvar until advance()
-        // meets the deadline. This isn't circular: the *background reader
-        // thread* calls advance(), not this thread. The deadlock invariant
-        // ("the inject reader must never call clock.sleep()") is respected.
-        let send_and_wait = |msg: &Inject, wait: Duration| {
-            let mut json = serde_json::to_vec(msg).unwrap();
-            json.push(b'\n');
-            (&stream).write_all(&json).unwrap();
-            clock.sleep(wait);
-        };
-
-        let epoch = chrono::DateTime::UNIX_EPOCH;
-        send_and_wait(
-            &Inject::AdvanceTime { duration_ms: 5000 },
-            Duration::from_secs(5),
-        );
-        assert_eq!(clock.now(), epoch + Duration::from_secs(5));
-
-        send_and_wait(
-            &Inject::AdvanceTime { duration_ms: 3000 },
-            Duration::from_secs(3),
-        );
-        assert_eq!(clock.now(), epoch + Duration::from_secs(8));
-    }
-}
+mod tests;

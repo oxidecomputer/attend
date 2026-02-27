@@ -19,24 +19,109 @@ fn binary() -> String {
 fn start_speak_stop_collect() {
     let mut h = TestHarness::new(binary());
 
-    // Activate a session (simulates /attend).
     h.activate_session("sess-1");
-
-    // Start recording.
     h.toggle();
 
-    // Inject speech and advance time for the daemon to process.
     h.inject_speech("hello world from the harness", 2000);
     h.advance_time(500);
 
-    // Stop recording.
     h.toggle();
 
-    // Collect narration via the PreToolUse hook.
     let narration = h.collect("sess-1");
-
     assert!(
         narration.contains("hello world from the harness"),
         "narration should contain injected speech:\n{narration}"
+    );
+}
+
+/// Status reports that the daemon is recording, then idle after stop.
+#[test]
+fn status_shows_recording_state() {
+    let mut h = TestHarness::new(binary());
+
+    h.activate_session("sess-2");
+    h.toggle();
+    h.advance_time(500);
+
+    let status = h.status();
+    assert!(
+        status.contains("Recording") || status.contains("recording"),
+        "status should indicate recording:\n{status}"
+    );
+
+    h.toggle();
+
+    let status = h.status();
+    assert!(
+        !status.contains("recording"),
+        "status should not indicate recording after stop:\n{status}"
+    );
+}
+
+/// Shell hook events staged during recording appear in collected
+/// narration. The event may be scope-filtered (✂) if the shell's cwd
+/// doesn't match the agent's cwd.
+#[test]
+fn shell_event_appears_in_narration() {
+    let mut h = TestHarness::new(binary());
+
+    h.activate_session("sess-3");
+    h.toggle();
+    h.advance_time(500);
+
+    h.shell_event("fish", "cargo test", 0, 1.5);
+    h.advance_time(500);
+
+    h.inject_speech("some words", 500);
+    h.advance_time(500);
+
+    h.toggle();
+
+    let narration = h.collect("sess-3");
+    // The shell event appears either with full content or as a ✂ marker
+    // (depends on whether the test runner's cwd is within the hook's scope).
+    assert!(
+        narration.contains("command") || narration.contains("✂"),
+        "narration should contain the shell event:\n{narration}"
+    );
+}
+
+/// Multiple speech injections across a recording period are all delivered.
+#[test]
+fn multiple_speech_injections() {
+    let mut h = TestHarness::new(binary());
+
+    h.activate_session("sess-5");
+    h.toggle();
+
+    h.inject_speech("first utterance", 1000);
+    h.advance_time(500);
+    h.inject_speech("second utterance", 1000);
+    h.advance_time(500);
+
+    h.toggle();
+
+    let narration = h.collect("sess-5");
+    assert!(
+        narration.contains("first utterance"),
+        "narration should contain first utterance:\n{narration}"
+    );
+    assert!(
+        narration.contains("second utterance"),
+        "narration should contain second utterance:\n{narration}"
+    );
+}
+
+/// Collecting when nothing is pending returns no narration content.
+#[test]
+fn collect_empty_when_no_narration() {
+    let mut h = TestHarness::new(binary());
+
+    h.activate_session("sess-6");
+
+    let narration = h.collect("sess-6");
+    assert!(
+        !narration.contains("<narration>"),
+        "no narration content should be delivered:\n{narration}"
     );
 }

@@ -12,6 +12,12 @@
 //! Every process spawned with `ATTEND_TEST_MODE=1` connects to this
 //! socket, sends a handshake, and reads injection messages.
 //!
+//! A **background accept thread** runs a blocking accept loop. Each new
+//! connection is read for its handshake (PID + argv), then inserted into
+//! shared state behind a `Mutex` + `Condvar`. The foreground test thread
+//! waits on the condvar for specific PIDs or daemon connections — no
+//! polling, no sleeps, no non-blocking accept.
+//!
 //! # Time coordination
 //!
 //! All processes under test use a `MockClock` with condvar-gated sleep.
@@ -25,6 +31,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use camino::{Utf8Path, Utf8PathBuf};
@@ -47,8 +54,25 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 /// sentinel polling).
 const TICK_MS: u64 = 50;
 
-/// Small real-time delay between ticks to avoid busy-spinning.
-const TICK_REAL_DELAY: Duration = Duration::from_millis(5);
+// ---------------------------------------------------------------------------
+// Shared state between accept thread and foreground thread
+// ---------------------------------------------------------------------------
+
+struct SharedState {
+    /// Connected processes, keyed by PID. Writable by the accept thread
+    /// (insert) and the foreground thread (broadcast writes, dead removal).
+    connections: HashMap<u32, Connection>,
+    /// PID of the daemon, if connected. Set by the accept thread when a
+    /// connection with daemon argv arrives.
+    daemon_pid: Option<u32>,
+}
+
+/// A connected process on the inject socket.
+struct Connection {
+    writer: BufWriter<UnixStream>,
+    #[allow(dead_code)]
+    argv: Vec<String>,
+}
 
 // ---------------------------------------------------------------------------
 // TestHarness
@@ -63,25 +87,16 @@ pub struct TestHarness {
     _cache_dir: tempfile::TempDir,
     /// Path to the cache directory (convenience reference).
     cache_path: Utf8PathBuf,
-    /// Inject socket listener, bound before any process is spawned.
-    inject_listener: UnixListener,
-    /// Connected processes, keyed by PID.
-    connections: HashMap<u32, Connection>,
-    /// PID of the daemon process, if connected.
-    daemon_pid: Option<u32>,
-}
-
-/// A connected process on the inject socket.
-struct Connection {
-    writer: BufWriter<UnixStream>,
-    #[allow(dead_code)]
-    argv: Vec<String>,
+    /// Shared state with the background accept thread.
+    shared: Arc<(Mutex<SharedState>, Condvar)>,
 }
 
 impl TestHarness {
     /// Create a new harness with an isolated cache directory and inject socket.
     ///
     /// `binary` is the path to the `attend` executable under test.
+    /// Spawns a background thread that runs a blocking accept loop on the
+    /// inject socket.
     pub fn new(binary: impl Into<Utf8PathBuf>) -> Self {
         let binary = binary.into();
         let cache_dir = tempfile::tempdir().expect("failed to create temp cache dir");
@@ -90,16 +105,29 @@ impl TestHarness {
 
         // Bind the inject socket before any processes are spawned.
         let sock_path = cache_path.join("test-inject.sock");
-        let inject_listener = UnixListener::bind(sock_path.as_std_path())
+        let listener = UnixListener::bind(sock_path.as_std_path())
             .unwrap_or_else(|e| panic!("failed to bind inject socket at {sock_path}: {e}"));
+
+        let shared = Arc::new((
+            Mutex::new(SharedState {
+                connections: HashMap::new(),
+                daemon_pid: None,
+            }),
+            Condvar::new(),
+        ));
+
+        // Spawn background accept thread.
+        let shared_clone = Arc::clone(&shared);
+        std::thread::Builder::new()
+            .name("harness-accept".into())
+            .spawn(move || accept_loop(listener, shared_clone))
+            .expect("failed to spawn accept thread");
 
         Self {
             binary,
             _cache_dir: cache_dir,
             cache_path,
-            inject_listener,
-            connections: HashMap::new(),
-            daemon_pid: None,
+            shared,
         }
     }
 
@@ -155,30 +183,24 @@ impl TestHarness {
 
     /// Wait for a child process to exit, advancing mock time in small
     /// increments so all processes (daemon + CLI) can make progress.
-    ///
-    /// Also accepts any new connections that arrive during the wait
-    /// (e.g., the daemon connecting as a grandchild of toggle).
     fn wait_child_ticking(&mut self, mut child: Child) -> Output {
         let pid = child.id();
         let deadline = std::time::Instant::now() + COMMAND_TIMEOUT;
 
         loop {
-            // Check for new connections (non-blocking).
-            self.drain_pending_connections();
-
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    // Child exited. Collect remaining output.
                     let output = collect_output(child, status);
-                    self.connections.remove(&pid);
+                    self.remove_connection(pid);
                     return output;
                 }
                 Ok(None) => {
-                    // Child still running. Advance mock time.
+                    // Child still running. Advance mock time so processes
+                    // blocked on MockClock::sleep() can make progress.
                     self.broadcast(&Inject::AdvanceTime {
                         duration_ms: TICK_MS,
                     });
-                    std::thread::sleep(TICK_REAL_DELAY);
+                    std::thread::yield_now();
                 }
                 Err(e) => panic!("try_wait failed for PID {pid}: {e}"),
             }
@@ -201,11 +223,9 @@ impl TestHarness {
 
     /// Toggle recording (start if idle, stop if recording).
     pub fn toggle(&mut self) -> Output {
-        let had_daemon = self.daemon_pid.is_some();
+        let had_daemon = self.has_daemon();
         let output = self.run_command(&["narrate", "toggle"]);
-        // If this is the first toggle, the daemon was spawned as a
-        // grandchild. Wait for it to connect.
-        if !had_daemon && self.daemon_pid.is_none() {
+        if !had_daemon && !self.has_daemon() {
             self.wait_for_daemon();
         }
         output
@@ -213,9 +233,9 @@ impl TestHarness {
 
     /// Start recording (no-op if already recording).
     pub fn start(&mut self) -> Output {
-        let had_daemon = self.daemon_pid.is_some();
+        let had_daemon = self.has_daemon();
         let output = self.run_command(&["narrate", "start"]);
-        if !had_daemon && self.daemon_pid.is_none() {
+        if !had_daemon && !self.has_daemon() {
             self.wait_for_daemon();
         }
         output
@@ -310,9 +330,6 @@ impl TestHarness {
     // -----------------------------------------------------------------------
 
     /// Activate a narration session (simulates the `/attend` user prompt hook).
-    ///
-    /// This invokes `attend hook user-prompt -a claude` with stdin JSON
-    /// containing `{"prompt": "/attend", "session_id": "...", "cwd": "..."}`.
     pub fn activate_session(&mut self, session_id: &str) -> Output {
         let stdin = serde_json::json!({
             "session_id": session_id,
@@ -340,9 +357,8 @@ impl TestHarness {
 
     /// Collect pending narration via the PreToolUse hook.
     ///
-    /// This invokes `attend hook pre-tool-use -a claude` with stdin JSON
-    /// simulating an `attend listen` Bash command. Returns the raw stdout
-    /// which contains the rendered narration (if any).
+    /// Invokes `attend hook pre-tool-use -a claude` with stdin JSON
+    /// simulating an `attend listen` Bash command. Returns the raw stdout.
     pub fn collect(&mut self, session_id: &str) -> String {
         let stdin = serde_json::json!({
             "session_id": session_id,
@@ -359,8 +375,7 @@ impl TestHarness {
         String::from_utf8(output.stdout).expect("non-UTF-8 hook output")
     }
 
-    /// Fire a PreToolUse hook for a non-listen tool (e.g., to check for
-    /// narration delivery on any tool use).
+    /// Fire a PreToolUse hook for a non-listen tool.
     pub fn fire_pre_tool_use(&mut self, session_id: &str) -> String {
         let stdin = serde_json::json!({
             "session_id": session_id,
@@ -378,9 +393,6 @@ impl TestHarness {
     }
 
     /// Start `attend listen` as a background process.
-    ///
-    /// Returns the child handle. The listener blocks until narration is
-    /// ready, then exits.
     pub fn listen(&mut self, session_id: &str) -> Child {
         let child = self.spawn_command(&["listen", "--wait", "--session", session_id]);
         let pid = child.id();
@@ -436,133 +448,64 @@ impl TestHarness {
     }
 
     // -----------------------------------------------------------------------
-    // Connection management
+    // Shared state access
     // -----------------------------------------------------------------------
 
-    /// Accept a new connection, read handshake, store it. Returns the PID.
-    fn accept_connection(&mut self, stream: UnixStream) -> u32 {
-        // Switch to blocking mode for the handshake read. The process
-        // sends the handshake immediately after connecting (top of main),
-        // so this doesn't need a timeout.
-        stream
-            .set_nonblocking(false)
-            .expect("failed to set stream to blocking");
-
-        let reader_stream = stream
-            .try_clone()
-            .expect("failed to clone stream for reader");
-        let mut reader = BufReader::new(reader_stream);
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .expect("failed to read handshake");
-
-        let handshake: Handshake = serde_json::from_str(&line)
-            .unwrap_or_else(|e| panic!("invalid handshake JSON: {e}\nraw: {line}"));
-
-        let pid = handshake.pid;
-        let is_daemon = handshake
-            .argv
-            .iter()
-            .any(|a| a.contains("_record-daemon") || a.contains("_daemon"));
-        if is_daemon {
-            self.daemon_pid = Some(pid);
-        }
-
-        self.connections.insert(
-            pid,
-            Connection {
-                writer: BufWriter::new(stream),
-                argv: handshake.argv,
-            },
-        );
-
-        pid
-    }
-
-    /// Non-blocking: accept any pending connections without waiting.
-    fn drain_pending_connections(&mut self) {
-        self.inject_listener
-            .set_nonblocking(true)
-            .expect("failed to set nonblocking");
-
-        loop {
-            match self.inject_listener.accept() {
-                Ok((stream, _)) => {
-                    self.accept_connection(stream);
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                Err(e) => panic!("inject socket accept failed: {e}"),
-            }
-        }
-    }
-
     /// Block until a specific PID connects to the inject socket.
-    fn wait_for_pid(&mut self, target_pid: u32) {
-        if self.connections.contains_key(&target_pid) {
-            return;
+    fn wait_for_pid(&self, target_pid: u32) {
+        let (lock, cvar) = &*self.shared;
+        let guard = lock.lock().unwrap();
+        let (guard, timeout) = cvar
+            .wait_timeout_while(guard, CONNECT_TIMEOUT, |state| {
+                !state.connections.contains_key(&target_pid)
+            })
+            .unwrap();
+        if timeout.timed_out() {
+            panic!(
+                "timed out waiting for PID {target_pid} to connect (connected: {:?})",
+                guard.connections.keys().collect::<Vec<_>>()
+            );
         }
-
-        self.inject_listener
-            .set_nonblocking(true)
-            .expect("failed to set nonblocking");
-
-        let deadline = std::time::Instant::now() + CONNECT_TIMEOUT;
-        while std::time::Instant::now() < deadline {
-            match self.inject_listener.accept() {
-                Ok((stream, _)) => {
-                    let pid = self.accept_connection(stream);
-                    if pid == target_pid {
-                        return;
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                Err(e) => panic!("inject socket accept failed: {e}"),
-            }
-        }
-        panic!(
-            "timed out waiting for PID {target_pid} to connect (connected: {:?})",
-            self.connections.keys().collect::<Vec<_>>()
-        );
     }
 
-    /// Wait for a new daemon connection (unknown PID with daemon argv).
-    fn wait_for_daemon(&mut self) {
-        if self.daemon_pid.is_some() {
-            return;
+    /// Block until a daemon connection arrives.
+    fn wait_for_daemon(&self) {
+        let (lock, cvar) = &*self.shared;
+        let guard = lock.lock().unwrap();
+        let (_guard, timeout) = cvar
+            .wait_timeout_while(guard, CONNECT_TIMEOUT, |state| state.daemon_pid.is_none())
+            .unwrap();
+        if timeout.timed_out() {
+            panic!("timed out waiting for daemon to connect to inject socket");
         }
+    }
 
-        self.inject_listener
-            .set_nonblocking(true)
-            .expect("failed to set nonblocking");
+    /// Check whether a daemon is connected.
+    fn has_daemon(&self) -> bool {
+        let (lock, _) = &*self.shared;
+        lock.lock().unwrap().daemon_pid.is_some()
+    }
 
-        let deadline = std::time::Instant::now() + CONNECT_TIMEOUT;
-        while std::time::Instant::now() < deadline {
-            match self.inject_listener.accept() {
-                Ok((stream, _)) => {
-                    self.accept_connection(stream);
-                    if self.daemon_pid.is_some() {
-                        return;
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                Err(e) => panic!("inject socket accept failed: {e}"),
-            }
+    /// Remove a connection (process has exited).
+    fn remove_connection(&self, pid: u32) {
+        let (lock, _) = &*self.shared;
+        let mut state = lock.lock().unwrap();
+        state.connections.remove(&pid);
+        if state.daemon_pid == Some(pid) {
+            state.daemon_pid = None;
         }
-        panic!("timed out waiting for daemon to connect to inject socket");
     }
 
     /// Broadcast an inject message to all connected processes.
-    fn broadcast(&mut self, msg: &Inject) {
+    fn broadcast(&self, msg: &Inject) {
         let json = serde_json::to_string(msg).expect("failed to serialize inject message");
         let line = format!("{json}\n");
 
+        let (lock, _) = &*self.shared;
+        let mut state = lock.lock().unwrap();
+
         let mut dead_pids = Vec::new();
-        for (&pid, conn) in &mut self.connections {
+        for (&pid, conn) in &mut state.connections {
             if conn.writer.write_all(line.as_bytes()).is_err()
                 || conn.writer.flush().is_err()
             {
@@ -571,13 +514,73 @@ impl TestHarness {
         }
 
         for pid in dead_pids {
-            self.connections.remove(&pid);
-            if self.daemon_pid == Some(pid) {
-                self.daemon_pid = None;
+            state.connections.remove(&pid);
+            if state.daemon_pid == Some(pid) {
+                state.daemon_pid = None;
             }
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Background accept loop
+// ---------------------------------------------------------------------------
+
+/// Blocking accept loop: runs on a background thread, accepts connections,
+/// reads handshakes, inserts into shared state, notifies condvar.
+fn accept_loop(listener: UnixListener, shared: Arc<(Mutex<SharedState>, Condvar)>) {
+    loop {
+        let (stream, _) = match listener.accept() {
+            Ok(conn) => conn,
+            Err(_) => break, // Listener dropped or error — exit thread.
+        };
+
+        // Read the handshake (one newline-delimited JSON line).
+        // The process sends this immediately on connect, so this blocks
+        // only briefly.
+        let reader_stream = match stream.try_clone() {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let mut reader = BufReader::new(reader_stream);
+        let mut line = String::new();
+        if reader.read_line(&mut line).is_err() {
+            continue;
+        }
+
+        let handshake: Handshake = match serde_json::from_str(&line) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("harness: invalid handshake JSON: {e}\nraw: {line}");
+                continue;
+            }
+        };
+
+        let pid = handshake.pid;
+        let is_daemon = handshake
+            .argv
+            .iter()
+            .any(|a| a.contains("_record-daemon") || a.contains("_daemon"));
+
+        let (lock, cvar) = &*shared;
+        let mut state = lock.lock().unwrap();
+        if is_daemon {
+            state.daemon_pid = Some(pid);
+        }
+        state.connections.insert(
+            pid,
+            Connection {
+                writer: BufWriter::new(stream),
+                argv: handshake.argv,
+            },
+        );
+        cvar.notify_all();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 /// Collect stdout and stderr from a child that has already exited.
 fn collect_output(mut child: Child, status: ExitStatus) -> Output {
@@ -599,13 +602,15 @@ fn collect_output(mut child: Child, status: ExitStatus) -> Output {
 impl Drop for TestHarness {
     fn drop(&mut self) {
         // Send SIGTERM to the daemon if it's still running.
-        if let Some(pid) = self.daemon_pid {
+        let (lock, _) = &*self.shared;
+        if let Some(pid) = lock.lock().unwrap().daemon_pid {
             let _ = nix::sys::signal::kill(
                 nix::unistd::Pid::from_raw(pid as i32),
                 nix::sys::signal::Signal::SIGTERM,
             );
-            // Give the daemon a moment to clean up.
-            std::thread::sleep(Duration::from_millis(200));
         }
+        // The background accept thread exits when the listener is dropped
+        // (which happens when _cache_dir drops and the socket file disappears,
+        // or when the thread sees an accept error).
     }
 }

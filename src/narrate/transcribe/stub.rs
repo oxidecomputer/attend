@@ -19,6 +19,7 @@ pub struct Injection {
 }
 
 /// Test-only transcriber that returns pre-injected text.
+#[derive(Debug)]
 pub struct StubTranscriber {
     rx: mpsc::Receiver<Injection>,
 }

@@ -885,18 +885,27 @@ fn spawn_daemon() -> anyhow::Result<()> {
     // The daemon still calls setsid() at startup for full session isolation.
     cmd.process_group(0);
 
-    // Detach stdio so the daemon doesn't hold the parent's descriptors.
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-
     // Propagate test mode env vars so the daemon connects to the same
     // inject socket and cache directory as the parent CLI process.
     if crate::test_mode::is_active() {
         cmd.env("ATTEND_TEST_MODE", "1");
         if let Ok(val) = std::env::var("ATTEND_CACHE_DIR") {
-            cmd.env("ATTEND_CACHE_DIR", val);
+            cmd.env("ATTEND_CACHE_DIR", &val);
+            // In test mode, redirect daemon stderr to a log file for debugging.
+            let log_path = std::path::PathBuf::from(&val).join("daemon-stderr.log");
+            let log_file = std::fs::File::create(&log_path).ok();
+            cmd.stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(log_file.map_or_else(
+                    std::process::Stdio::null,
+                    std::process::Stdio::from,
+                ));
         }
+    } else {
+        // Detach stdio so the daemon doesn't hold the parent's descriptors.
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
     }
 
     cmd.spawn()?;
@@ -938,10 +947,14 @@ pub fn stop(clock: &dyn Clock) -> anyhow::Result<()> {
     }
     fs::write(&sentinel, "")?;
 
-    // Wait for the daemon to delete the sentinel (acknowledging the stop).
-    // The daemon stays alive (enters idle), so we don't wait for lock removal.
+    // Wait for the daemon to complete the stop: the stop sentinel is
+    // removed AND the pause sentinel appears (daemon has entered idle).
+    // Waiting for both conditions eliminates the TOCTOU race where the
+    // daemon has deleted the stop sentinel but hasn't finished its state
+    // transition yet.
+    let pause = pause_sentinel_path();
     for _ in 0..SENTINEL_WAIT_ITERATIONS {
-        if !sentinel.exists() {
+        if !sentinel.exists() && pause.exists() {
             break;
         }
         clock.sleep(Duration::from_millis(SENTINEL_POLL_MS));
@@ -1214,6 +1227,13 @@ pub fn daemon(clock: Arc<dyn Clock>) -> anyhow::Result<()> {
         idle_since: None,
         idle_timeout,
     };
+
+    // In test mode, connect to the inject socket NOW — after all
+    // initialization is complete. The harness interprets "daemon
+    // connected" as "daemon ready to receive injections."
+    if crate::test_mode::is_active() {
+        crate::test_mode::connect();
+    }
 
     loop {
         if !state.paused {
