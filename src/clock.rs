@@ -13,7 +13,7 @@
 //! - `whisper.rs` / `parakeet.rs` bench functions: developer diagnostics.
 //! - `transcribe.rs` model load timing: diagnostic logging.
 
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -29,8 +29,7 @@ pub trait Clock: Send + Sync {
     /// Sleep for the given duration.
     ///
     /// Production: real `thread::sleep()`.
-    /// Test mode: returns immediately without advancing the clock.
-    /// Time only advances via explicit `MockClock::advance()` calls.
+    /// Test mode: blocks on a condvar until `advance()` meets the deadline.
     fn sleep(&self, duration: Duration);
 }
 
@@ -56,48 +55,64 @@ impl Clock for RealClock {
     }
 }
 
-/// Test clock: time is frozen until explicitly advanced.
+/// Test clock: time only advances via explicit `advance()` calls.
 ///
-/// `sleep()` returns immediately (no wall-clock delay). Time only
-/// moves forward via `advance()`, giving the test harness full control.
-///
-/// Currently gated behind `#[cfg(test)]`. Will be un-gated when
-/// `ATTEND_TEST_MODE` (Phase 0, item 4) needs it in the production binary.
-#[cfg(test)]
+/// `sleep(d)` blocks on a condvar until `now() >= sleep_start + d`. When
+/// `advance()` bumps the internal time and broadcasts the condvar, sleeping
+/// threads whose deadlines are met wake and return. This eliminates both
+/// CPU spin and real wall-clock delay: threads proceed in lockstep with
+/// harness-driven time.
 #[derive(Debug, Clone)]
 pub struct MockClock {
-    inner: std::sync::Arc<std::sync::Mutex<DateTime<Utc>>>,
+    inner: Arc<MockClockInner>,
 }
 
-#[cfg(test)]
+#[derive(Debug)]
+struct MockClockInner {
+    state: Mutex<DateTime<Utc>>,
+    condvar: Condvar,
+}
+
 impl MockClock {
     /// Create a mock clock starting at the given time.
     pub fn new(start: DateTime<Utc>) -> Self {
         Self {
-            inner: std::sync::Arc::new(std::sync::Mutex::new(start)),
+            inner: Arc::new(MockClockInner {
+                state: Mutex::new(start),
+                condvar: Condvar::new(),
+            }),
         }
     }
 
     /// Advance the clock by the given duration.
+    ///
+    /// Wakes all threads blocked in `sleep()` whose deadlines are now met.
     pub fn advance(&self, duration: Duration) {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.state.lock().unwrap();
         *guard += duration;
+        drop(guard);
+        self.inner.condvar.notify_all();
     }
 }
 
-#[cfg(test)]
 impl Clock for MockClock {
     fn now(&self) -> DateTime<Utc> {
-        *self.inner.lock().unwrap()
+        *self.inner.state.lock().unwrap()
     }
 
-    fn sleep(&self, _duration: Duration) {
-        // No-op: test harness controls time via advance().
+    fn sleep(&self, duration: Duration) {
+        let mut guard = self.inner.state.lock().unwrap();
+        let deadline = *guard + duration;
+        while *guard < deadline {
+            guard = self.inner.condvar.wait(guard).unwrap();
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use super::*;
 
     /// RealClock::now() returns a time close to actual wall-clock.
@@ -124,16 +139,6 @@ mod tests {
         assert_eq!(clock.now(), start + Duration::from_secs(10));
     }
 
-    /// MockClock::sleep() does not advance time.
-    #[test]
-    fn mock_sleep_does_not_advance_time() {
-        let start = Utc::now();
-        let clock = MockClock::new(start);
-
-        clock.sleep(Duration::from_secs(60));
-        assert_eq!(clock.now(), start);
-    }
-
     /// Multiple advance() calls accumulate.
     #[test]
     fn mock_advance_accumulates() {
@@ -144,5 +149,95 @@ mod tests {
         clock.advance(Duration::from_secs(3));
 
         assert_eq!(clock.now(), start + Duration::from_secs(8));
+    }
+
+    /// sleep(Duration::ZERO) returns immediately without blocking.
+    #[test]
+    fn mock_sleep_zero_returns_immediately() {
+        let start = Utc::now();
+        let clock = MockClock::new(start);
+        clock.sleep(Duration::ZERO);
+        assert_eq!(clock.now(), start);
+    }
+
+    /// sleep() blocks until advance() meets the deadline, and does not
+    /// itself move time forward.
+    #[test]
+    fn mock_sleep_blocks_until_deadline() {
+        let start = Utc::now();
+        let clock = MockClock::new(start);
+        let clock2 = clock.clone();
+
+        let handle = std::thread::spawn(move || {
+            clock2.sleep(Duration::from_secs(10));
+            clock2.now()
+        });
+
+        // Let the thread enter the condvar wait.
+        std::thread::sleep(Duration::from_millis(50));
+        clock.advance(Duration::from_secs(10));
+
+        let woke_at = handle.join().unwrap();
+        // Time is exactly what we advanced — sleep didn't add anything.
+        assert_eq!(woke_at, start + Duration::from_secs(10));
+    }
+
+    /// A partial advance doesn't wake a thread whose deadline isn't met.
+    #[test]
+    fn mock_sleep_partial_advance_stays_blocked() {
+        let start = Utc::now();
+        let clock = MockClock::new(start);
+        let clock2 = clock.clone();
+        let woke = Arc::new(AtomicBool::new(false));
+        let woke2 = Arc::clone(&woke);
+
+        std::thread::spawn(move || {
+            clock2.sleep(Duration::from_secs(10));
+            woke2.store(true, Ordering::SeqCst);
+        });
+
+        std::thread::sleep(Duration::from_millis(50));
+        clock.advance(Duration::from_secs(5));
+
+        // Thread needs 10s but only 5s have passed — still blocked.
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!woke.load(Ordering::SeqCst));
+
+        // Remaining 5s meets the deadline.
+        clock.advance(Duration::from_secs(5));
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(woke.load(Ordering::SeqCst));
+    }
+
+    /// Multiple threads sleeping with different deadlines wake independently.
+    #[test]
+    fn mock_sleep_multiple_threads_different_deadlines() {
+        let start = Utc::now();
+        let clock = MockClock::new(start);
+
+        let c1 = clock.clone();
+        let c2 = clock.clone();
+
+        let h1 = std::thread::spawn(move || {
+            c1.sleep(Duration::from_secs(5));
+            c1.now()
+        });
+        let h2 = std::thread::spawn(move || {
+            c2.sleep(Duration::from_secs(10));
+            c2.now()
+        });
+
+        std::thread::sleep(Duration::from_millis(50));
+        clock.advance(Duration::from_secs(5));
+
+        let t1 = h1.join().unwrap();
+        assert_eq!(t1, start + Duration::from_secs(5));
+
+        // h2 should still be blocked; advance the remaining 5s.
+        std::thread::sleep(Duration::from_millis(50));
+        clock.advance(Duration::from_secs(5));
+
+        let t2 = h2.join().unwrap();
+        assert_eq!(t2, start + Duration::from_secs(10));
     }
 }
