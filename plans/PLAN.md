@@ -34,9 +34,10 @@ be performed as specified, please do it.
 | 15 | [Shell Hook Integration](./phase-15-shell-hooks.md) | Done (4bfd7aa) | Phases 6, 10, 12b, 13 |
 | 16 | [Yank-to-Clipboard](./phase-16-yank.md) | Done (56dc48b) | Phases 13, 14 |
 | 17 | [Loopback Audio Capture](./phase-17-loopback-capture.md) | Not started | Phases 6, 10 |
-| 18 | [Persistent Daemon](./phase-18-persistent-daemon.md) | Not started | Phase 14 |
+| 18 | [Persistent Daemon](./phase-18-persistent-daemon.md) | Superseded by Phase 20 | Phase 14 |
 | 19 | [Clipboard Capture](./phase-19-clipboard-capture.md) | Done | Phase 12a |
 | 19E | [Clipboard Image Delivery](./phase-19e-clipboard-image-delivery.md) | Not started | Phase 19 |
+| 20 | [Socket-Based Daemon Redesign](./phase-20-socket-daemon.md) | Not started | Phases 14, 19 |
 
 ## Item Progress
 
