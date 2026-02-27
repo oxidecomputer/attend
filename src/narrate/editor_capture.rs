@@ -1,6 +1,6 @@
 //! Background polling of editor selections.
 //!
-//! Spawns a thread that polls [`EditorState`] every 100ms and emits
+//! Spawns a thread that polls an [`EditorStateSource`] every 100ms and emits
 //! [`Event::EditorSnapshot`] whenever the file/selection set changes.
 //!
 //! Cursor dwell logic is encapsulated in [`DwellTracker`]: cursor-only
@@ -17,6 +17,33 @@ use camino::{Utf8Path, Utf8PathBuf};
 use super::merge::Event;
 use crate::state::{self, EditorState};
 use crate::view;
+
+/// Source of editor state snapshots.
+///
+/// Abstracts the platform-specific editor query so tests can substitute
+/// a stub that returns scripted file lists and cursor positions.
+/// The production implementation calls [`EditorState::current`].
+pub trait EditorStateSource: Send {
+    /// Query the current editor state.
+    fn current(
+        &self,
+        cwd: Option<&Utf8Path>,
+        include_dirs: &[Utf8PathBuf],
+    ) -> anyhow::Result<Option<EditorState>>;
+}
+
+/// Production implementation: queries real editor(s) via platform APIs.
+pub(crate) struct RealEditorSource;
+
+impl EditorStateSource for RealEditorSource {
+    fn current(
+        &self,
+        cwd: Option<&Utf8Path>,
+        include_dirs: &[Utf8PathBuf],
+    ) -> anyhow::Result<Option<EditorState>> {
+        EditorState::current(cwd, include_dirs)
+    }
+}
 
 /// How often to poll for editor selection changes (ms).
 const EDITOR_POLL_MS: u64 = 100;
@@ -128,6 +155,7 @@ const PAUSED_POLL_MS: u64 = 500;
 /// `events` until `stop` is set. It also publishes the current set of open
 /// file paths into `open_paths` for the diff capture thread to read.
 pub(super) fn spawn(
+    source: Box<dyn EditorStateSource>,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     cwd: Option<Utf8PathBuf>,
@@ -160,7 +188,7 @@ pub(super) fn spawn(
                 });
             }
 
-            let state = match EditorState::current(cwd.as_deref(), &[]) {
+            let state = match source.current(cwd.as_deref(), &[]) {
                 Ok(Some(s)) => s,
                 _ => continue,
             };

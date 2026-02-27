@@ -139,6 +139,7 @@ pub(crate) fn start(
     let open_paths: Arc<Mutex<Vec<Utf8PathBuf>>> = Arc::new(Mutex::new(Vec::new()));
 
     let editor_thread = super::editor_capture::spawn(
+        Box::new(super::editor_capture::RealEditorSource),
         Arc::clone(&stop_flag),
         Arc::clone(&paused_flag),
         cwd,
