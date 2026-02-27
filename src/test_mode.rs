@@ -260,10 +260,12 @@ pub mod stubs {
     //! [`StubTranscriber`](crate::narrate::transcribe::stub::StubTranscriber),
     //! which drains all pending injections on each `transcribe()` call.
 
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
     use camino::{Utf8Path, Utf8PathBuf};
 
+    use crate::clock::Clock;
     use crate::narrate::audio::{AudioChunk, AudioSource, Recording};
     use crate::narrate::clipboard_capture::{ClipboardSource, ImageData};
     use crate::narrate::editor_capture::EditorStateSource;
@@ -342,21 +344,38 @@ pub mod stubs {
 
     // -- Audio ----------------------------------------------------------------
 
-    /// Stub audio source: returns empty chunks (transcription is handled
-    /// by `StubTranscriber` which ignores actual audio samples).
+    /// Stub audio source: produces a tiny silent chunk on each poll so the
+    /// normal transcription pipeline fires. The `StubTranscriber` ignores
+    /// the actual audio data and returns injected words instead.
+    ///
+    /// Respects pause/resume: produces nothing while paused, matching
+    /// the real audio source's behaviour.
     pub struct StubAudioSource {
         sample_rate: u32,
+        clock: Arc<dyn Clock>,
+        paused: Arc<AtomicBool>,
     }
 
     impl StubAudioSource {
-        pub fn new(sample_rate: u32) -> Self {
-            Self { sample_rate }
+        pub fn new(sample_rate: u32, clock: Arc<dyn Clock>) -> Self {
+            Self {
+                sample_rate,
+                clock,
+                paused: Arc::new(AtomicBool::new(false)),
+            }
         }
     }
 
     impl AudioSource for StubAudioSource {
         fn take_chunks(&self) -> Vec<AudioChunk> {
-            Vec::new()
+            if self.paused.load(Ordering::Relaxed) {
+                return Vec::new();
+            }
+            // One sample of silence, timestamped from the mock clock.
+            vec![AudioChunk {
+                timestamp: self.clock.now(),
+                samples: vec![0.0],
+            }]
         }
 
         fn sample_rate(&self) -> u32 {
@@ -364,14 +383,24 @@ pub mod stubs {
         }
 
         fn drain(&self) -> Recording {
-            Recording { chunks: Vec::new() }
+            if self.paused.load(Ordering::Relaxed) {
+                return Recording { chunks: Vec::new() };
+            }
+            Recording {
+                chunks: vec![AudioChunk {
+                    timestamp: self.clock.now(),
+                    samples: vec![0.0],
+                }],
+            }
         }
 
         fn pause(&self) -> anyhow::Result<()> {
+            self.paused.store(true, Ordering::Relaxed);
             Ok(())
         }
 
         fn resume(&self) -> anyhow::Result<()> {
+            self.paused.store(false, Ordering::Relaxed);
             Ok(())
         }
 
@@ -508,16 +537,32 @@ mod tests {
         assert_eq!(snap.selected_text.unwrap(), "hello");
     }
 
-    /// StubAudioSource returns empty data and fixed sample rate.
+    /// StubAudioSource produces a tiny chunk when not paused, nothing when paused.
     #[test]
-    fn stub_audio_source_returns_empty() {
-        let mut stub = stubs::StubAudioSource::new(16000);
+    fn stub_audio_source_produces_chunks_when_active() {
+        let clock = Arc::new(crate::clock::MockClock::new(chrono::DateTime::UNIX_EPOCH));
+        let mut stub = stubs::StubAudioSource::new(16000, clock);
 
         assert_eq!(stub.sample_rate(), 16000);
+
+        // Active: produces a chunk.
+        let chunks = stub.take_chunks();
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].samples, vec![0.0]);
+
+        // Drain also produces a chunk.
+        assert_eq!(stub.drain().chunks.len(), 1);
+
+        // Paused: produces nothing.
+        assert!(stub.pause().is_ok());
         assert!(stub.take_chunks().is_empty());
         assert!(stub.drain().chunks.is_empty());
-        assert!(stub.pause().is_ok());
+
+        // Resumed: produces again.
         assert!(stub.resume().is_ok());
+        assert_eq!(stub.take_chunks().len(), 1);
+
+        // Stop always returns empty.
         assert!(stub.stop().chunks.is_empty());
     }
 

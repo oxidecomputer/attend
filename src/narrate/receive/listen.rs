@@ -131,21 +131,26 @@ fn run_wait(session_id: Option<SessionId>, clock: Arc<dyn Clock>) -> anyhow::Res
     // download it on first recording anyway, but starting here means the
     // model is likely ready before the user presses record. The download
     // runs on a background thread so we can start polling immediately.
-    let engine = config.engine.unwrap_or(Engine::Parakeet);
-    let model_path = config
-        .model
-        .clone()
-        .unwrap_or_else(|| engine.default_model_path());
-    if !engine.is_model_cached(&model_path) {
-        println!(
-            "Downloading {} model. First narration will be delayed until the download finishes.",
-            engine.display_name()
-        );
-        thread::spawn(move || {
-            if let Err(e) = engine.ensure_model(&model_path) {
-                eprintln!("Model download failed: {e}");
-            }
-        });
+    //
+    // Skipped in test mode: the stub transcriber needs no model, and we
+    // must never hit the network during tests.
+    if !crate::test_mode::is_active() {
+        let engine = config.engine.unwrap_or(Engine::Parakeet);
+        let model_path = config
+            .model
+            .clone()
+            .unwrap_or_else(|| engine.default_model_path());
+        if !engine.is_model_cached(&model_path) {
+            println!(
+                "Downloading {} model. First narration will be delayed until the download finishes.",
+                engine.display_name()
+            );
+            thread::spawn(move || {
+                if let Err(e) = engine.ensure_model(&model_path) {
+                    eprintln!("Model download failed: {e}");
+                }
+            });
+        }
     }
 
     // Acquire exclusive lock, with retry for same-session handoff.

@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "tools/xtask"]
+members = [".", "crates/test-harness", "tools/xtask"]
 
 [package]
 name = "attend"
@@ -64,6 +64,7 @@ core-foundation = "0.10"
 objc = "0.2"
 
 [dev-dependencies]
+attend-test-harness = { path = "crates/test-harness" }
 criterion = { version = "0.8", features = ["html_reports"] }
 insta = "1"
 proptest = "1"

@@ -56,7 +56,13 @@ pub enum Chime {
 
 impl Chime {
     /// Render and play this chime. Errors are non-fatal (callers ignore them).
+    ///
+    /// No-op in test mode: avoids cpal audio device initialization and
+    /// real `thread::sleep` that would bypass the mock clock.
     pub fn play(&self) -> anyhow::Result<()> {
+        if crate::test_mode::is_active() {
+            return Ok(());
+        }
         let sr = output_sample_rate()?;
         let samples = match self {
             Chime::Start => two_notes(NOTE_C5, NOTE_E5, NOTE_DURATION_SECS, sr),

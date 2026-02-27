@@ -204,6 +204,7 @@ dependencies = [
  "accessibility-sys",
  "anyhow",
  "arboard",
+ "attend-test-harness",
  "audioadapter-buffers",
  "base64 0.22.1",
  "camino",
@@ -245,6 +246,17 @@ dependencies = [
  "webrtc-vad",
  "which 8.0.0",
  "whisper-rs",
+]
+
+[[package]]
+name = "attend-test-harness"
+version = "0.0.0"
+dependencies = [
+ "camino",
+ "nix",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

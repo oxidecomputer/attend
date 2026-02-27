@@ -1,0 +1,13 @@
+[package]
+name = "attend-test-harness"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "E2E test harness for attend: spawns real daemon + CLI processes, drives them via inject socket"
+
+[dependencies]
+camino = { version = "1", features = ["serde1"] }
+nix = { version = "0.31", features = ["signal", "process"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"

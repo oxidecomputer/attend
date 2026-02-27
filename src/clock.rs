@@ -106,7 +106,10 @@ impl MockClock {
     ///
     /// Used by test harnesses to synchronize with worker threads before
     /// calling `advance()`, replacing wall-clock sleeps with a
-    /// deterministic rendezvous.
+    /// deterministic rendezvous. Not yet wired into the e2e harness
+    /// (which runs out-of-process), but needed for the in-process
+    /// oracle binaries planned in Phase 0 items 6-7.
+    #[allow(dead_code)]
     pub fn wait_for_waiters(&self, n: usize) {
         while self.inner.waiters.load(Ordering::Acquire) < n {
             std::thread::yield_now();
