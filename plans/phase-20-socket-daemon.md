@@ -6,7 +6,7 @@
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| Phase 0: Test infrastructure | **In progress** | Items 1-4 complete; items 5-7 not started |
+| Phase 0: Test infrastructure | **In progress** | Items 1-5 complete; items 6-7 not started |
 | Phase A: Socket control plane | Not started | Blocked on Phase 0 gate |
 | Phase B: External event ingestion | Not started | Blocked on Phase A |
 | Phase C: Narration delivery | Not started | Blocked on Phase B |
@@ -18,7 +18,7 @@
 - [x] 2. `StubTranscriber` — `3ca31b6`
 - [x] 3. Clock trait and `Instant` elimination — `f2a4bf0`, `f15470a`, `633404f`, `f736e38`
 - [x] 4. `ATTEND_TEST_MODE` / `ATTEND_CACHE_DIR` / inject socket — `6b1d1b0`..`3215798` (8 commits)
-- [ ] 5. End-to-end test harness
+- [x] 5. End-to-end test harness — `086fac1`..`6722d81` (3 commits)
 - [ ] 6. Declarative oracle
 - [ ] 7. Proptest action-sequence fuzzer
 
