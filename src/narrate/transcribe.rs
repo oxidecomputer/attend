@@ -4,6 +4,7 @@
 //! The engine is chosen via `--engine` on the CLI; Parakeet is the default.
 
 mod parakeet;
+pub(crate) mod stub;
 mod whisper;
 
 use std::path::Path;
