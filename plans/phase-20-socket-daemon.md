@@ -6,7 +6,7 @@
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| Phase 0: Test infrastructure | **In progress** | Items 1-3 complete; item 4 in progress |
+| Phase 0: Test infrastructure | **In progress** | Items 1-4 complete; items 5-7 not started |
 | Phase A: Socket control plane | Not started | Blocked on Phase 0 gate |
 | Phase B: External event ingestion | Not started | Blocked on Phase A |
 | Phase C: Narration delivery | Not started | Blocked on Phase B |
@@ -17,12 +17,12 @@
 - [x] 1. Trait extraction — `3c4f05b`, `69553a6`, `023c84d`, `6ccb168`
 - [x] 2. `StubTranscriber` — `3ca31b6`
 - [x] 3. Clock trait and `Instant` elimination — `f2a4bf0`, `f15470a`, `633404f`, `f736e38`
-- [ ] 4. `ATTEND_TEST_MODE` and `ATTEND_CACHE_DIR` env vars
+- [x] 4. `ATTEND_TEST_MODE` and `ATTEND_CACHE_DIR` env vars
 - [ ] 5. End-to-end test harness
 - [ ] 6. Declarative oracle
 - [ ] 7. Proptest action-sequence fuzzer
 
-#### Item 4: `ATTEND_TEST_MODE` / `ATTEND_CACHE_DIR` / inject socket — IN PROGRESS
+#### Item 4: `ATTEND_TEST_MODE` / `ATTEND_CACHE_DIR` / inject socket — COMPLETE
 
 Sub-items (each a commit):
 
@@ -31,9 +31,7 @@ Sub-items (each a commit):
 - [x] 4c. Un-gate `StubTranscriber` from `#[cfg(test)]` — `d17d11a`
 - [x] 4d. Inject protocol types + stub capture sources — `309cee4`
 - [x] 4e. `test_mode::init()`, inject socket client, inject router — `4b552df`
-- [ ] 4f. Wire `ATTEND_TEST_MODE`: `process_clock()` checks env,
-  `CaptureConfig::test_mode()`, `main()` calls `test_mode::init()`,
-  `spawn_daemon()` propagates env vars
+- [x] 4f. Wire `ATTEND_TEST_MODE` — `637aef5`
 
 ### Bug fixes discovered during implementation
 
