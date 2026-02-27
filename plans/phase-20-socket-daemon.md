@@ -17,21 +17,10 @@
 - [x] 1. Trait extraction — `3c4f05b`, `69553a6`, `023c84d`, `6ccb168`
 - [x] 2. `StubTranscriber` — `3ca31b6`
 - [x] 3. Clock trait and `Instant` elimination — `f2a4bf0`, `f15470a`, `633404f`, `f736e38`
-- [x] 4. `ATTEND_TEST_MODE` and `ATTEND_CACHE_DIR` env vars
+- [x] 4. `ATTEND_TEST_MODE` / `ATTEND_CACHE_DIR` / inject socket — `6b1d1b0`..`3215798` (8 commits)
 - [ ] 5. End-to-end test harness
 - [ ] 6. Declarative oracle
 - [ ] 7. Proptest action-sequence fuzzer
-
-#### Item 4: `ATTEND_TEST_MODE` / `ATTEND_CACHE_DIR` / inject socket — COMPLETE
-
-Sub-items (each a commit):
-
-- [x] 4a. MockClock: un-gate from `#[cfg(test)]`, add condvar-gated sleep — `6b1d1b0`
-- [x] 4b. `ATTEND_CACHE_DIR` env var in `cache_dir()` — `bf383d3`
-- [x] 4c. Un-gate `StubTranscriber` from `#[cfg(test)]` — `d17d11a`
-- [x] 4d. Inject protocol types + stub capture sources — `309cee4`
-- [x] 4e. `test_mode::init()`, inject socket client, inject router — `4b552df`
-- [x] 4f. Wire `ATTEND_TEST_MODE` — `637aef5`
 
 ### Bug fixes discovered during implementation
 
