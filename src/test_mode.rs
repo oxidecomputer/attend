@@ -655,29 +655,31 @@ mod tests {
         let clock = super::clock().expect("MockClock not set");
         assert_eq!(clock.now(), chrono::DateTime::UNIX_EPOCH);
 
-        // Send AdvanceTime and verify the clock advances.
-        let msg = Inject::AdvanceTime { duration_ms: 5000 };
-        let mut json = serde_json::to_vec(&msg).unwrap();
-        json.push(b'\n');
-        (&stream).write_all(&json).unwrap();
+        // Helper: send an inject message and spin until the clock reaches
+        // the expected value. No real wall-clock sleeps.
+        let send_and_wait = |msg: &Inject, expected: chrono::DateTime<chrono::Utc>| {
+            let mut json = serde_json::to_vec(msg).unwrap();
+            json.push(b'\n');
+            (&stream).write_all(&json).unwrap();
 
-        // Give the background reader thread a moment to process.
-        std::thread::sleep(Duration::from_millis(50));
-        assert_eq!(
-            clock.now(),
-            chrono::DateTime::UNIX_EPOCH + Duration::from_secs(5)
+            let deadline = std::time::Instant::now() + Duration::from_secs(1);
+            while clock.now() != expected {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "timed out waiting for clock to reach {expected}"
+                );
+                std::thread::yield_now();
+            }
+        };
+
+        let epoch = chrono::DateTime::UNIX_EPOCH;
+        send_and_wait(
+            &Inject::AdvanceTime { duration_ms: 5000 },
+            epoch + Duration::from_secs(5),
         );
-
-        // Send a second advance to verify ongoing processing.
-        let msg2 = Inject::AdvanceTime { duration_ms: 3000 };
-        let mut json2 = serde_json::to_vec(&msg2).unwrap();
-        json2.push(b'\n');
-        (&stream).write_all(&json2).unwrap();
-
-        std::thread::sleep(Duration::from_millis(50));
-        assert_eq!(
-            clock.now(),
-            chrono::DateTime::UNIX_EPOCH + Duration::from_secs(8)
+        send_and_wait(
+            &Inject::AdvanceTime { duration_ms: 3000 },
+            epoch + Duration::from_secs(8),
         );
     }
 }
