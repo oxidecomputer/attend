@@ -334,7 +334,7 @@ No filesystem round-trip, no `yanked/` directory.
 
 7. **Version field on every request.** Every `Request` struct carries a
    `version` field: the **git commit hash** baked into the binary at build
-   time (via `build.rs`). The daemon checks it before processing; on
+   time (via `vergen-gitcl`). The daemon checks it before processing; on
    mismatch it stops accepting connections, responds with `Error`, and shuts
    down. The service manager respawns it from the current binary. The
    client retries once.
@@ -451,9 +451,12 @@ daemon checks it before processing the command:
   shut down. The service manager respawns the daemon from the current
   binary. The client retries once.
 
-The commit hash is baked in at build time via `build.rs` writing to
-`env!("ATTEND_COMMIT_HASH")`. For dev builds without a clean commit,
-use the full `git describe --always --dirty` output.
+The commit hash is baked in at build time via `vergen-gitcl`, which
+shells out to `git` and emits cargo env vars (e.g. `VERGEN_GIT_SHA`)
+accessible via `env!()`. When git is unavailable (e.g. tarball builds),
+`vergen-gitcl` emits default values and warnings rather than failing
+the build. For dev builds without a clean tag, `VERGEN_GIT_DESCRIBE`
+provides the equivalent of `git describe --always --dirty`.
 
 No special handshake step — version checking is just part of every
 request.
@@ -645,6 +648,7 @@ hotkey.
 | Serialization | `serde_json` | Already a dependency; debuggable; swap to `postcard` later if needed |
 | Socket activation | `service-binding` | Cross-platform: launchd (macOS) and systemd (Linux) |
 | Service unit mgmt | Hand-rolled (template + write) | Plist and systemd units are static with templated paths |
+| Build-time commit hash | `vergen-gitcl` | Shells out to `git` (no C deps); graceful fallback when git unavailable |
 
 ### No async runtime
 
@@ -671,32 +675,128 @@ phase is: make the change, get back to green.
 
 **No functional changes.** This phase only adds testability and tests.
 
-1. **Trait extraction for capture sources.** Audio, editor, diff, clipboard
-   capture need trait-based injection (ext capture already has
-   `ExternalSource`). Introduce a `CaptureConfig` struct that bundles
-   factory functions for each source. Production code uses real
-   implementations; test mode substitutes stubs.
+#### Existing traits and patterns (already extracted)
 
-2. **Trait extraction for transcription.** The transcription model needs a
-   trait so the stub can accept injected text from the test harness.
+Two capture sources already have clean trait boundaries:
 
-3. **Clock trait and `Instant` elimination.** Replace all `Instant::now()`
-   and `Utc::now()` with a `Clock` trait (`now() → DateTime<Utc>`).
-   Replace `thread::sleep()` with `clock.sleep()`. Production uses real
-   time; test mode uses a mock clock advanced only by `AdvanceTime`.
-   This is a prerequisite for deterministic time in tests.
+- **`Transcriber` trait** (`src/narrate/transcribe.rs`): defines
+  `transcribe()`, `set_context()`, `bench()`. Both Whisper and Parakeet
+  implement it. Only a `StubTranscriber` is needed for test injection.
 
-4. **`ATTEND_TEST_MODE` and `ATTEND_CACHE_DIR` env vars.** `ATTEND_TEST_MODE=1`
-   swaps in stub capture sources and opens the `test-inject.sock` side
-   channel. `ATTEND_CACHE_DIR` controls the cache directory: set to a
-   path to use that path, or set to empty (`""`) to auto-create a random
-   temp directory (useful for parallel test runs). No behavioral change
+- **`ExternalSource` trait** (`src/narrate/ext_capture.rs`): defines
+  `is_available()` and `query()`. The macOS backend implements it;
+  `platform_source()` returns `None` on non-macOS. The spawn function
+  already accepts any `ExternalSource`. This is the pattern to follow
+  for other capture sources.
+
+Additionally:
+
+- **`CacheDirGuard`** (`src/state.rs`): RAII guard that creates a temp
+  dir and installs a thread-local cache dir override via `RefCell`.
+  Already used by the hook test harness. This is the foundation for
+  `ATTEND_CACHE_DIR` support — the env var just needs to feed into the
+  same override mechanism for CLI-spawned processes.
+
+- **Pure state machines** are already factored out and independently
+  testable: `DwellTracker` (editor cursor dwell), `ExtDwellTracker`
+  (external selection dedup), `ClipboardTracker` (clipboard change
+  detection), `SilenceDetector` (VAD-based silence splitting). These
+  need no trait extraction.
+
+- **Hook test harness** (`src/hook/tests/harness.rs`): `TestHarness`
+  struct with `MockAgent`, `Outcome` enum (Decision/Narration/
+  Activation), and assertion helpers. The e2e harness should reuse its
+  `Outcome` types for parsing hook output.
+
+- **Proptest infrastructure** is mature: strategies exist for events
+  (`arb_words`, `arb_cursor_snapshot`, `arb_diff`, etc. in
+  `src/narrate/merge/tests/prop.rs`), hook sequences
+  (`src/hook/tests/prop.rs`), and editor state
+  (`src/state/tests.rs`). ~306 tests total; proptest-heavy.
+
+- **`build.rs`** currently only checks for a signed Firefox .xpi. It
+  does **not** inject a commit hash. Phase A will add commit hash
+  injection via `vergen-gitcl` (shells out to `git`, no C deps, fails
+  gracefully with defaults when git is unavailable).
+
+#### Items
+
+1. **Trait extraction for capture sources.** Four capture threads need
+   trait-based injection so test mode can substitute stubs. The existing
+   `ExternalSource` trait is the pattern: each trait abstracts the
+   platform/hardware dependency inside the polling loop, not the thread
+   itself.
+
+   | Thread | What to abstract | Current dependency | Trait |
+   |--------|------------------|--------------------|-------|
+   | Audio (`audio.rs`) | Microphone input | cpal `Stream` + `AudioChunk` buffer | `AudioSource`: `start()`, `take_chunks()`, `pause()`, `resume()`, `drain()` |
+   | Editor (`editor_capture.rs`) | Editor state query | `EditorState::current()` (macOS accessibility) | `EditorStateSource`: `current(cwd, ignores) → Option<EditorState>` |
+   | Clipboard (`clipboard_capture.rs`) | System clipboard | `arboard::Clipboard` | `ClipboardSource`: `get_text()`, `get_image()` |
+   | Diff (`diff_capture.rs`) | File I/O | `fs::metadata()` + `fs::read_to_string()` | Not needed — diff capture reads real files in both production and test; the test harness controls file content by writing to the isolated cache dir |
+
+   Ext capture already has `ExternalSource` — no work needed.
+
+   Introduce a `CaptureConfig` struct that bundles factory functions
+   (or trait objects) for each source. `capture::start()` takes a
+   `CaptureConfig` instead of hard-coding implementations. Production
+   code passes real factories; test mode passes stubs.
+
+   Also: clipboard image staging uses the `image` crate for PNG
+   encoding. Abstract this behind an `ImageStager` trait (or just pass
+   a closure) so tests don't need to encode real PNGs.
+
+2. **Stub transcriber.** The `Transcriber` trait already exists. Add a
+   `StubTranscriber` that accepts injected text from the test harness
+   via a channel: `Inject::Speech { text, duration_ms }` feeds a
+   `crossbeam_channel::Receiver<(String, u64)>`, and `transcribe()`
+   returns the injected words with synthetic timestamps derived from
+   `duration_ms`. No model loading, no audio processing.
+
+3. **Clock trait and `Instant` elimination.** The codebase has:
+   - 19 production uses of `Instant::now()` across 7 files
+     (`record.rs`, `editor_capture.rs`, `ext_capture.rs`, `audio.rs`,
+     `receive/listen.rs`, `watch.rs`)
+   - 14 production uses of `Utc::now()` across 8 files
+     (the capture threads, `record.rs`, `util.rs`, `browser_bridge.rs`,
+     `shell_hook.rs`, `narrate.rs`)
+   - 11 production uses of `thread::sleep()` across 8 files
+     (all capture threads, `record.rs`, `receive/listen.rs`, `chime.rs`,
+     `watch.rs`)
+   - 3 uses of `SystemTime` (`diff_capture.rs` for mtime,
+     `clean.rs` and `hook/session_state.rs` for age cutoffs)
+
+   Replace `Instant::now()` and `Utc::now()` with a `Clock` trait
+   (`now() → DateTime<Utc>`). Replace `thread::sleep()` with
+   `clock.sleep()`. `Instant` is eliminated entirely — all timing
+   uses `DateTime<Utc>` differences. `SystemTime` stays for file
+   mtime (it's the OS metadata type, not a clock choice).
+
+   Production uses real time; test mode uses a mock clock
+   (`Arc<Mutex<DateTime<Utc>>>`) advanced only by `AdvanceTime`.
+
+   Note: `chime.rs` uses `thread::sleep()` to wait for audio playback.
+   In test mode, chime playback is a no-op, so this sleep is skipped
+   entirely (not clock-gated).
+
+   The bench functions in `whisper.rs` and `parakeet.rs` use `Instant`
+   for measurement. These can keep using `Instant` directly — they're
+   developer-facing diagnostics, not part of the daemon loop.
+
+4. **`ATTEND_TEST_MODE` and `ATTEND_CACHE_DIR` env vars.**
+   `ATTEND_TEST_MODE=1` swaps in stub capture sources (via
+   `CaptureConfig`) and opens the `test-inject.sock` side channel.
+   `ATTEND_CACHE_DIR` controls the cache directory: set to a path to
+   use that path, or set to empty (`""`) to auto-create a random temp
+   directory (useful for parallel test runs). The existing
+   `CacheDirGuard` pattern handles the in-process override; the env
+   var extends this to CLI-spawned subprocesses. No behavioral change
    to production code paths.
 
 5. **End-to-end test harness.** `TestHarness` struct that spawns a real
    daemon in test mode, drives it via real CLI subprocesses, and asserts
    on outputs. All IPC is real (whatever mechanism the binary under test
-   uses).
+   uses). The harness reuses the hook test harness's `Outcome` type
+   for parsing hook stdout/stderr.
 
 6. **Declarative oracle.** State-machine invariants as proptest
    postconditions. Must pass green against the current implementation.
@@ -706,19 +806,24 @@ phase is: make the change, get back to green.
    plus injections (transcript, editor, ext, clipboard, time). Asserts
    invariants after each sequence. Must pass green.
 
-**Dependency order within Phase 0:**
+#### Dependency order within Phase 0
 
 ```
 1. Trait extraction (capture)  ──┐
-2. Trait extraction (transcribe) ┤
+2. Stub transcriber              ┤
 3. Clock trait                   ├→ 4. Env vars + test-inject.sock → 5. Harness → 6. Oracle → 7. Fuzzer
 ```
 
-Items 1-3 are independent of each other. Item 4 (env vars + inject socket)
-depends on the traits existing. The inject socket is a minor structural
-change to the daemon: it adds a listener thread for `test-inject.sock`
-that routes injections to the stub trait impls via channels. This is the
-one change in Phase 0 that isn't pure refactoring.
+Items 1-3 are independent of each other. Item 2 is small (trait already
+exists; just add the stub). Item 1 is moderate (follow `ExternalSource`
+pattern for 3 new traits + `CaptureConfig`). Item 3 is the most
+invasive (touches 11+ production files).
+
+Item 4 (env vars + inject socket) depends on the traits existing. The
+inject socket is a minor structural change to the daemon: it adds a
+listener thread for `test-inject.sock` that routes injections to the
+stub trait impls via channels. This is the one change in Phase 0 that
+isn't pure refactoring.
 
 **Gate**: the full oracle suite passes reliably before proceeding.
 
