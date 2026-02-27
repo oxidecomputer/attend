@@ -225,7 +225,7 @@ pub use resolve::{Col, Line, Position, Selection};
 mod tests;
 
 /// Resolved editor state: open files with cursor positions.
-#[derive(Debug, Default, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Eq, Serialize, Deserialize)]
 pub struct EditorState {
     /// Open editor tabs with resolved line:col selections.
     pub files: Vec<FileEntry>,

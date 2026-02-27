@@ -41,14 +41,14 @@
 //!
 //! `<key>` is either a session ID or `_local` (no active session).
 
-mod audio;
-mod capture;
+pub(crate) mod audio;
+pub(crate) mod capture;
 mod chime;
 mod clean;
 pub(crate) mod clipboard_capture;
 mod diff_capture;
-mod editor_capture;
-mod ext_capture;
+pub(crate) mod editor_capture;
+pub(crate) mod ext_capture;
 pub(crate) mod merge;
 pub(crate) mod receive;
 pub(crate) mod record;

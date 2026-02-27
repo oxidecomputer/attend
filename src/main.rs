@@ -18,6 +18,7 @@ mod narrate;
 mod shell;
 mod state;
 mod terminal;
+mod test_mode;
 mod util;
 mod view;
 mod watch;
