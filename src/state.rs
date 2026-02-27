@@ -108,8 +108,8 @@ fn env_cache_dir() -> Option<&'static Utf8PathBuf> {
             let val = std::env::var("ATTEND_CACHE_DIR").ok()?;
             if val.is_empty() {
                 let tmp = tempfile::tempdir().expect("failed to create temp dir");
-                let path = Utf8PathBuf::try_from(tmp.path().to_path_buf())
-                    .expect("non-UTF-8 temp dir");
+                let path =
+                    Utf8PathBuf::try_from(tmp.path().to_path_buf()).expect("non-UTF-8 temp dir");
                 // Leak: directory persists for process lifetime without cleanup.
                 std::mem::forget(tmp);
                 Some(path)

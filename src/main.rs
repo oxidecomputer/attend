@@ -33,6 +33,10 @@ fn main() -> anyhow::Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
+    if test_mode::is_active() {
+        test_mode::init();
+    }
+
     Cli::parse().run()?;
     Ok(())
 }

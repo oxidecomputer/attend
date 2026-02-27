@@ -60,6 +60,54 @@ impl CaptureConfig {
             }),
         }
     }
+
+    /// Create a config using test stubs backed by shared state.
+    ///
+    /// Returns the config, plus a `StubTranscriber` for the daemon to use
+    /// (already wired to the inject router's sender channel).
+    pub fn test_mode(
+        clock: Arc<dyn Clock>,
+    ) -> (Self, crate::narrate::transcribe::stub::StubTranscriber) {
+        use std::sync::Mutex;
+
+        use crate::narrate::ext_capture::ExternalSnapshot;
+        use crate::state::EditorState;
+        use crate::test_mode::InjectRouter;
+        use crate::test_mode::stubs::*;
+
+        let editor_state: Arc<Mutex<Option<EditorState>>> = Arc::default();
+        let ext_snapshot: Arc<Mutex<Option<ExternalSnapshot>>> = Arc::default();
+        let clipboard_text: Arc<Mutex<Option<String>>> = Arc::default();
+
+        let (stub_transcriber, transcriber_tx) =
+            crate::narrate::transcribe::stub::StubTranscriber::new();
+
+        // Clone Arcs for the clipboard factory closure (called on each resume).
+        let clipboard_for_factory = Arc::clone(&clipboard_text);
+
+        let config = Self {
+            clock,
+            editor_source: Box::new(StubEditorSource::new(Arc::clone(&editor_state))),
+            ext_source: Some(Box::new(StubExternalSource::new(Arc::clone(&ext_snapshot)))),
+            clipboard_factory: Box::new(move || {
+                Some(
+                    Box::new(StubClipboardSource::new(Arc::clone(&clipboard_for_factory)))
+                        as Box<dyn ClipboardSource>,
+                )
+            }),
+        };
+
+        // Register the inject router so the background reader thread
+        // can dispatch capture injections to these shared state objects.
+        crate::test_mode::register_router(InjectRouter {
+            transcriber_tx,
+            editor_state,
+            ext_snapshot,
+            clipboard_text,
+        });
+
+        (config, stub_transcriber)
+    }
 }
 
 /// Handle for the background editor/diff/ext/clipboard polling threads.

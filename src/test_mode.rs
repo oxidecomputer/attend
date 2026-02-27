@@ -66,8 +66,7 @@ pub fn clock() -> Option<Arc<MockClock>> {
 /// Panics if `ATTEND_CACHE_DIR` is not set or the inject socket is
 /// unreachable.
 pub fn init() {
-    let cache_dir =
-        crate::state::cache_dir().expect("ATTEND_CACHE_DIR must be set in test mode");
+    let cache_dir = crate::state::cache_dir().expect("ATTEND_CACHE_DIR must be set in test mode");
     let sock_path = cache_dir.join("test-inject.sock");
 
     // Create and store the mock clock (start at Unix epoch).
@@ -172,10 +171,7 @@ impl InjectRouter {
                 });
             }
             Inject::EditorState { files } => {
-                *self.editor_state.lock().unwrap() = Some(EditorState {
-                    files,
-                    cwd: None,
-                });
+                *self.editor_state.lock().unwrap() = Some(EditorState { files, cwd: None });
             }
             Inject::ExternalSelection { app, text } => {
                 *self.ext_snapshot.lock().unwrap() = Some(ExternalSnapshot {
@@ -244,11 +240,25 @@ pub enum Inject {
 // ---------------------------------------------------------------------------
 
 pub mod stubs {
-    //! Channel-backed stub implementations of capture source traits.
+    //! Stub implementations of capture source traits for test mode.
     //!
     //! Each stub holds shared state (`Arc<Mutex<...>>`) that the inject
     //! router writes to and the capture thread reads from. This decouples
     //! the inject socket background thread from the capture polling loops.
+    //!
+    //! **Why mutexes (latest-wins) rather than channels?** Editor state,
+    //! clipboard content, and external selections are *snapshots*, not
+    //! events. In production, if the editor changes three times between
+    //! polls, only the final state is observed. The mutex model faithfully
+    //! mirrors this: inject sets the current state, and every poll returns
+    //! it until overwritten. The harness controls time via condvar-gated
+    //! `MockClock`, so it can advance by exactly one poll interval between
+    //! injections when ordering matters.
+    //!
+    //! Speech/silence injections are different — they're events that must
+    //! not be lost. Those use a channel (`mpsc::Sender`) in
+    //! [`StubTranscriber`](crate::narrate::transcribe::stub::StubTranscriber),
+    //! which drains all pending injections on each `transcribe()` call.
 
     use std::sync::{Arc, Mutex};
 

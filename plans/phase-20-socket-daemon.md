@@ -30,8 +30,7 @@ Sub-items (each a commit):
 - [x] 4b. `ATTEND_CACHE_DIR` env var in `cache_dir()` — `bf383d3`
 - [x] 4c. Un-gate `StubTranscriber` from `#[cfg(test)]` — `d17d11a`
 - [x] 4d. Inject protocol types + stub capture sources — `309cee4`
-- [ ] 4e. `test_mode` module: `init()`, inject socket client, background
-  reader thread, `OnceLock<Arc<MockClock>>`, inject router for daemon stubs
+- [x] 4e. `test_mode::init()`, inject socket client, inject router — `4b552df`
 - [ ] 4f. Wire `ATTEND_TEST_MODE`: `process_clock()` checks env,
   `CaptureConfig::test_mode()`, `main()` calls `test_mode::init()`,
   `spawn_daemon()` propagates env vars

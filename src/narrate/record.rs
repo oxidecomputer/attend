@@ -15,7 +15,7 @@ use chrono::{DateTime, Utc};
 
 use camino::Utf8Path;
 
-use super::audio::{self, AudioChunk, AudioSource};
+use super::audio::{self, AudioChunk};
 use super::capture;
 use super::chime::Chime;
 use super::merge::{self, Event};
@@ -65,6 +65,14 @@ impl DeferredTranscriber {
         Self {
             handle: Some(handle),
             transcriber: None,
+        }
+    }
+
+    /// Create with a pre-loaded transcriber (test mode: no model loading).
+    fn preloaded(transcriber: Box<dyn super::transcribe::Transcriber>) -> Self {
+        Self {
+            handle: None,
+            transcriber: Some(transcriber),
         }
     }
 
@@ -882,6 +890,15 @@ fn spawn_daemon() -> anyhow::Result<()> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
 
+    // Propagate test mode env vars so the daemon connects to the same
+    // inject socket and cache directory as the parent CLI process.
+    if crate::test_mode::is_active() {
+        cmd.env("ATTEND_TEST_MODE", "1");
+        if let Ok(val) = std::env::var("ATTEND_CACHE_DIR") {
+            cmd.env("ATTEND_CACHE_DIR", val);
+        }
+    }
+
     cmd.spawn()?;
 
     // No grace period needed: the daemon acquires the record lock at startup.
@@ -1116,9 +1133,28 @@ pub fn daemon(clock: Arc<dyn Clock>) -> anyhow::Result<()> {
     let _ = fs::remove_file(pause_sentinel_path());
     let _ = fs::remove_file(yank_sentinel_path());
 
-    // Start audio capture immediately — audio accumulates in the background
-    // while the model loads and the chime plays.
-    let capture = audio::start_capture()?;
+    // Set up audio capture, capture threads, and transcriber.
+    // In test mode: stub sources, no cpal, no model loading.
+    // Set up audio capture, capture threads, and transcriber.
+    // In test mode: stub sources, no cpal, no model loading.
+    let (capture, capture_config, transcriber): (
+        Box<dyn audio::AudioSource>,
+        capture::CaptureConfig,
+        DeferredTranscriber,
+    ) = if crate::test_mode::is_active() {
+        use crate::test_mode::stubs::StubAudioSource;
+
+        let audio = Box::new(StubAudioSource::new(16000));
+        let (cap_config, stub_transcriber) = capture::CaptureConfig::test_mode(Arc::clone(&clock));
+        let transcriber = DeferredTranscriber::preloaded(Box::new(stub_transcriber));
+        (audio, cap_config, transcriber)
+    } else {
+        let audio = audio::start_capture()?;
+        let cap_config = capture::CaptureConfig::production(Arc::clone(&clock));
+        let transcriber = DeferredTranscriber::spawn(engine, model_path);
+        (Box::new(audio), cap_config, transcriber)
+    };
+
     let sample_rate = capture.sample_rate();
 
     // Start editor polling, file diff tracking, and external selection capture
@@ -1127,17 +1163,12 @@ pub fn daemon(clock: Arc<dyn Clock>) -> anyhow::Result<()> {
     let clipboard_enabled = config.clipboard_capture.unwrap_or(true);
     let clipboard_staging = super::clipboard_staging_dir(session_id.as_ref());
     let editor_events = capture::start(
-        capture::CaptureConfig::production(Arc::clone(&clock)),
+        capture_config,
         None,
         config.ext_ignore_apps.clone(),
         clipboard_enabled,
         clipboard_staging,
     )?;
-
-    // Spawn model preload on a background thread. The first call to
-    // transcriber.get() blocks until the model is ready. This lets audio
-    // accumulate and the chime play concurrently with model loading.
-    let transcriber = DeferredTranscriber::spawn(engine, model_path);
 
     // Register SIGTERM handler so `kill <pid>` triggers a clean shutdown
     // (transcribe remaining audio and release the lock) instead of an abrupt exit.
@@ -1162,7 +1193,7 @@ pub fn daemon(clock: Arc<dyn Clock>) -> anyhow::Result<()> {
     let mut state = DaemonState {
         clock,
         transcriber,
-        audio_capture: Some(Box::new(capture)),
+        audio_capture: Some(capture),
         editor_capture: Some(editor_events),
         terminated,
         silence_detector,
