@@ -46,8 +46,9 @@ use protocol::Handshake;
 /// How long (wall-clock) to wait for a process to connect to the inject socket.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// How long (wall-clock) to wait for a CLI command to exit.
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+/// Maximum mock time (ms) to advance before giving up on a child process.
+/// If the child hasn't exited after this much mock time, it's stuck.
+const COMMAND_TIMEOUT_MOCK_MS: u64 = 60_000;
 
 /// Mock time increment per tick while waiting for a child to exit (ms).
 /// Must be <= the smallest poll interval in the codebase (50ms for
@@ -183,9 +184,14 @@ impl TestHarness {
 
     /// Wait for a child process to exit, advancing mock time in small
     /// increments so all processes (daemon + CLI) can make progress.
+    ///
+    /// The timeout is based on mock time advanced, not wall-clock time.
+    /// This keeps the harness decoupled from real time: tests run as fast
+    /// as the OS can schedule, and a slow CI host can't cause spurious
+    /// timeouts.
     fn wait_child_ticking(&mut self, mut child: Child) -> Output {
         let pid = child.id();
-        let deadline = std::time::Instant::now() + COMMAND_TIMEOUT;
+        let mut advanced_ms: u64 = 0;
 
         loop {
             match child.try_wait() {
@@ -200,12 +206,13 @@ impl TestHarness {
                     self.broadcast(&Inject::AdvanceTime {
                         duration_ms: TICK_MS,
                     });
+                    advanced_ms += TICK_MS;
                     std::thread::yield_now();
                 }
                 Err(e) => panic!("try_wait failed for PID {pid}: {e}"),
             }
 
-            if std::time::Instant::now() > deadline {
+            if advanced_ms > COMMAND_TIMEOUT_MOCK_MS {
                 let _ = child.kill();
                 let stderr = child
                     .stderr
@@ -216,7 +223,9 @@ impl TestHarness {
                         String::from_utf8_lossy(&buf).to_string()
                     })
                     .unwrap_or_default();
-                panic!("timed out waiting for child PID {pid} to exit\nstderr: {stderr}");
+                panic!(
+                    "child PID {pid} did not exit after {advanced_ms}ms of mock time\nstderr: {stderr}"
+                );
             }
         }
     }
