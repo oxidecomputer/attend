@@ -17,6 +17,19 @@ Testing detail: [Test Infrastructure](phase-20-testing.md)
 - [ ] 6. Differential oracle (shared run infrastructure + self-diff)
 - [ ] 7. Declarative oracle (invariant assertions on RunTrace)
 
+**Note on items 4-5:** These were completed per their original spec
+(fire-and-forget broadcasts, blocking per-command harness). The oracle
+design (items 6-7) requires upgrades to both the inject socket protocol
+and the test harness that were designed after items 4-5 landed:
+
+- Inject socket becomes bidirectional (ACK after `AdvanceTime`)
+- `TestHarness` switches to all-background execution model
+- `HarnessId` replaces OS PIDs in trace output
+- `Connection` gains a reader for ACK messages
+
+These changes are prerequisites for item 6 and will be implemented as
+part of it. See [testing doc](phase-20-testing.md) for the full spec.
+
 ### Bug fixes discovered during implementation
 
 - `92f8cc7` — Fix vacuous empty-string match in clipboard dedup
@@ -124,10 +137,18 @@ alike) creates a `MockClock`, connects to the inject socket at the
 top of `main` (before any clock usage), and sends its PID and argv
 as a JSON struct (`{"pid": N, "argv": [...]}`). A background thread
 reads newline-delimited JSON messages from the socket and dispatches
-them: `AdvanceTime` goes to the `MockClock` (with ACK-after-settle,
-see [testing doc](phase-20-testing.md#tick-synchronization-ack-protocol)),
-capture injections go to the appropriate stub channels (the daemon
-routes them; other processes ignore them).
+them: `AdvanceTime` goes to the `MockClock`, capture injections go
+to the appropriate stub channels (the daemon routes them; other
+processes ignore them).
+
+**Current state:** The inject socket is unidirectional
+(harness→process). `AdvanceTime` is fire-and-forget: the harness
+broadcasts and moves on without waiting for processes to settle. This
+is sufficient for the existing e2e smoke tests (`tests/e2e.rs`) which
+use `wait_child_ticking` (tick time in a loop until a specific child
+exits). The oracle requires upgrading the protocol to be bidirectional
+with ACK-after-settle semantics — see
+[testing doc](phase-20-testing.md#tick-synchronization-ack-protocol).
 
 **Spawn-connect synchronization.** After spawning a subprocess, the
 harness blocks until that PID connects to the inject socket. This
@@ -160,6 +181,15 @@ the CLI's poll loop terminates — no real wall-clock delay anywhere.
 it via real CLI subprocesses, and asserts on outputs. All IPC is real
 (whatever mechanism the binary under test uses). The harness reuses
 the hook test harness's `Outcome` type for parsing hook stdout/stderr.
+
+**Current state:** The harness uses a blocking per-command model:
+`run_command()` spawns a child, waits for its inject socket connection,
+then ticks time until it exits. This works for sequential e2e smoke
+tests but doesn't support the oracle's all-background execution model
+where multiple processes run concurrently and exits are observed during
+tick settlement. Item 6 will refactor the harness to the background
+model described in the
+[testing doc](phase-20-testing.md#test-harness).
 
 ### 6. Differential oracle
 
