@@ -8,7 +8,8 @@
 //! tests can substitute a stub that returns scripted audio chunks.
 
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+
+use chrono::{DateTime, Utc};
 
 /// Source of audio input samples.
 ///
@@ -82,8 +83,8 @@ const RESAMPLER_TRANSITION_BW: f64 = 2.0;
 /// A timestamped chunk of audio samples.
 #[derive(Debug, Clone)]
 pub struct AudioChunk {
-    /// Monotonic instant for relative timing.
-    pub instant: Instant,
+    /// Wall-clock timestamp for relative timing.
+    pub timestamp: DateTime<Utc>,
     /// Mono f32 samples at the device's native sample rate.
     pub samples: Vec<f32>,
 }
@@ -126,7 +127,7 @@ pub fn start_capture() -> anyhow::Result<CaptureHandle> {
                 .collect();
 
             let chunk = AudioChunk {
-                instant: Instant::now(),
+                timestamp: Utc::now(),
                 samples: mono,
             };
 

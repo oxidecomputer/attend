@@ -5,7 +5,9 @@
 //! detector reports a split point so the caller can transcribe the
 //! completed speech segment immediately.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use chrono::{DateTime, Utc};
 
 use super::audio::AudioChunk;
 
@@ -33,8 +35,8 @@ pub struct SilenceDetector {
     state: State,
     /// Consecutive non-voice frames in the current trailing silence.
     silent_frames: usize,
-    /// Monotonic instant when the current silence began.
-    silence_start_instant: Option<Instant>,
+    /// Timestamp when the current silence began.
+    silence_start: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -62,14 +64,14 @@ impl SilenceDetector {
             min_silence_frames,
             state: State::Idle,
             silent_frames: 0,
-            silence_start_instant: None,
+            silence_start: None,
         }
     }
 
-    /// Feed an audio chunk and return `Some(instant)` if a silence-based
-    /// split should happen. The returned instant marks the beginning of
-    /// the silence — chunks before this instant are speech.
-    pub fn feed(&mut self, chunk: &AudioChunk) -> Option<Instant> {
+    /// Feed an audio chunk and return `Some(timestamp)` if a silence-based
+    /// split should happen. The returned timestamp marks the beginning of
+    /// the silence — chunks before this timestamp are speech.
+    pub fn feed(&mut self, chunk: &AudioChunk) -> Option<DateTime<Utc>> {
         let resampled = downsample_to_vad(&chunk.samples, self.device_sample_rate);
         self.leftover.extend_from_slice(&resampled);
 
@@ -92,7 +94,7 @@ impl SilenceDetector {
                         tracing::debug!("VAD: silence detected: Speaking -> Trailing");
                         self.state = State::Trailing;
                         self.silent_frames = 1;
-                        self.silence_start_instant = Some(chunk.instant);
+                        self.silence_start = Some(chunk.timestamp);
                     }
                 }
                 State::Trailing => {
@@ -103,7 +105,7 @@ impl SilenceDetector {
                         );
                         self.state = State::Speaking;
                         self.silent_frames = 0;
-                        self.silence_start_instant = None;
+                        self.silence_start = None;
                     } else {
                         self.silent_frames += 1;
                         // Log progress every second of silence.
@@ -120,7 +122,7 @@ impl SilenceDetector {
                                 silent_secs = self.silent_frames as f64 / FRAMES_PER_SEC as f64,
                                 "VAD: silence threshold reached: splitting segment"
                             );
-                            result = self.silence_start_instant.take();
+                            result = self.silence_start.take();
                             self.state = State::Idle;
                             self.silent_frames = 0;
                         }
@@ -136,7 +138,7 @@ impl SilenceDetector {
     pub fn reset(&mut self) {
         self.state = State::Idle;
         self.silent_frames = 0;
-        self.silence_start_instant = None;
+        self.silence_start = None;
         self.leftover.clear();
     }
 }

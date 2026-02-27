@@ -13,6 +13,7 @@
 //! - `whisper.rs` / `parakeet.rs` bench functions: developer diagnostics.
 //! - `transcribe.rs` model load timing: diagnostic logging.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -31,6 +32,15 @@ pub trait Clock: Send + Sync {
     /// Test mode: returns immediately without advancing the clock.
     /// Time only advances via explicit `MockClock::advance()` calls.
     fn sleep(&self, duration: Duration);
+}
+
+/// Create the process-wide clock.
+///
+/// Returns `RealClock` in production. Phase 0 item 4 will check
+/// `ATTEND_TEST_MODE` and return a `MockClock` instead.
+#[allow(dead_code)] // Used once remaining CLI call sites are converted.
+pub fn process_clock() -> Arc<dyn Clock> {
+    Arc::new(RealClock)
 }
 
 /// Production clock: real wall-clock time and real sleep.

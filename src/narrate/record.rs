@@ -9,7 +9,9 @@ use std::fs;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use chrono::{DateTime, Utc};
 
 use camino::Utf8Path;
 
@@ -23,6 +25,7 @@ use super::{
     flush_sentinel_path, pause_sentinel_path, pending_dir, record_lock_path, resolve_session,
     stop_sentinel_path, yank_sentinel_path, yanked_dir,
 };
+use crate::clock::Clock;
 use crate::config::Config;
 use crate::state::SessionId;
 use crate::util::utc_now_nanos;
@@ -100,6 +103,7 @@ impl DeferredTranscriber {
 /// }
 /// ```
 struct DaemonState {
+    clock: Arc<dyn Clock>,
     transcriber: DeferredTranscriber,
     /// Audio capture handle. `Some` during recording, `None` after finalize.
     audio_capture: Option<Box<dyn audio::AudioSource>>,
@@ -112,16 +116,14 @@ struct DaemonState {
     buffered_chunks: Vec<AudioChunk>,
     /// Words transcribed on the fly during this period.
     pre_transcribed: Vec<Word>,
-    /// When the current period started (for computing audio segment offsets).
-    period_start: Instant,
-    /// Wall-clock time when the current period started.
-    /// Word timestamps are computed as `period_start_utc + segment_offset + word.start_secs`.
-    period_start_utc: chrono::DateTime<chrono::Utc>,
+    /// When the current period started (UTC).
+    /// Word timestamps are computed as `period_start + segment_offset + word.start_secs`.
+    period_start: DateTime<Utc>,
     /// Accumulated offset across flushes: added to audio segment offsets
     /// so word timestamps account for previous periods.
     time_base_secs: f64,
-    /// When the last drain/flush occurred.
-    last_drain: Instant,
+    /// When the last drain/flush occurred (UTC).
+    last_drain: DateTime<Utc>,
     sample_rate: u32,
     session_id: Option<SessionId>,
     stop_sentinel: camino::Utf8PathBuf,
@@ -131,13 +133,13 @@ struct DaemonState {
     /// Whether the daemon is currently paused (user-initiated or idle).
     paused: bool,
     /// When the current pause started (for time_base_secs adjustment on resume).
-    pause_started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pause_started_at: Option<DateTime<Utc>>,
     /// Whether the daemon is idle (entered via stop, model stays loaded).
     /// Distinct from user-initiated pause: resume from idle re-resolves
     /// the session and resets timing for a fresh recording period.
     idle: bool,
     /// When the daemon entered idle state (for timeout tracking).
-    idle_since: Option<Instant>,
+    idle_since: Option<DateTime<Utc>>,
     /// How long to stay idle before auto-exiting. `None` = forever.
     idle_timeout: Option<Duration>,
 }
@@ -159,10 +161,10 @@ impl DaemonState {
             {
                 self.buffered_chunks.push(chunk);
 
-                // Partition: chunks whose instant < silence_start are speech.
+                // Partition: chunks whose timestamp < silence_start are speech.
                 let split = self
                     .buffered_chunks
-                    .partition_point(|c| c.instant < silence_start);
+                    .partition_point(|c| c.timestamp < silence_start);
                 let speech: Vec<_> = self.buffered_chunks.drain(..split).collect();
                 // Discard trailing silence chunks.
                 self.buffered_chunks.clear();
@@ -269,10 +271,10 @@ impl DaemonState {
         let _ = fs::remove_file(&self.stop_sentinel);
 
         // Reset timing and context for next recording period.
+        let now = self.clock.now();
         self.time_base_secs = 0.0;
-        self.last_drain = Instant::now();
-        self.period_start = Instant::now();
-        self.period_start_utc = chrono::Utc::now();
+        self.last_drain = now;
+        self.period_start = now;
         self.pre_transcribed.clear();
         self.buffered_chunks.clear();
 
@@ -297,8 +299,8 @@ impl DaemonState {
 
         self.paused = true;
         self.idle = true;
-        self.idle_since = Some(Instant::now());
-        self.pause_started_at = Some(chrono::Utc::now());
+        self.idle_since = Some(self.clock.now());
+        self.pause_started_at = Some(self.clock.now());
 
         tracing::info!("Stop handled: flushed content, entering idle state.");
 
@@ -393,7 +395,11 @@ impl DaemonState {
             .expect("audio capture already stopped");
         let recording = capture.drain();
         self.buffered_chunks.extend(recording.chunks);
-        let elapsed = self.last_drain.elapsed().as_secs_f64();
+        let now = self.clock.now();
+        let elapsed = (now - self.last_drain)
+            .to_std()
+            .unwrap_or_default()
+            .as_secs_f64();
 
         let editor = self
             .editor_capture
@@ -423,9 +429,8 @@ impl DaemonState {
         }
 
         self.time_base_secs += elapsed;
-        self.last_drain = Instant::now();
-        self.period_start = Instant::now();
-        self.period_start_utc = chrono::Utc::now();
+        self.last_drain = now;
+        self.period_start = now;
 
         if let Some(ref mut detector) = self.silence_detector {
             detector.reset();
@@ -483,7 +488,7 @@ impl DaemonState {
             }
 
             self.paused = true;
-            self.pause_started_at = Some(chrono::Utc::now());
+            self.pause_started_at = Some(self.clock.now());
         } else if !sentinel_exists && self.paused {
             if self.idle {
                 // Transition: idle -> recording (new session).
@@ -505,9 +510,8 @@ impl DaemonState {
                 }
 
                 // Fresh timing for the new recording period.
-                let now = Instant::now();
+                let now = self.clock.now();
                 self.period_start = now;
-                self.period_start_utc = chrono::Utc::now();
                 self.time_base_secs = 0.0;
                 self.last_drain = now;
 
@@ -559,16 +563,17 @@ impl DaemonState {
         if let Some(timeout) = self.idle_timeout
             && let Some(since) = self.idle_since
         {
-            return since.elapsed() > timeout;
+            let elapsed = (self.clock.now() - since).to_std().unwrap_or_default();
+            return elapsed > timeout;
         }
         false
     }
 
     /// Transcribe a completed speech segment on the fly.
     fn transcribe_segment(&mut self, speech_chunks: &[AudioChunk]) -> anyhow::Result<()> {
-        let offset = speech_chunks[0]
-            .instant
-            .duration_since(self.period_start)
+        let offset = (speech_chunks[0].timestamp - self.period_start)
+            .to_std()
+            .unwrap_or_default()
             .as_secs_f64();
         let samples_16k = audio::resample(
             &audio::flatten_chunks(speech_chunks),
@@ -613,12 +618,12 @@ impl DaemonState {
     /// Returns a [`StagingResult`] whose files are cleaned up only after the
     /// narration is written to disk (crash-safe).
     fn collect_browser_staging(&self) -> super::StagingResult {
-        super::collect_browser_staging(self.session_id.as_ref(), self.period_start_utc)
+        super::collect_browser_staging(self.session_id.as_ref(), self.period_start)
     }
 
     /// Collect staged shell command events for this session.
     fn collect_shell_staging(&self) -> super::StagingResult {
-        super::collect_shell_staging(self.session_id.as_ref(), self.period_start_utc)
+        super::collect_shell_staging(self.session_id.as_ref(), self.period_start)
     }
 
     /// Transcribe remaining audio, combine with pre-transcribed words, merge
@@ -645,9 +650,9 @@ impl DaemonState {
         // pauses (e.g., counting while clicking) are real speech.
         if !remaining_chunks.is_empty() {
             let remaining_samples = audio::flatten_chunks(&remaining_chunks);
-            let offset = remaining_chunks[0]
-                .instant
-                .duration_since(self.period_start)
+            let offset = (remaining_chunks[0].timestamp - self.period_start)
+                .to_std()
+                .unwrap_or_default()
                 .as_secs_f64();
 
             tracing::info!(
@@ -688,7 +693,7 @@ impl DaemonState {
         for word in &all_words {
             let secs = word.start_secs + self.time_base_secs;
             let timestamp =
-                self.period_start_utc + chrono::Duration::milliseconds((secs * 1000.0) as i64);
+                self.period_start + chrono::Duration::milliseconds((secs * 1000.0) as i64);
             events.push(Event::Words {
                 timestamp,
                 text: word.text.clone(),
@@ -1145,8 +1150,10 @@ pub fn daemon() -> anyhow::Result<()> {
         None
     };
 
-    let now = Instant::now();
+    let clock: Arc<dyn Clock> = Arc::new(crate::clock::RealClock);
+    let now = clock.now();
     let mut state = DaemonState {
+        clock,
         transcriber,
         audio_capture: Some(Box::new(capture)),
         editor_capture: Some(editor_events),
@@ -1155,7 +1162,6 @@ pub fn daemon() -> anyhow::Result<()> {
         buffered_chunks: Vec::new(),
         pre_transcribed: Vec::new(),
         period_start: now,
-        period_start_utc: chrono::Utc::now(),
         time_base_secs: 0.0,
         last_drain: now,
         sample_rate,
@@ -1190,7 +1196,9 @@ pub fn daemon() -> anyhow::Result<()> {
             tracing::info!("Idle timeout reached, exiting.");
             break;
         }
-        thread::sleep(Duration::from_millis(DAEMON_LOOP_POLL_MS));
+        state
+            .clock
+            .sleep(Duration::from_millis(DAEMON_LOOP_POLL_MS));
     }
 
     // Best-effort cleanup: remove pause sentinel on any exit path.
