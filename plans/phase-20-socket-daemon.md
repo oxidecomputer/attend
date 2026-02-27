@@ -6,7 +6,7 @@
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| Phase 0: Test infrastructure | **In progress** | Items 1-3 complete; items 4-7 not started |
+| Phase 0: Test infrastructure | **In progress** | Items 1-3 complete; item 4 in progress |
 | Phase A: Socket control plane | Not started | Blocked on Phase 0 gate |
 | Phase B: External event ingestion | Not started | Blocked on Phase A |
 | Phase C: Narration delivery | Not started | Blocked on Phase B |
@@ -14,39 +14,28 @@
 
 ### Phase 0 items
 
-- [x] 1a. Extract `EditorStateSource` trait — `3c4f05b`
-- [x] 1b. Extract `ClipboardSource` trait — `69553a6`
-- [x] 1c. Extract `AudioSource` trait — `023c84d`
-- [x] 1d. Wire `CaptureConfig` into `capture::start()` — `6ccb168`
-- [x] 2. Add `StubTranscriber` — `3ca31b6`
+- [x] 1. Trait extraction — `3c4f05b`, `69553a6`, `023c84d`, `6ccb168`
+- [x] 2. `StubTranscriber` — `3ca31b6`
 - [x] 3. Clock trait and `Instant` elimination — `f2a4bf0`, `f15470a`, `633404f`, `f736e38`
 - [ ] 4. `ATTEND_TEST_MODE` and `ATTEND_CACHE_DIR` env vars
 - [ ] 5. End-to-end test harness
 - [ ] 6. Declarative oracle
 - [ ] 7. Proptest action-sequence fuzzer
 
-#### Item 3: Clock trait and `Instant` elimination — COMPLETE
+#### Item 4: `ATTEND_TEST_MODE` / `ATTEND_CACHE_DIR` / inject socket — IN PROGRESS
 
-Four commits:
-- `f2a4bf0`: `Clock` trait, `RealClock`, `MockClock`. All four capture threads
-  converted. `CaptureConfig` carries `Arc<dyn Clock>`.
-- `f15470a`: `AudioChunk`, `SilenceDetector`, `DaemonState` converted.
-  `Instant` fully eliminated from daemon internals.
-- `633404f`: remaining files converted — `receive/listen.rs`, `watch.rs`,
-  `record.rs` CLI functions, `cli/shell_hook.rs`, `cli/browser_bridge.rs`,
-  `narrate.rs` collect_staging, `util.rs` formatting functions,
-  `clipboard_capture.rs` image staging. All CLI entry points pass
-  `process_clock()`.
-- `f736e38`: Thread `process_clock()` into `daemon()` and
-  `CaptureConfig::production()`. Last place where `RealClock` was
-  constructed directly in production code outside `clock.rs`.
+Sub-items (each a commit):
 
-**Exceptions** (documented in `clock.rs`, not converted):
-- `chime.rs`: audio playback sleep, no-op in test mode
-- `whisper.rs` / `parakeet.rs` bench functions: developer diagnostics
-- `transcribe.rs` model load timing: diagnostic logging
-- `audio.rs` cpal callback: replaced by `AudioSource` trait in test mode
-- `look.rs` / `glance.rs` one-shot JSON: `Utc::now()` for display timestamp
+- [ ] 4a. MockClock: un-gate from `#[cfg(test)]`, add condvar-gated sleep
+- [ ] 4b. `ATTEND_CACHE_DIR` env var in `cache_dir()`
+- [ ] 4c. Un-gate `StubTranscriber` from `#[cfg(test)]`
+- [ ] 4d. Inject protocol types + stub capture sources (channel-based stubs
+  for `EditorStateSource`, `ClipboardSource`, `ExternalSource`, `AudioSource`)
+- [ ] 4e. `test_mode` module: `init()`, inject socket client, background
+  reader thread, `OnceLock<Arc<MockClock>>`, inject router for daemon stubs
+- [ ] 4f. Wire `ATTEND_TEST_MODE`: `process_clock()` checks env,
+  `CaptureConfig::test_mode()`, `main()` calls `test_mode::init()`,
+  `spawn_daemon()` propagates env vars
 
 ### Bug fixes discovered during implementation
 
