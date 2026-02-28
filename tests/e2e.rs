@@ -36,13 +36,14 @@ fn start_speak_stop_collect() {
 
 /// Status reports that the daemon is recording, then idle after stop.
 ///
-/// Ignored: `narrate status` is purely synchronous (no `clock.sleep()`),
-/// so mock time races ahead of wall-clock time and the mock-time timeout
-/// fires before the command finishes. The all-background execution model
-/// (Phase 0 item 6) will fix this by replacing `wait_child_ticking` with
-/// tick-settle-observe, giving wall-clock time to synchronous commands.
+/// Flaky: `narrate status` has 0 mock-clock waiters (purely synchronous),
+/// so ACK-based ticks complete in microseconds. `yield_now()` between ticks
+/// doesn't reliably give the daemon subprocess enough wall-clock time to
+/// start and connect before the toggle command exits. The all-background
+/// execution model (Phase 0 item 6) eliminates this class of race by
+/// replacing `wait_child_ticking` with tick-settle-observe.
 #[test]
-#[ignore]
+#[ignore = "flaky: daemon startup races wait_child_ticking scheduling"]
 fn status_shows_recording_state() {
     let mut h = TestHarness::new(binary());
 

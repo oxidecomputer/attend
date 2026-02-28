@@ -896,10 +896,7 @@ fn spawn_daemon() -> anyhow::Result<()> {
             let log_file = std::fs::File::create(&log_path).ok();
             cmd.stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
-                .stderr(log_file.map_or_else(
-                    std::process::Stdio::null,
-                    std::process::Stdio::from,
-                ));
+                .stderr(log_file.map_or_else(std::process::Stdio::null, std::process::Stdio::from));
         }
     } else {
         // Detach stdio so the daemon doesn't hold the parent's descriptors.

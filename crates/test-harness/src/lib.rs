@@ -46,9 +46,11 @@ use protocol::{CaptureInject, Handshake, Inject, TimeInject};
 /// How long (wall-clock) to wait for a process to connect to the inject socket.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Maximum mock time (ms) to advance before giving up on a child process.
-/// If the child hasn't exited after this much mock time, it's stuck.
-const COMMAND_TIMEOUT_MOCK_MS: u64 = 60_000;
+/// Maximum wall-clock time to wait for a child process to exit.
+/// With ACK-based ticks, mock time is decoupled from wall-clock time
+/// (a process with 0 waiters ACKs instantly, so mock time races ahead).
+/// Wall-clock timeout is the only meaningful "stuck" detector.
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Mock time increment per tick while waiting for a child to exit (ms).
 /// Must be <= the smallest poll interval in the codebase (50ms for
@@ -194,17 +196,12 @@ impl TestHarness {
     /// Wait for a child process to exit, advancing mock time in small
     /// increments so all processes (daemon + CLI) can make progress.
     ///
-    /// The timeout is based on mock time advanced, not wall-clock time.
-    /// This keeps the harness decoupled from real time: tests run as fast
-    /// as the OS can schedule, and a slow CI host can't cause spurious
-    /// timeouts.
-    ///
-    /// This method will be replaced by the all-background execution model
-    /// (Phase 0 item 6), where processes are spawned into the background
-    /// and exits are observed during tick settlement.
+    /// Will be replaced by the all-background execution model (Phase 0
+    /// item 6), where processes are spawned into the background and exits
+    /// are observed during tick settlement.
     fn wait_child_ticking(&mut self, mut child: Child) -> Output {
         let pid = child.id();
-        let mut advanced_ms: u64 = 0;
+        let start = std::time::Instant::now();
 
         loop {
             match child.try_wait() {
@@ -219,17 +216,12 @@ impl TestHarness {
                     // advance_time() blocks until all processes ACK
                     // settlement, ensuring deterministic behavior.
                     self.advance_time(TICK_MS);
-                    advanced_ms += TICK_MS;
-                    // Yield to give subprocesses (especially the daemon,
-                    // which is spawned as a detached grandchild) wall-clock
-                    // time to start and connect. Without this, mock time
-                    // races ahead and the daemon misses its connect window.
                     std::thread::yield_now();
                 }
                 Err(e) => panic!("try_wait failed for PID {pid}: {e}"),
             }
 
-            if advanced_ms > COMMAND_TIMEOUT_MOCK_MS {
+            if start.elapsed() > COMMAND_TIMEOUT {
                 let _ = child.kill();
                 let stderr = child
                     .stderr
@@ -241,7 +233,8 @@ impl TestHarness {
                     })
                     .unwrap_or_default();
                 panic!(
-                    "child PID {pid} did not exit after {advanced_ms}ms of mock time\nstderr: {stderr}"
+                    "child PID {pid} did not exit after {:.1?} wall-clock\nstderr: {stderr}",
+                    start.elapsed()
                 );
             }
         }
