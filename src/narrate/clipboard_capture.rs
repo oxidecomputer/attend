@@ -175,20 +175,27 @@ fn hash_image_data(img: &ImageData) -> u64 {
 /// How often to poll the clipboard for changes (ms).
 const CLIPBOARD_POLL_MS: u64 = 500;
 
+/// How often to poll while paused (ms). Slow loop just to keep the
+/// thread alive for MockClock settlement.
+const PAUSED_POLL_MS: u64 = 500;
+
 /// Spawn the clipboard polling thread.
 ///
 /// Returns the join handle. The thread pushes `ClipboardSelection`
 /// events into `events` until `stop` is set.
 ///
 /// Unlike other capture threads, clipboard polling has no paused state.
-/// Instead, the thread is killed on pause and a fresh one is spawned on
-/// resume. This avoids a race where clipboard changes made while paused
-/// (e.g. yank copying rendered narration) would be captured as events
-/// in the next recording period.
+/// The thread stays alive during pause (sleeping with `PAUSED_POLL_MS`)
+/// so `MockClock::advance_and_settle` can track it. On resume, the
+/// `reseed` flag tells the thread to re-seed its tracker from the
+/// current clipboard, so changes made while paused (e.g. yank copying
+/// rendered narration) are treated as baseline, not as new events.
 pub(super) fn spawn(
     mut source: Box<dyn ClipboardSource>,
     clock: Arc<dyn Clock>,
     stop: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
+    reseed: Arc<AtomicBool>,
     events: Arc<Mutex<Vec<Event>>>,
     staging_dir: camino::Utf8PathBuf,
 ) -> Option<std::thread::JoinHandle<()>> {
@@ -199,6 +206,19 @@ pub(super) fn spawn(
 
     Some(std::thread::spawn(move || {
         while !stop.load(Ordering::Relaxed) {
+            if paused.load(Ordering::Relaxed) {
+                clock.sleep(Duration::from_millis(PAUSED_POLL_MS));
+                continue;
+            }
+
+            // Re-seed after resume: treat current clipboard as baseline
+            // so changes during pause aren't captured.
+            if reseed.swap(false, Ordering::Relaxed) {
+                let text = source.get_text();
+                let image = source.get_image();
+                tracker = ClipboardTracker::new_seeded(text.as_deref(), image.as_ref());
+            }
+
             clock.sleep(Duration::from_millis(CLIPBOARD_POLL_MS));
 
             // Try text first, then image. First success wins.

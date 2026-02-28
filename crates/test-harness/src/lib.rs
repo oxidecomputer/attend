@@ -18,12 +18,20 @@
 //! waits on the condvar for specific PIDs or daemon connections — no
 //! polling, no sleeps, no non-blocking accept.
 //!
+//! # Execution model: all processes are background
+//!
+//! Every CLI command, hook invocation, and listener is launched as a
+//! background child. The harness never blocks waiting for a specific
+//! process to exit. Instead, it advances mock time and checks all children
+//! for exits via `try_wait()` after each tick settlement. Process exits
+//! are captured as [`TraceEvent`] entries.
+//!
 //! # Time coordination
 //!
 //! All processes under test use a `MockClock` with condvar-gated sleep.
-//! The harness advances time by broadcasting `AdvanceTime` messages.
-//! When waiting for a CLI command to exit, the harness ticks time forward
-//! in small increments so both the daemon and the CLI make progress.
+//! The harness advances time by broadcasting `AdvanceTime` messages and
+//! waiting for ACK from each process before proceeding. This gives
+//! lockstep execution across OS processes.
 
 mod protocol;
 
@@ -46,15 +54,12 @@ use protocol::{CaptureInject, Handshake, Inject, TimeInject};
 /// How long (wall-clock) to wait for a process to connect to the inject socket.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Maximum wall-clock time to wait for a child process to exit.
-/// With ACK-based ticks, mock time is decoupled from wall-clock time
-/// (a process with 0 waiters ACKs instantly, so mock time races ahead).
-/// Wall-clock timeout is the only meaningful "stuck" detector.
+/// Maximum wall-clock time to wait for a process to exit during
+/// `tick_until_exit`.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Mock time increment per tick while waiting for a child to exit (ms).
-/// Must be <= the smallest poll interval in the codebase (50ms for
-/// sentinel polling).
+/// Mock time increment per tick (ms). Must be <= the smallest poll
+/// interval in the codebase (50ms for sentinel polling).
 const TICK_MS: u64 = 50;
 
 /// Wall-clock timeout for reading an ACK from a process after
@@ -65,9 +70,42 @@ const TICK_MS: u64 = 50;
 const ACK_TIMEOUT: Duration = Duration::from_secs(10);
 
 // ---------------------------------------------------------------------------
-// Shared state between accept thread and foreground thread
+// Public types
 // ---------------------------------------------------------------------------
 
+/// Harness-assigned process identifier. Sequential, deterministic.
+///
+/// The i-th process spawned by the harness gets `HarnessId(i)`. OS PIDs
+/// are nondeterministic and never appear in the trace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct HarnessId(pub u32);
+
+/// A process exit observed during tick settlement.
+#[derive(Debug, PartialEq, Eq)]
+pub struct TraceEvent {
+    /// Mock time (ms since epoch) at which the exit was observed.
+    pub t: u64,
+    /// Which process exited (harness-assigned, not OS PID).
+    pub process: HarnessId,
+    /// Raw stdout from the process.
+    pub stdout: Vec<u8>,
+    /// Raw stderr from the process.
+    pub stderr: Vec<u8>,
+    /// Process exit code.
+    pub exit_code: i32,
+}
+
+// ---------------------------------------------------------------------------
+// Internal types
+// ---------------------------------------------------------------------------
+
+/// A background child process tracked by the harness.
+struct TrackedChild {
+    harness_id: HarnessId,
+    child: Child,
+}
+
+/// Shared state between the accept thread and the foreground test thread.
 struct SharedState {
     /// Connected processes, keyed by PID. Writable by the accept thread
     /// (insert) and the foreground thread (broadcast writes, dead removal).
@@ -90,8 +128,8 @@ struct Connection {
 // TestHarness
 // ---------------------------------------------------------------------------
 
-/// E2E test fixture: spawns a daemon in test mode with an isolated cache
-/// dir, provides helpers to invoke CLI commands and assert on outputs.
+/// E2E test fixture: spawns processes in test mode with an isolated cache
+/// dir, advances mock time, and observes process exits as trace events.
 pub struct TestHarness {
     /// Path to the `attend` binary under test.
     binary: Utf8PathBuf,
@@ -101,6 +139,12 @@ pub struct TestHarness {
     cache_path: Utf8PathBuf,
     /// Shared state with the background accept thread.
     shared: Arc<(Mutex<SharedState>, Condvar)>,
+    /// Next harness-assigned process ID (sequential, deterministic).
+    next_id: u32,
+    /// Current mock time (ms since epoch). Starts at 0.
+    mock_time_ms: u64,
+    /// Background children not yet exited, keyed by OS PID.
+    children: HashMap<u32, TrackedChild>,
 }
 
 impl TestHarness {
@@ -140,6 +184,9 @@ impl TestHarness {
             _cache_dir: cache_dir,
             cache_path,
             shared,
+            next_id: 0,
+            mock_time_ms: 0,
+            children: HashMap::new(),
         }
     }
 
@@ -148,296 +195,121 @@ impl TestHarness {
         &self.cache_path
     }
 
-    // -----------------------------------------------------------------------
-    // CLI command helpers
-    // -----------------------------------------------------------------------
-
-    /// Spawn an attend subcommand, wait for it to connect to the inject
-    /// socket, then tick time until it exits.
-    fn run_command(&mut self, args: &[&str]) -> Output {
-        self.run_command_await_daemon(args, false)
+    /// The path to the `attend` binary under test.
+    pub fn binary(&self) -> &Utf8Path {
+        &self.binary
     }
 
-    /// Like `run_command`, but also waits for a daemon to connect if
-    /// `await_daemon` is true (for toggle/start which spawn the daemon).
-    fn run_command_await_daemon(&mut self, args: &[&str], await_daemon: bool) -> Output {
-        let child = self.spawn_command(args);
+    // -----------------------------------------------------------------------
+    // Spawn (all processes are background)
+    // -----------------------------------------------------------------------
+
+    /// Spawn an attend subcommand as a background child.
+    ///
+    /// Waits for the child's PID to connect to the inject socket before
+    /// returning. If this is a daemon-spawning command (`narrate toggle`
+    /// or `narrate start`) and no daemon is currently connected, also
+    /// waits for the daemon to connect.
+    ///
+    /// The child is tracked until it exits. Its exit will be observed by
+    /// [`advance_time`](Self::advance_time) or
+    /// [`collect_exits`](Self::collect_exits) as a [`TraceEvent`].
+    pub fn spawn(&mut self, args: &[&str]) -> HarnessId {
+        let mut child = self.spawn_command(args);
+        drop(child.stdin.take()); // Close stdin (no input needed).
+
         let pid = child.id();
+        let id = HarnessId(self.next_id);
+        self.next_id += 1;
+
         self.wait_for_pid(pid);
-        self.wait_child_ticking(child, await_daemon)
+
+        // Daemon-spawning commands fork the daemon as a detached grandchild.
+        // Wait for it to connect before returning so subsequent time
+        // advances reach both the daemon and the CLI command.
+        let spawns_daemon = !self.has_daemon()
+            && args.len() >= 2
+            && args[0] == "narrate"
+            && (args[1] == "toggle" || args[1] == "start");
+        if spawns_daemon {
+            self.wait_for_daemon();
+        }
+
+        self.children.insert(
+            pid,
+            TrackedChild {
+                harness_id: id,
+                child,
+            },
+        );
+        id
     }
 
-    /// Spawn an attend subcommand as a child process.
-    fn spawn_command(&self, args: &[&str]) -> Child {
-        let mut cmd = Command::new(self.binary.as_str());
-        cmd.args(args);
-        cmd.env("ATTEND_TEST_MODE", "1");
-        cmd.env("ATTEND_CACHE_DIR", self.cache_path.as_str());
-        cmd.stdin(Stdio::piped());
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
-        cmd.spawn()
-            .unwrap_or_else(|e| panic!("failed to spawn {:?}: {e}", args))
-    }
-
-    /// Spawn a command with stdin data, wait for connect, tick until exit.
-    fn run_command_with_stdin(&mut self, args: &[&str], stdin_data: &str) -> Output {
+    /// Spawn an attend subcommand with stdin data as a background child.
+    ///
+    /// Writes `stdin_data` to the child's stdin pipe and closes it before
+    /// waiting for the child to connect. The process reads stdin after
+    /// connecting to the inject socket (during hook processing), so the
+    /// data is already in the pipe buffer by that point.
+    pub fn spawn_with_stdin(&mut self, args: &[&str], stdin_data: &[u8]) -> HarnessId {
         let mut child = self.spawn_command(args);
 
-        // Write stdin and close it before waiting for connect.
-        // The process reads stdin after connecting to the inject socket
-        // (during hook processing), so the data must be in the pipe buffer.
         if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(stdin_data.as_bytes())
-                .expect("failed to write stdin");
+            stdin.write_all(stdin_data).expect("failed to write stdin");
             // Drop closes the pipe, signaling EOF.
         }
 
         let pid = child.id();
+        let id = HarnessId(self.next_id);
+        self.next_id += 1;
+
         self.wait_for_pid(pid);
-        self.wait_child_ticking(child, false)
+
+        self.children.insert(
+            pid,
+            TrackedChild {
+                harness_id: id,
+                child,
+            },
+        );
+        id
     }
 
-    /// Wait for a child process to exit, advancing mock time in small
-    /// increments so all processes (daemon + CLI) can make progress.
-    ///
-    /// If `await_daemon` is true, also waits for a daemon connection
-    /// before returning. This handles commands like `toggle`/`start`
-    /// that spawn the daemon as a detached grandchild — the daemon
-    /// needs wall-clock time to initialize and connect, and the
-    /// `yield_now()` between ticks provides that.
-    ///
-    /// Will be replaced by the all-background execution model (Phase 0
-    /// item 6), where processes are spawned into the background and exits
-    /// are observed during tick settlement.
-    fn wait_child_ticking(&mut self, child: Child, await_daemon: bool) -> Output {
-        let pid = child.id();
-        let start = std::time::Instant::now();
-        let mut child = Some(child);
-        let mut output: Option<Output> = None;
+    // -----------------------------------------------------------------------
+    // Time and injection
+    // -----------------------------------------------------------------------
 
-        loop {
-            if let Some(ref mut c) = child {
-                match c.try_wait() {
-                    Ok(Some(status)) => {
-                        output = Some(collect_output(child.take().unwrap(), status));
-                        self.remove_connection(pid);
-                    }
-                    Ok(None) => {}
-                    Err(e) => panic!("try_wait failed for PID {pid}: {e}"),
+    /// Advance the mock clock and collect process exits.
+    ///
+    /// Sends `AdvanceTime` to all connected processes and waits for ACK
+    /// (or connection drop) from each. Then checks all background children
+    /// for exits via `try_wait()`. Returns trace events for any children
+    /// that exited during this tick.
+    pub fn advance_time(&mut self, duration_ms: u64) -> Vec<TraceEvent> {
+        self.mock_time_ms += duration_ms;
+
+        // Phase 0: pre-remove connections for children that exited between
+        // ticks. Without this, the write may succeed (kernel-buffered) but
+        // the subsequent read_line blocks for ACK_TIMEOUT (10s) waiting
+        // for an ACK that will never arrive.
+        let mut pre_dead = Vec::new();
+        for (&pid, tracked) in &mut self.children {
+            match tracked.child.try_wait() {
+                Ok(Some(_)) => pre_dead.push(pid),
+                _ => {}
+            }
+        }
+        if !pre_dead.is_empty() {
+            let (lock, _) = &*self.shared;
+            let mut state = lock.lock().unwrap();
+            for &pid in &pre_dead {
+                state.connections.remove(&pid);
+                if state.daemon_pid == Some(pid) {
+                    state.daemon_pid = None;
                 }
             }
-
-            // Done when child has exited and daemon requirement is met.
-            if output.is_some() && (!await_daemon || self.has_daemon()) {
-                return output.unwrap();
-            }
-
-            // Advance mock time so processes blocked on MockClock::sleep()
-            // can make progress. yield_now() gives the daemon subprocess
-            // wall-clock time to start and connect.
-            self.advance_time(TICK_MS);
-            std::thread::yield_now();
-
-            if start.elapsed() > COMMAND_TIMEOUT {
-                panic!(
-                    "child PID {pid} did not exit (or daemon did not connect) \
-                     after {:.1?} wall-clock",
-                    start.elapsed()
-                );
-            }
         }
-    }
 
-    /// Toggle recording (start if idle, stop if recording).
-    pub fn toggle(&mut self) -> Output {
-        let expect_daemon = !self.has_daemon();
-        self.run_command_await_daemon(&["narrate", "toggle"], expect_daemon)
-    }
-
-    /// Start recording, or finalize and resume if already recording.
-    pub fn start(&mut self) -> Output {
-        let expect_daemon = !self.has_daemon();
-        self.run_command_await_daemon(&["narrate", "start"], expect_daemon)
-    }
-
-    /// Stop recording.
-    pub fn stop(&mut self) -> Output {
-        self.run_command(&["narrate", "stop"])
-    }
-
-    /// Pause/resume recording.
-    pub fn pause(&mut self) -> Output {
-        self.run_command(&["narrate", "pause"])
-    }
-
-    /// Yank (finalize + copy to clipboard).
-    pub fn yank(&mut self) -> Output {
-        self.run_command(&["narrate", "yank"])
-    }
-
-    /// Query daemon status. Returns the raw stdout.
-    pub fn status(&mut self) -> String {
-        let output = self.run_command(&["narrate", "status"]);
-        String::from_utf8(output.stdout).expect("non-UTF-8 status output")
-    }
-
-    /// Send a browser selection event via the native messaging bridge.
-    ///
-    /// Invokes `attend browser-bridge` with native-messaging-formatted
-    /// stdin (4-byte LE length prefix + JSON).
-    pub fn browser_event(&mut self, url: &str, title: &str, html: &str, plain_text: &str) {
-        let msg = serde_json::json!({
-            "url": url,
-            "title": title,
-            "html": html,
-            "plain_text": plain_text,
-        });
-        let json_bytes = serde_json::to_vec(&msg).expect("failed to serialize browser event");
-        let len = json_bytes.len() as u32;
-
-        let mut stdin_data = Vec::with_capacity(4 + json_bytes.len());
-        stdin_data.extend_from_slice(&len.to_le_bytes());
-        stdin_data.extend_from_slice(&json_bytes);
-
-        let mut child = self.spawn_command(&["browser-bridge"]);
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(&stdin_data)
-                .expect("failed to write native messaging stdin");
-        }
-        let pid = child.id();
-        self.wait_for_pid(pid);
-        let output = self.wait_child_ticking(child, false);
-        assert!(
-            output.status.success(),
-            "browser-bridge failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    /// Send a shell command event (postexec: command completed).
-    ///
-    /// Invokes `attend shell-hook postexec` with the given parameters.
-    pub fn shell_event(
-        &mut self,
-        shell: &str,
-        command: &str,
-        exit_status: i32,
-        duration_secs: f64,
-    ) {
-        let output = self.run_command(&[
-            "shell-hook",
-            "postexec",
-            "--shell",
-            shell,
-            "--command",
-            command,
-            "--exit-status",
-            &exit_status.to_string(),
-            "--duration",
-            &duration_secs.to_string(),
-        ]);
-        assert!(
-            output.status.success(),
-            "shell-hook failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // Hook helpers
-    // -----------------------------------------------------------------------
-
-    /// Activate a narration session (simulates the `/attend` user prompt hook).
-    pub fn activate_session(&mut self, session_id: &str) -> Output {
-        let stdin = serde_json::json!({
-            "session_id": session_id,
-            "cwd": self.cache_path.as_str(),
-            "prompt": "/attend",
-        });
-        self.run_command_with_stdin(
-            &["hook", "user-prompt", "-a", "claude"],
-            &serde_json::to_string(&stdin).unwrap(),
-        )
-    }
-
-    /// Deactivate a narration session (simulates `/unattend` user prompt).
-    pub fn deactivate_session(&mut self, session_id: &str) -> Output {
-        let stdin = serde_json::json!({
-            "session_id": session_id,
-            "cwd": self.cache_path.as_str(),
-            "prompt": "/unattend",
-        });
-        self.run_command_with_stdin(
-            &["hook", "user-prompt", "-a", "claude"],
-            &serde_json::to_string(&stdin).unwrap(),
-        )
-    }
-
-    /// Collect pending narration via the PreToolUse hook.
-    ///
-    /// Invokes `attend hook pre-tool-use -a claude` with stdin JSON
-    /// simulating an `attend listen` Bash command. Returns the raw stdout.
-    pub fn collect(&mut self, session_id: &str) -> String {
-        let stdin = serde_json::json!({
-            "session_id": session_id,
-            "cwd": self.cache_path.as_str(),
-            "tool_name": "Bash",
-            "tool_input": {
-                "command": format!("{} listen --wait --session {}", self.binary, session_id),
-            },
-        });
-        let output = self.run_command_with_stdin(
-            &["hook", "pre-tool-use", "-a", "claude"],
-            &serde_json::to_string(&stdin).unwrap(),
-        );
-        String::from_utf8(output.stdout).expect("non-UTF-8 hook output")
-    }
-
-    /// Fire a PreToolUse hook for a non-listen tool.
-    pub fn fire_pre_tool_use(&mut self, session_id: &str) -> String {
-        let stdin = serde_json::json!({
-            "session_id": session_id,
-            "cwd": self.cache_path.as_str(),
-            "tool_name": "Read",
-            "tool_input": {
-                "file_path": "/tmp/example.rs",
-            },
-        });
-        let output = self.run_command_with_stdin(
-            &["hook", "pre-tool-use", "-a", "claude"],
-            &serde_json::to_string(&stdin).unwrap(),
-        );
-        String::from_utf8(output.stdout).expect("non-UTF-8 hook output")
-    }
-
-    /// Start `attend listen` as a background process.
-    pub fn listen(&mut self, session_id: &str) -> Child {
-        let child = self.spawn_command(&["listen", "--wait", "--session", session_id]);
-        let pid = child.id();
-        self.wait_for_pid(pid);
-        child
-    }
-
-    /// Wait for a previously spawned child to exit, ticking time.
-    pub fn wait_child(&mut self, child: Child) -> Output {
-        self.wait_child_ticking(child, false)
-    }
-
-    // -----------------------------------------------------------------------
-    // Injection helpers (broadcast to all connected processes)
-    // -----------------------------------------------------------------------
-
-    /// Advance the mock clock for all connected processes and wait for
-    /// each to confirm settlement (ACK protocol).
-    ///
-    /// Sends `AdvanceTime` to every connection, then reads one ACK line
-    /// from each. A read error or EOF means the process exited during
-    /// the tick (implicit ACK). Only returns once all processes have
-    /// settled — ensuring lockstep execution across OS processes.
-    pub fn advance_time(&mut self, duration_ms: u64) {
         let msg = Inject::Time(TimeInject::AdvanceTime { duration_ms });
         let json = serde_json::to_string(&msg).expect("failed to serialize AdvanceTime");
         let line = format!("{json}\n");
@@ -482,6 +354,11 @@ impl TestHarness {
                 state.daemon_pid = None;
             }
         }
+
+        drop(state); // Release lock before collect_exits.
+
+        // Phase 3: collect exits from background children.
+        self.collect_exits(self.mock_time_ms)
     }
 
     /// Inject speech into the daemon's stub transcriber.
@@ -518,8 +395,96 @@ impl TestHarness {
     }
 
     // -----------------------------------------------------------------------
+    // Observation
+    // -----------------------------------------------------------------------
+
+    /// Check all background children for exits.
+    ///
+    /// Returns trace events for any children that exited since the last
+    /// check. The timestamp `t` is attached to all returned events (it
+    /// should be the current mock time).
+    pub fn collect_exits(&mut self, t: u64) -> Vec<TraceEvent> {
+        let mut exited = Vec::new();
+        for (&pid, tracked) in &mut self.children {
+            match tracked.child.try_wait() {
+                Ok(Some(status)) => exited.push((pid, status)),
+                Ok(None) => {}
+                Err(e) => panic!("try_wait failed for PID {pid}: {e}"),
+            }
+        }
+
+        let mut events = Vec::new();
+        for (pid, status) in exited {
+            let tracked = self.children.remove(&pid).unwrap();
+            let output = collect_output(tracked.child, status);
+            self.remove_connection(pid);
+            events.push(TraceEvent {
+                t,
+                process: tracked.harness_id,
+                stdout: output.stdout,
+                stderr: output.stderr,
+                exit_code: status.code().unwrap_or(-1),
+            });
+        }
+
+        events
+    }
+
+    /// Advance time in [`TICK_MS`] increments until a specific process exits.
+    ///
+    /// Returns the exit event for the target process. Events from other
+    /// processes that exit during the ticks are discarded (their children
+    /// are still properly cleaned up).
+    ///
+    /// Panics if the process doesn't exit within [`COMMAND_TIMEOUT`]
+    /// wall-clock seconds.
+    pub fn tick_until_exit(&mut self, id: HarnessId) -> TraceEvent {
+        let start = std::time::Instant::now();
+        loop {
+            let events = self.advance_time(TICK_MS);
+            for event in events {
+                if event.process == id {
+                    return event;
+                }
+            }
+
+            // Verify the target is still tracked (hasn't already exited
+            // in an earlier advance_time call that the caller ignored).
+            if !self.children.values().any(|tc| tc.harness_id == id) {
+                panic!("{id:?} is not a tracked child (already exited or never spawned)");
+            }
+
+            if start.elapsed() > COMMAND_TIMEOUT {
+                panic!(
+                    "timed out waiting for {id:?} to exit after {:.1?} wall-clock",
+                    start.elapsed()
+                );
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Shared state access
     // -----------------------------------------------------------------------
+
+    /// Check whether a daemon is connected.
+    pub fn has_daemon(&self) -> bool {
+        let (lock, _) = &*self.shared;
+        lock.lock().unwrap().daemon_pid.is_some()
+    }
+
+    /// Spawn an attend subcommand as a child process (internal).
+    fn spawn_command(&self, args: &[&str]) -> Child {
+        let mut cmd = Command::new(self.binary.as_str());
+        cmd.args(args);
+        cmd.env("ATTEND_TEST_MODE", "1");
+        cmd.env("ATTEND_CACHE_DIR", self.cache_path.as_str());
+        cmd.stdin(Stdio::piped());
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+        cmd.spawn()
+            .unwrap_or_else(|e| panic!("failed to spawn {:?}: {e}", args))
+    }
 
     /// Block until a specific PID connects to the inject socket.
     fn wait_for_pid(&self, target_pid: u32) {
@@ -538,10 +503,16 @@ impl TestHarness {
         }
     }
 
-    /// Check whether a daemon is connected.
-    fn has_daemon(&self) -> bool {
-        let (lock, _) = &*self.shared;
-        lock.lock().unwrap().daemon_pid.is_some()
+    /// Block until a daemon process connects to the inject socket.
+    fn wait_for_daemon(&self) {
+        let (lock, cvar) = &*self.shared;
+        let guard = lock.lock().unwrap();
+        let (_guard, timeout) = cvar
+            .wait_timeout_while(guard, CONNECT_TIMEOUT, |state| state.daemon_pid.is_none())
+            .unwrap();
+        if timeout.timed_out() {
+            panic!("timed out waiting for daemon to connect");
+        }
     }
 
     /// Remove a connection (process has exited).
@@ -665,7 +636,14 @@ fn collect_output(mut child: Child, status: ExitStatus) -> Output {
 
 impl Drop for TestHarness {
     fn drop(&mut self) {
-        // Send SIGTERM to the daemon if it's still running.
+        // Kill all tracked children (ephemeral CLI commands still running).
+        for (_, tracked) in &mut self.children {
+            let _ = tracked.child.kill();
+        }
+
+        // Send SIGTERM to the daemon if it's still running. The daemon is
+        // a grandchild (not in `self.children`) — it's tracked via the
+        // inject socket connection, so we signal it by PID.
         let (lock, _) = &*self.shared;
         if let Some(pid) = lock.lock().unwrap().daemon_pid {
             let _ = nix::sys::signal::kill(

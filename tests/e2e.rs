@@ -4,6 +4,10 @@
 //! subprocesses, and assert on observable outputs. Each test gets a
 //! fresh isolated cache directory and inject socket.
 //!
+//! All processes are background: the harness spawns them, advances mock
+//! time, and observes exits as trace events. No blocking waits for
+//! specific children — this is the all-background execution model.
+//!
 //! Run with: `cargo nextest run --test e2e`
 
 use attend_test_harness::TestHarness;
@@ -13,21 +17,69 @@ fn binary() -> String {
     env!("CARGO_BIN_EXE_attend").to_string()
 }
 
+/// Build activate-session hook stdin JSON.
+fn activate_json(session_id: &str, cwd: &str) -> String {
+    serde_json::json!({
+        "session_id": session_id,
+        "cwd": cwd,
+        "prompt": "/attend",
+    })
+    .to_string()
+}
+
+/// Build collect-narration (pre-tool-use listen) hook stdin JSON.
+fn collect_json(session_id: &str, cwd: &str, binary: &str) -> String {
+    serde_json::json!({
+        "session_id": session_id,
+        "cwd": cwd,
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": format!("{binary} listen --wait --session {session_id}"),
+        },
+    })
+    .to_string()
+}
+
+/// Activate a session via the user-prompt hook and wait for it to exit.
+fn activate(h: &mut TestHarness, session_id: &str) {
+    let cwd = h.cache_dir().to_owned();
+    let id = h.spawn_with_stdin(
+        &["hook", "user-prompt", "-a", "claude"],
+        activate_json(session_id, cwd.as_str()).as_bytes(),
+    );
+    h.tick_until_exit(id);
+}
+
+/// Collect pending narration via the pre-tool-use hook and return stdout.
+fn collect(h: &mut TestHarness, session_id: &str) -> String {
+    let cwd = h.cache_dir().to_owned();
+    let bin = h.binary().to_owned();
+    let id = h.spawn_with_stdin(
+        &["hook", "pre-tool-use", "-a", "claude"],
+        collect_json(session_id, cwd.as_str(), bin.as_str()).as_bytes(),
+    );
+    let event = h.tick_until_exit(id);
+    String::from_utf8(event.stdout).expect("non-UTF-8 hook output")
+}
+
 /// Start recording, inject speech, stop, collect: the delivered
 /// narration should contain the injected words.
 #[test]
 fn start_speak_stop_collect() {
     let mut h = TestHarness::new(binary());
 
-    h.activate_session("sess-1");
-    h.toggle();
+    activate(&mut h, "sess-1");
+
+    let toggle_on = h.spawn(&["narrate", "toggle"]);
+    h.tick_until_exit(toggle_on);
 
     h.inject_speech("hello world from the harness", 2000);
     h.advance_time(500);
 
-    h.toggle();
+    let toggle_off = h.spawn(&["narrate", "toggle"]);
+    h.tick_until_exit(toggle_off);
 
-    let narration = h.collect("sess-1");
+    let narration = collect(&mut h, "sess-1");
     assert!(
         narration.contains("hello world from the harness"),
         "narration should contain injected speech:\n{narration}"
@@ -35,34 +87,33 @@ fn start_speak_stop_collect() {
 }
 
 /// Status reports that the daemon is recording, then idle after stop.
-///
-/// Flaky: `narrate status` has 0 mock-clock waiters (purely synchronous),
-/// so ACK-based ticks complete in microseconds. `yield_now()` between ticks
-/// doesn't reliably give the daemon subprocess enough wall-clock time to
-/// start and connect before the toggle command exits. The all-background
-/// execution model (Phase 0 item 6) eliminates this class of race by
-/// replacing `wait_child_ticking` with tick-settle-observe.
 #[test]
-#[ignore = "flaky: daemon startup races wait_child_ticking scheduling"]
 fn status_shows_recording_state() {
     let mut h = TestHarness::new(binary());
 
-    h.activate_session("sess-2");
-    h.toggle();
+    activate(&mut h, "sess-2");
+
+    let toggle_on = h.spawn(&["narrate", "toggle"]);
+    h.tick_until_exit(toggle_on);
     h.advance_time(500);
 
-    let status = h.status();
+    let status = h.spawn(&["narrate", "status"]);
+    let event = h.tick_until_exit(status);
+    let output = String::from_utf8(event.stdout).expect("non-UTF-8 output");
     assert!(
-        status.contains("Recording") || status.contains("recording"),
-        "status should indicate recording:\n{status}"
+        output.contains("Recording") || output.contains("recording"),
+        "status should indicate recording:\n{output}"
     );
 
-    h.toggle();
+    let toggle_off = h.spawn(&["narrate", "toggle"]);
+    h.tick_until_exit(toggle_off);
 
-    let status = h.status();
+    let status = h.spawn(&["narrate", "status"]);
+    let event = h.tick_until_exit(status);
+    let output = String::from_utf8(event.stdout).expect("non-UTF-8 output");
     assert!(
-        !status.contains("recording"),
-        "status should not indicate recording after stop:\n{status}"
+        !output.contains("recording"),
+        "status should not indicate recording after stop:\n{output}"
     );
 }
 
@@ -73,19 +124,34 @@ fn status_shows_recording_state() {
 fn shell_event_appears_in_narration() {
     let mut h = TestHarness::new(binary());
 
-    h.activate_session("sess-3");
-    h.toggle();
+    activate(&mut h, "sess-3");
+
+    let toggle_on = h.spawn(&["narrate", "toggle"]);
+    h.tick_until_exit(toggle_on);
     h.advance_time(500);
 
-    h.shell_event("fish", "cargo test", 0, 1.5);
+    let shell = h.spawn(&[
+        "shell-hook",
+        "postexec",
+        "--shell",
+        "fish",
+        "--command",
+        "cargo test",
+        "--exit-status",
+        "0",
+        "--duration",
+        "1.5",
+    ]);
+    h.tick_until_exit(shell);
     h.advance_time(500);
 
     h.inject_speech("some words", 500);
     h.advance_time(500);
 
-    h.toggle();
+    let toggle_off = h.spawn(&["narrate", "toggle"]);
+    h.tick_until_exit(toggle_off);
 
-    let narration = h.collect("sess-3");
+    let narration = collect(&mut h, "sess-3");
     // The shell event appears either with full content or as a ✂ marker
     // (depends on whether the test runner's cwd is within the hook's scope).
     assert!(
@@ -99,17 +165,20 @@ fn shell_event_appears_in_narration() {
 fn multiple_speech_injections() {
     let mut h = TestHarness::new(binary());
 
-    h.activate_session("sess-5");
-    h.toggle();
+    activate(&mut h, "sess-5");
+
+    let toggle_on = h.spawn(&["narrate", "toggle"]);
+    h.tick_until_exit(toggle_on);
 
     h.inject_speech("first utterance", 1000);
     h.advance_time(500);
     h.inject_speech("second utterance", 1000);
     h.advance_time(500);
 
-    h.toggle();
+    let toggle_off = h.spawn(&["narrate", "toggle"]);
+    h.tick_until_exit(toggle_off);
 
-    let narration = h.collect("sess-5");
+    let narration = collect(&mut h, "sess-5");
     assert!(
         narration.contains("first utterance"),
         "narration should contain first utterance:\n{narration}"
@@ -125,9 +194,9 @@ fn multiple_speech_injections() {
 fn collect_empty_when_no_narration() {
     let mut h = TestHarness::new(binary());
 
-    h.activate_session("sess-6");
+    activate(&mut h, "sess-6");
 
-    let narration = h.collect("sess-6");
+    let narration = collect(&mut h, "sess-6");
     assert!(
         !narration.contains("<narration>"),
         "no narration content should be delivered:\n{narration}"

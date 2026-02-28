@@ -9,10 +9,12 @@
 //!   in external applications (e.g. iTerm2, Safari).
 //! - [`clipboard_capture`]: polls the system clipboard for text/image changes.
 //!
-//! Clipboard polling is managed separately: the thread is killed on pause
-//! and a fresh one is spawned on resume. This avoids a race where clipboard
-//! changes made while paused (e.g. yank copying rendered narration) would
-//! be captured as events in the next recording period.
+//! All threads (including clipboard) stay alive during pause, sleeping
+//! with a slow poll interval. This is required so `MockClock::advance_and_settle`
+//! can track all threads: a thread that exits its sleep loop without re-entering
+//! breaks settlement tracking. On resume, the clipboard thread re-seeds its
+//! tracker from the current clipboard content, so changes made during pause
+//! (e.g. yank copying rendered narration) aren't captured as events.
 //!
 //! All platform dependencies are behind traits ([`EditorStateSource`],
 //! [`ExternalSource`], [`ClipboardSource`]) so tests can substitute stubs.
@@ -42,9 +44,8 @@ pub(crate) struct CaptureConfig {
     pub editor_source: Box<dyn EditorStateSource>,
     /// External selection source, or `None` if unavailable.
     pub ext_source: Option<Box<dyn ExternalSource>>,
-    /// Factory for clipboard sources. Called on each resume (clipboard thread
-    /// is killed on pause and a fresh one spawned on resume).
-    pub clipboard_factory: Box<dyn Fn() -> Option<Box<dyn ClipboardSource>> + Send>,
+    /// Clipboard source, or `None` if unavailable. Used once at startup.
+    pub clipboard_source: Option<Box<dyn ClipboardSource>>,
 }
 
 impl CaptureConfig {
@@ -54,10 +55,8 @@ impl CaptureConfig {
             clock,
             editor_source: Box::new(super::editor_capture::RealEditorSource),
             ext_source: super::ext_capture::platform_source(),
-            clipboard_factory: Box::new(|| {
-                super::clipboard_capture::ArboardClipboardSource::new()
-                    .map(|s| Box::new(s) as Box<dyn ClipboardSource>)
-            }),
+            clipboard_source: super::clipboard_capture::ArboardClipboardSource::new()
+                .map(|s| Box::new(s) as Box<dyn ClipboardSource>),
         }
     }
 
@@ -77,18 +76,13 @@ impl CaptureConfig {
         let ext_snapshot = Arc::clone(&router.ext_snapshot);
         let clipboard_text = Arc::clone(&router.clipboard_text);
 
-        let clipboard_for_factory = Arc::clone(&clipboard_text);
-
         let config = Self {
             clock,
             editor_source: Box::new(StubEditorSource::new(editor_state)),
             ext_source: Some(Box::new(StubExternalSource::new(ext_snapshot))),
-            clipboard_factory: Box::new(move || {
-                Some(
-                    Box::new(StubClipboardSource::new(Arc::clone(&clipboard_for_factory)))
-                        as Box<dyn ClipboardSource>,
-                )
-            }),
+            clipboard_source: Some(
+                Box::new(StubClipboardSource::new(clipboard_text)) as Box<dyn ClipboardSource>
+            ),
         };
 
         let stub_transcriber = crate::test_mode::take_stub_transcriber();
@@ -100,6 +94,10 @@ impl CaptureConfig {
 pub(crate) struct CaptureHandle {
     stop_flag: Arc<AtomicBool>,
     paused_flag: Arc<AtomicBool>,
+    /// Set on resume: tells the clipboard thread to re-seed its tracker
+    /// from the current clipboard content, so changes during pause aren't
+    /// captured as events in the next recording period.
+    clipboard_reseed: Arc<AtomicBool>,
     editor_events: Arc<Mutex<Vec<Event>>>,
     diff_events: Arc<Mutex<Vec<Event>>>,
     ext_events: Arc<Mutex<Vec<Event>>>,
@@ -107,36 +105,28 @@ pub(crate) struct CaptureHandle {
     editor_thread: Option<thread::JoinHandle<()>>,
     diff_thread: Option<thread::JoinHandle<()>>,
     ext_thread: Option<thread::JoinHandle<()>>,
-
-    // Clipboard thread has its own lifecycle: killed on pause, respawned on
-    // resume, so that each recording period seeds from the current clipboard
-    // and never observes changes made while paused.
-    clipboard_stop: Arc<AtomicBool>,
     clipboard_thread: Option<thread::JoinHandle<()>>,
-    clipboard_enabled: bool,
-    clipboard_staging_dir: Utf8PathBuf,
-    clipboard_factory: Box<dyn Fn() -> Option<Box<dyn ClipboardSource>> + Send>,
-    clock: Arc<dyn Clock>,
 }
 
 impl CaptureHandle {
     /// Pause all capture threads.
     ///
-    /// Editor, diff, and ext threads enter a sleep loop via the shared
-    /// paused flag. The clipboard thread is stopped outright and its join
-    /// handle released — a fresh thread is spawned on [`resume`](Self::resume).
+    /// All threads (editor, diff, ext, clipboard) enter a sleep loop
+    /// via the shared paused flag. No threads are stopped — they stay
+    /// alive so `MockClock::advance_and_settle` can track them.
     pub fn pause(&mut self) {
         self.paused_flag.store(true, Ordering::Relaxed);
-        self.stop_clipboard();
     }
 
     /// Resume all capture threads.
     ///
-    /// Clears the shared paused flag for editor/diff/ext and spawns a
-    /// fresh clipboard polling thread that seeds from the current clipboard.
+    /// Clears the shared paused flag. Sets the clipboard reseed flag so
+    /// the clipboard thread treats the current clipboard content as its
+    /// baseline — changes made during pause (e.g. yank copying rendered
+    /// narration) won't appear as events in the next recording period.
     pub fn resume(&mut self) {
+        self.clipboard_reseed.store(true, Ordering::Relaxed);
         self.paused_flag.store(false, Ordering::Relaxed);
-        self.spawn_clipboard();
     }
 
     /// Drain accumulated events without stopping threads.
@@ -151,7 +141,6 @@ impl CaptureHandle {
     /// Signal stop and collect remaining results.
     pub fn collect(mut self) -> (Vec<Event>, Vec<Event>, Vec<Event>, Vec<Event>) {
         self.stop_flag.store(true, Ordering::Relaxed);
-        self.stop_clipboard();
 
         // Intentionally ignored: thread panics are non-recoverable here.
         if let Some(h) = self.editor_thread.take() {
@@ -163,35 +152,11 @@ impl CaptureHandle {
         if let Some(h) = self.ext_thread.take() {
             let _ = h.join();
         }
-
-        self.drain()
-    }
-
-    /// Stop the clipboard polling thread and join it.
-    fn stop_clipboard(&mut self) {
-        self.clipboard_stop.store(true, Ordering::Relaxed);
         if let Some(h) = self.clipboard_thread.take() {
             let _ = h.join();
         }
-    }
 
-    /// Spawn a fresh clipboard polling thread with a new stop flag.
-    fn spawn_clipboard(&mut self) {
-        if !self.clipboard_enabled {
-            return;
-        }
-        let Some(source) = (self.clipboard_factory)() else {
-            return;
-        };
-        let stop = Arc::new(AtomicBool::new(false));
-        self.clipboard_stop = Arc::clone(&stop);
-        self.clipboard_thread = super::clipboard_capture::spawn(
-            source,
-            Arc::clone(&self.clock),
-            stop,
-            Arc::clone(&self.clipboard_events),
-            self.clipboard_staging_dir.clone(),
-        );
+        self.drain()
     }
 }
 
@@ -252,13 +217,15 @@ pub(crate) fn start(
         None
     };
 
-    let clipboard_stop = Arc::new(AtomicBool::new(false));
+    let clipboard_reseed = Arc::new(AtomicBool::new(false));
     let clipboard_thread = if clipboard_capture {
-        if let Some(source) = (config.clipboard_factory)() {
+        if let Some(source) = config.clipboard_source {
             super::clipboard_capture::spawn(
                 source,
                 Arc::clone(&config.clock),
-                Arc::clone(&clipboard_stop),
+                Arc::clone(&stop_flag),
+                Arc::clone(&paused_flag),
+                Arc::clone(&clipboard_reseed),
                 Arc::clone(&clipboard_events),
                 clipboard_staging_dir.clone(),
             )
@@ -272,6 +239,7 @@ pub(crate) fn start(
     Ok(CaptureHandle {
         stop_flag,
         paused_flag,
+        clipboard_reseed,
         editor_events,
         diff_events,
         ext_events,
@@ -279,11 +247,6 @@ pub(crate) fn start(
         editor_thread: Some(editor_thread),
         diff_thread: Some(diff_thread),
         ext_thread,
-        clipboard_stop,
         clipboard_thread,
-        clipboard_enabled: clipboard_capture,
-        clipboard_staging_dir,
-        clipboard_factory: config.clipboard_factory,
-        clock: config.clock,
     })
 }
