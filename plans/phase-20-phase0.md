@@ -26,7 +26,7 @@ and the test harness that were designed after items 4-5 landed:
 - [x] `Connection` gains a reader for ACK messages — `bf748a2`
 - [x] `Inject` split into `CaptureInject` + `TimeInject` (type-level
   enforcement: `broadcast_capture()` cannot send `AdvanceTime`) — `bf748a2`
-- [x] `MockClock::wait_for_waiters()` uses condvar (not spin) — `bf748a2`
+- [x] `MockClock` uses deadline-based settlement with condvar — `3235e09`
 - [ ] `TestHarness` switches to all-background execution model
 - [ ] `HarnessId` replaces OS PIDs in trace output
 
@@ -34,13 +34,27 @@ The checked items were completed as a prerequisite for item 6. The
 remaining items will be implemented as part of item 6 itself. See
 [testing doc](phase-20-testing.md) for the full spec.
 
-- [x] `wait_child_ticking` uses wall-clock timeout (not mock-time timeout) — `de32820`
+**What the all-background execution model must replace:**
 
-**Known issue:** `status_shows_recording_state` e2e test is `#[ignore]`d.
-The daemon's detached-grandchild startup races `wait_child_ticking`'s
-scheduling: `yield_now()` between ACK-based ticks gives insufficient
-wall-clock time for the daemon to connect. The all-background execution
-model will fix this.
+The current `wait_child_ticking` (per-command blocking model) uses
+`yield_now()` between ticks to give subprocesses wall-clock time.
+This is insufficient: the daemon (spawned as a detached grandchild)
+needs milliseconds to start, but ticks complete in microseconds.
+Result: 10s wall-clock delay on every `toggle()`/`start()` call,
+and `status_shows_recording_state` is `#[ignore]`d.
+
+Methods to delete when implementing the all-background model:
+- `wait_child_ticking()` — the per-command blocking loop
+- `run_command()` / `run_command_with_stdin()` — wrappers around it
+- `run_command_await_daemon()` — daemon-aware wrapper
+- `toggle()` / `start()` — use `run_command_await_daemon`
+- All per-command helpers (`stop`, `pause`, `yank`, `status`, etc.)
+  should be replaced with `spawn()` + `advance_time()` + `collect_exits()`
+
+The ACK protocol (`advance_time` with ACK reads, `advance_and_settle`
+on the process side) is correct and stays. The execution model change
+is purely about how the harness orchestrates commands — not about the
+time synchronization mechanism.
 
 ### Bug fixes discovered during implementation
 
