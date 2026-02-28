@@ -155,10 +155,16 @@ impl TestHarness {
     /// Spawn an attend subcommand, wait for it to connect to the inject
     /// socket, then tick time until it exits.
     fn run_command(&mut self, args: &[&str]) -> Output {
+        self.run_command_await_daemon(args, false)
+    }
+
+    /// Like `run_command`, but also waits for a daemon to connect if
+    /// `await_daemon` is true (for toggle/start which spawn the daemon).
+    fn run_command_await_daemon(&mut self, args: &[&str], await_daemon: bool) -> Output {
         let child = self.spawn_command(args);
         let pid = child.id();
         self.wait_for_pid(pid);
-        self.wait_child_ticking(child)
+        self.wait_child_ticking(child, await_daemon)
     }
 
     /// Spawn an attend subcommand as a child process.
@@ -190,50 +196,54 @@ impl TestHarness {
 
         let pid = child.id();
         self.wait_for_pid(pid);
-        self.wait_child_ticking(child)
+        self.wait_child_ticking(child, false)
     }
 
     /// Wait for a child process to exit, advancing mock time in small
     /// increments so all processes (daemon + CLI) can make progress.
     ///
+    /// If `await_daemon` is true, also waits for a daemon connection
+    /// before returning. This handles commands like `toggle`/`start`
+    /// that spawn the daemon as a detached grandchild — the daemon
+    /// needs wall-clock time to initialize and connect, and the
+    /// `yield_now()` between ticks provides that.
+    ///
     /// Will be replaced by the all-background execution model (Phase 0
     /// item 6), where processes are spawned into the background and exits
     /// are observed during tick settlement.
-    fn wait_child_ticking(&mut self, mut child: Child) -> Output {
+    fn wait_child_ticking(&mut self, child: Child, await_daemon: bool) -> Output {
         let pid = child.id();
         let start = std::time::Instant::now();
+        let mut child = Some(child);
+        let mut output: Option<Output> = None;
 
         loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    let output = collect_output(child, status);
-                    self.remove_connection(pid);
-                    return output;
+            if let Some(ref mut c) = child {
+                match c.try_wait() {
+                    Ok(Some(status)) => {
+                        output = Some(collect_output(child.take().unwrap(), status));
+                        self.remove_connection(pid);
+                    }
+                    Ok(None) => {}
+                    Err(e) => panic!("try_wait failed for PID {pid}: {e}"),
                 }
-                Ok(None) => {
-                    // Child still running. Advance mock time so processes
-                    // blocked on MockClock::sleep() can make progress.
-                    // advance_time() blocks until all processes ACK
-                    // settlement, ensuring deterministic behavior.
-                    self.advance_time(TICK_MS);
-                    std::thread::yield_now();
-                }
-                Err(e) => panic!("try_wait failed for PID {pid}: {e}"),
             }
 
+            // Done when child has exited and daemon requirement is met.
+            if output.is_some() && (!await_daemon || self.has_daemon()) {
+                return output.unwrap();
+            }
+
+            // Advance mock time so processes blocked on MockClock::sleep()
+            // can make progress. yield_now() gives the daemon subprocess
+            // wall-clock time to start and connect.
+            self.advance_time(TICK_MS);
+            std::thread::yield_now();
+
             if start.elapsed() > COMMAND_TIMEOUT {
-                let _ = child.kill();
-                let stderr = child
-                    .stderr
-                    .as_mut()
-                    .map(|s| {
-                        let mut buf = Vec::new();
-                        let _ = s.read_to_end(&mut buf);
-                        String::from_utf8_lossy(&buf).to_string()
-                    })
-                    .unwrap_or_default();
                 panic!(
-                    "child PID {pid} did not exit after {:.1?} wall-clock\nstderr: {stderr}",
+                    "child PID {pid} did not exit (or daemon did not connect) \
+                     after {:.1?} wall-clock",
                     start.elapsed()
                 );
             }
@@ -242,22 +252,14 @@ impl TestHarness {
 
     /// Toggle recording (start if idle, stop if recording).
     pub fn toggle(&mut self) -> Output {
-        let had_daemon = self.has_daemon();
-        let output = self.run_command(&["narrate", "toggle"]);
-        if !had_daemon && !self.has_daemon() {
-            self.wait_for_daemon();
-        }
-        output
+        let expect_daemon = !self.has_daemon();
+        self.run_command_await_daemon(&["narrate", "toggle"], expect_daemon)
     }
 
     /// Start recording, or finalize and resume if already recording.
     pub fn start(&mut self) -> Output {
-        let had_daemon = self.has_daemon();
-        let output = self.run_command(&["narrate", "start"]);
-        if !had_daemon && !self.has_daemon() {
-            self.wait_for_daemon();
-        }
-        output
+        let expect_daemon = !self.has_daemon();
+        self.run_command_await_daemon(&["narrate", "start"], expect_daemon)
     }
 
     /// Stop recording.
@@ -307,7 +309,7 @@ impl TestHarness {
         }
         let pid = child.id();
         self.wait_for_pid(pid);
-        let output = self.wait_child_ticking(child);
+        let output = self.wait_child_ticking(child, false);
         assert!(
             output.status.success(),
             "browser-bridge failed: {}",
@@ -421,7 +423,7 @@ impl TestHarness {
 
     /// Wait for a previously spawned child to exit, ticking time.
     pub fn wait_child(&mut self, child: Child) -> Output {
-        self.wait_child_ticking(child)
+        self.wait_child_ticking(child, false)
     }
 
     // -----------------------------------------------------------------------
@@ -533,18 +535,6 @@ impl TestHarness {
                 "timed out waiting for PID {target_pid} to connect (connected: {:?})",
                 guard.connections.keys().collect::<Vec<_>>()
             );
-        }
-    }
-
-    /// Block until a daemon connection arrives.
-    fn wait_for_daemon(&self) {
-        let (lock, cvar) = &*self.shared;
-        let guard = lock.lock().unwrap();
-        let (_guard, timeout) = cvar
-            .wait_timeout_while(guard, CONNECT_TIMEOUT, |state| state.daemon_pid.is_none())
-            .unwrap();
-        if timeout.timed_out() {
-            panic!("timed out waiting for daemon to connect to inject socket");
         }
     }
 
