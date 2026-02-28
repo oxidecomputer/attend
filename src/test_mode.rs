@@ -168,11 +168,12 @@ pub fn router() -> &'static InjectRouter {
 /// Runs until the connection closes (process exit or harness teardown).
 /// Never calls `clock.sleep()` — see module-level invariant.
 ///
-/// On `AdvanceTime`: records the pre-advance waiter count, advances the
-/// clock, spin-yields until all woken threads have re-entered `sleep()`,
-/// then writes `{"ack":true}\n` back to the harness. This is the
-/// process-side half of the ACK protocol — the harness waits for ACKs
-/// from every connected process before proceeding.
+/// On `AdvanceTime`: calls `advance_and_settle()` which bumps the clock
+/// and blocks on the settlement condvar until all woken threads have
+/// re-entered `sleep()` (or departed), then writes `{"ack":true}\n`
+/// back to the harness. This is the process-side half of the ACK
+/// protocol — the harness waits for ACKs from every connected process
+/// before proceeding.
 fn reader_loop(stream: UnixStream, ack_stream: UnixStream, clock: Arc<MockClock>) {
     let reader = BufReader::new(stream);
     let mut ack_writer = BufWriter::new(ack_stream);
