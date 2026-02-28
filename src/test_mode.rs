@@ -23,7 +23,7 @@
 //! It is the only thread that calls `MockClock::advance()`. If it blocked
 //! on the condvar, no thread could wake it — deadlock.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -130,9 +130,15 @@ pub fn connect() {
     stream.write_all(b"\n").expect("failed to write newline");
     stream.flush().expect("failed to flush handshake");
 
+    // Clone the stream: original for reading (BufReader), clone for
+    // writing ACKs back to the harness after AdvanceTime settlement.
+    let ack_stream = stream
+        .try_clone()
+        .expect("failed to clone inject socket for ACK writes");
+
     std::thread::Builder::new()
         .name("test-inject".into())
-        .spawn(move || reader_loop(stream, clock))
+        .spawn(move || reader_loop(stream, ack_stream, clock))
         .expect("failed to spawn inject reader thread");
 }
 
@@ -161,8 +167,15 @@ pub fn router() -> &'static InjectRouter {
 ///
 /// Runs until the connection closes (process exit or harness teardown).
 /// Never calls `clock.sleep()` — see module-level invariant.
-fn reader_loop(stream: UnixStream, clock: Arc<MockClock>) {
+///
+/// On `AdvanceTime`: records the pre-advance waiter count, advances the
+/// clock, spin-yields until all woken threads have re-entered `sleep()`,
+/// then writes `{"ack":true}\n` back to the harness. This is the
+/// process-side half of the ACK protocol — the harness waits for ACKs
+/// from every connected process before proceeding.
+fn reader_loop(stream: UnixStream, ack_stream: UnixStream, clock: Arc<MockClock>) {
     let reader = BufReader::new(stream);
+    let mut ack_writer = BufWriter::new(ack_stream);
     // The router is registered during init(), before this thread starts
     // reading, so it's always available.
     let router = INJECT_ROUTER.get();
@@ -184,7 +197,19 @@ fn reader_loop(stream: UnixStream, clock: Arc<MockClock>) {
         };
         match msg {
             Inject::AdvanceTime { duration_ms } => {
+                // ACK protocol: snapshot waiters, advance, wait for
+                // settlement, then ACK. See phase-20-testing.md §Tick
+                // synchronization.
+                let n = clock.waiters();
                 clock.advance(Duration::from_millis(duration_ms));
+                clock.wait_for_waiters(n);
+
+                // If the process is exiting (a woken thread caused
+                // main() to return), wait_for_waiters blocks until
+                // this thread is killed. The socket drop serves as
+                // an implicit ACK to the harness.
+                let _ = ack_writer.write_all(b"{\"ack\":true}\n");
+                let _ = ack_writer.flush();
             }
             capture_msg => {
                 if let Some(r) = router {

@@ -22,13 +22,22 @@ Testing detail: [Test Infrastructure](phase-20-testing.md)
 design (items 6-7) requires upgrades to both the inject socket protocol
 and the test harness that were designed after items 4-5 landed:
 
-- Inject socket becomes bidirectional (ACK after `AdvanceTime`)
-- `TestHarness` switches to all-background execution model
-- `HarnessId` replaces OS PIDs in trace output
-- `Connection` gains a reader for ACK messages
+- [x] Inject socket becomes bidirectional (ACK after `AdvanceTime`)
+- [x] `Connection` gains a reader for ACK messages
+- [x] `Inject` split into `CaptureInject` + `TimeInject` (type-level
+  enforcement: `broadcast_capture()` cannot send `AdvanceTime`)
+- [x] `MockClock::wait_for_waiters()` uses condvar (not spin)
+- [ ] `TestHarness` switches to all-background execution model
+- [ ] `HarnessId` replaces OS PIDs in trace output
 
-These changes are prerequisites for item 6 and will be implemented as
-part of it. See [testing doc](phase-20-testing.md) for the full spec.
+The checked items were completed as a prerequisite for item 6. The
+remaining items will be implemented as part of item 6 itself. See
+[testing doc](phase-20-testing.md) for the full spec.
+
+**Known issue:** `status_shows_recording_state` e2e test is `#[ignore]`d
+because `narrate status` is purely synchronous (no `clock.sleep()`), so
+mock time races ahead of wall-clock time under `wait_child_ticking`. The
+all-background execution model will fix this.
 
 ### Bug fixes discovered during implementation
 

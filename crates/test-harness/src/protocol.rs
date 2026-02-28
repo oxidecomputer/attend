@@ -13,13 +13,15 @@ use serde::{Deserialize, Serialize};
 // Inject messages (harness → process)
 // ---------------------------------------------------------------------------
 
-/// Injection message broadcast from the harness to all connected processes.
+/// Capture injection (harness → daemon, fire-and-forget).
 ///
-/// Mirrors `attend::test_mode::Inject`.
+/// Separate type from [`Inject`] so that `broadcast_capture()` cannot
+/// accept `AdvanceTime` — the compiler enforces that time advances go
+/// through `advance_time()` with ACK synchronization.
+///
+/// Mirrors the capture variants of `attend::test_mode::Inject`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Inject {
-    /// Advance the mock clock by this duration.
-    AdvanceTime { duration_ms: u64 },
+pub enum CaptureInject {
     /// Inject speech into the stub transcriber.
     Speech { text: String, duration_ms: u64 },
     /// Inject a period of silence.
@@ -30,6 +32,28 @@ pub enum Inject {
     ExternalSelection { app: String, text: String },
     /// Set the stub clipboard content.
     Clipboard { text: String },
+}
+
+/// Time advance message (harness → all processes, requires ACK).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TimeInject {
+    /// Advance the mock clock by this duration. Each process must ACK
+    /// after all woken threads have re-entered `sleep()`.
+    AdvanceTime { duration_ms: u64 },
+}
+
+/// Full inject message (harness → process, newline-delimited JSON).
+///
+/// Composed from sub-enums via `#[serde(untagged)]`. Each inner enum
+/// serializes with serde's default externally-tagged representation,
+/// so `Inject::Capture(CaptureInject::Speech { .. })` serializes as
+/// `{"Speech":{"text":"...","duration_ms":...}}` — wire-compatible
+/// with the process-side flat `Inject` enum in `attend::test_mode`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Inject {
+    Time(TimeInject),
+    Capture(CaptureInject),
 }
 
 // ---------------------------------------------------------------------------

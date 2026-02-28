@@ -36,8 +36,8 @@ use std::time::Duration;
 
 use camino::{Utf8Path, Utf8PathBuf};
 
-pub use protocol::{FileEntry, Inject};
-use protocol::Handshake;
+pub use protocol::FileEntry;
+use protocol::{CaptureInject, Handshake, Inject, TimeInject};
 
 // ---------------------------------------------------------------------------
 // Configuration constants
@@ -55,6 +55,13 @@ const COMMAND_TIMEOUT_MOCK_MS: u64 = 60_000;
 /// sentinel polling).
 const TICK_MS: u64 = 50;
 
+/// Wall-clock timeout for reading an ACK from a process after
+/// `AdvanceTime`. Normal ACKs arrive quickly (condvar-based settlement
+/// in `wait_for_waiters` blocks until worker threads re-enter `sleep()`).
+/// This is a safety net against bugs that would otherwise cause the
+/// harness to hang indefinitely.
+const ACK_TIMEOUT: Duration = Duration::from_secs(10);
+
 // ---------------------------------------------------------------------------
 // Shared state between accept thread and foreground thread
 // ---------------------------------------------------------------------------
@@ -71,7 +78,9 @@ struct SharedState {
 /// A connected process on the inject socket.
 struct Connection {
     writer: BufWriter<UnixStream>,
-    #[allow(dead_code)]
+    /// For reading ACK messages after `AdvanceTime`. Set with a read
+    /// timeout (`ACK_TIMEOUT`) so bugs don't cause infinite hangs.
+    reader: BufReader<UnixStream>,
     argv: Vec<String>,
 }
 
@@ -189,6 +198,10 @@ impl TestHarness {
     /// This keeps the harness decoupled from real time: tests run as fast
     /// as the OS can schedule, and a slow CI host can't cause spurious
     /// timeouts.
+    ///
+    /// This method will be replaced by the all-background execution model
+    /// (Phase 0 item 6), where processes are spawned into the background
+    /// and exits are observed during tick settlement.
     fn wait_child_ticking(&mut self, mut child: Child) -> Output {
         let pid = child.id();
         let mut advanced_ms: u64 = 0;
@@ -203,10 +216,14 @@ impl TestHarness {
                 Ok(None) => {
                     // Child still running. Advance mock time so processes
                     // blocked on MockClock::sleep() can make progress.
-                    self.broadcast(&Inject::AdvanceTime {
-                        duration_ms: TICK_MS,
-                    });
+                    // advance_time() blocks until all processes ACK
+                    // settlement, ensuring deterministic behavior.
+                    self.advance_time(TICK_MS);
                     advanced_ms += TICK_MS;
+                    // Yield to give subprocesses (especially the daemon,
+                    // which is spawned as a detached grandchild) wall-clock
+                    // time to start and connect. Without this, mock time
+                    // races ahead and the daemon misses its connect window.
                     std::thread::yield_now();
                 }
                 Err(e) => panic!("try_wait failed for PID {pid}: {e}"),
@@ -418,14 +435,63 @@ impl TestHarness {
     // Injection helpers (broadcast to all connected processes)
     // -----------------------------------------------------------------------
 
-    /// Advance the mock clock for all connected processes.
+    /// Advance the mock clock for all connected processes and wait for
+    /// each to confirm settlement (ACK protocol).
+    ///
+    /// Sends `AdvanceTime` to every connection, then reads one ACK line
+    /// from each. A read error or EOF means the process exited during
+    /// the tick (implicit ACK). Only returns once all processes have
+    /// settled — ensuring lockstep execution across OS processes.
     pub fn advance_time(&mut self, duration_ms: u64) {
-        self.broadcast(&Inject::AdvanceTime { duration_ms });
+        let msg = Inject::Time(TimeInject::AdvanceTime { duration_ms });
+        let json = serde_json::to_string(&msg).expect("failed to serialize AdvanceTime");
+        let line = format!("{json}\n");
+
+        let (lock, _) = &*self.shared;
+        let mut state = lock.lock().unwrap();
+
+        // Phase 1: send AdvanceTime to all connections.
+        let mut dead_pids = Vec::new();
+        for (&pid, conn) in &mut state.connections {
+            if conn.writer.write_all(line.as_bytes()).is_err() || conn.writer.flush().is_err() {
+                dead_pids.push(pid);
+            }
+        }
+
+        // Phase 2: read ACK from each live connection.
+        let mut ack_line = String::new();
+        for (&pid, conn) in &mut state.connections {
+            if dead_pids.contains(&pid) {
+                continue; // Already known dead from write failure.
+            }
+            ack_line.clear();
+            match conn.reader.read_line(&mut ack_line) {
+                Ok(0) => {
+                    // EOF: process exited during tick (implicit ACK).
+                    dead_pids.push(pid);
+                }
+                Ok(_) => {
+                    // Got ACK line: process has settled.
+                }
+                Err(_) => {
+                    // Read error (timeout or broken pipe): implicit ACK.
+                    dead_pids.push(pid);
+                }
+            }
+        }
+
+        // Remove dead connections.
+        for pid in dead_pids {
+            state.connections.remove(&pid);
+            if state.daemon_pid == Some(pid) {
+                state.daemon_pid = None;
+            }
+        }
     }
 
     /// Inject speech into the daemon's stub transcriber.
     pub fn inject_speech(&mut self, text: &str, duration_ms: u64) {
-        self.broadcast(&Inject::Speech {
+        self.broadcast_capture(&CaptureInject::Speech {
             text: text.to_string(),
             duration_ms,
         });
@@ -433,17 +499,17 @@ impl TestHarness {
 
     /// Inject a period of silence.
     pub fn inject_silence(&mut self, duration_ms: u64) {
-        self.broadcast(&Inject::Silence { duration_ms });
+        self.broadcast_capture(&CaptureInject::Silence { duration_ms });
     }
 
     /// Inject editor state.
     pub fn inject_editor_state(&mut self, files: Vec<FileEntry>) {
-        self.broadcast(&Inject::EditorState { files });
+        self.broadcast_capture(&CaptureInject::EditorState { files });
     }
 
     /// Inject an external selection.
     pub fn inject_external_selection(&mut self, app: &str, text: &str) {
-        self.broadcast(&Inject::ExternalSelection {
+        self.broadcast_capture(&CaptureInject::ExternalSelection {
             app: app.to_string(),
             text: text.to_string(),
         });
@@ -451,7 +517,7 @@ impl TestHarness {
 
     /// Inject clipboard content.
     pub fn inject_clipboard(&mut self, text: &str) {
-        self.broadcast(&Inject::Clipboard {
+        self.broadcast_capture(&CaptureInject::Clipboard {
             text: text.to_string(),
         });
     }
@@ -505,9 +571,11 @@ impl TestHarness {
         }
     }
 
-    /// Broadcast an inject message to all connected processes.
-    fn broadcast(&self, msg: &Inject) {
-        let json = serde_json::to_string(msg).expect("failed to serialize inject message");
+    /// Broadcast a capture injection to all connected processes
+    /// (fire-and-forget, no ACK). Time advances must go through
+    /// `advance_time()` which handles the ACK protocol.
+    fn broadcast_capture(&self, msg: &CaptureInject) {
+        let json = serde_json::to_string(msg).expect("failed to serialize capture injection");
         let line = format!("{json}\n");
 
         let (lock, _) = &*self.shared;
@@ -515,9 +583,7 @@ impl TestHarness {
 
         let mut dead_pids = Vec::new();
         for (&pid, conn) in &mut state.connections {
-            if conn.writer.write_all(line.as_bytes()).is_err()
-                || conn.writer.flush().is_err()
-            {
+            if conn.writer.write_all(line.as_bytes()).is_err() || conn.writer.flush().is_err() {
                 dead_pids.push(pid);
             }
         }
@@ -571,6 +637,11 @@ fn accept_loop(listener: UnixListener, shared: Arc<(Mutex<SharedState>, Condvar)
             .iter()
             .any(|a| a.contains("_record-daemon") || a.contains("_daemon"));
 
+        // Set read timeout on the reader stream for future ACK reads.
+        // The handshake has already been consumed; subsequent reads
+        // will be ACK lines sent by the process after AdvanceTime.
+        reader.get_ref().set_read_timeout(Some(ACK_TIMEOUT)).ok();
+
         let (lock, cvar) = &*shared;
         let mut state = lock.lock().unwrap();
         if is_daemon {
@@ -580,6 +651,7 @@ fn accept_loop(listener: UnixListener, shared: Arc<(Mutex<SharedState>, Condvar)
             pid,
             Connection {
                 writer: BufWriter::new(stream),
+                reader,
                 argv: handshake.argv,
             },
         );

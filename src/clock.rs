@@ -78,6 +78,13 @@ struct MockClockInner {
     condvar: Condvar,
     /// Number of threads currently blocked inside `sleep()`.
     waiters: AtomicUsize,
+    /// Signaled when a thread re-enters `sleep()` after being woken.
+    /// The inject socket reader thread waits on this to detect when
+    /// all woken threads have settled (the ACK protocol).
+    settlement: Condvar,
+    /// Mutex paired with `settlement`. Guards nothing — the waiter
+    /// count is atomic — but `Condvar` requires a `Mutex`.
+    settlement_mu: Mutex<()>,
 }
 
 impl MockClock {
@@ -88,6 +95,8 @@ impl MockClock {
                 state: Mutex::new(start),
                 condvar: Condvar::new(),
                 waiters: AtomicUsize::new(0),
+                settlement: Condvar::new(),
+                settlement_mu: Mutex::new(()),
             }),
         }
     }
@@ -102,18 +111,33 @@ impl MockClock {
         self.inner.condvar.notify_all();
     }
 
-    /// Spin-yield until at least `n` threads are blocked in `sleep()`.
+    /// Number of threads currently blocked inside `sleep()`.
     ///
-    /// Used by test harnesses to synchronize with worker threads before
-    /// calling `advance()`, replacing wall-clock sleeps with a
-    /// deterministic rendezvous. Not yet wired into the e2e harness
-    /// (which runs out-of-process), but needed for the in-process
-    /// oracle binaries planned in Phase 0 items 6-7.
-    #[allow(dead_code)]
+    /// Used by the inject socket reader thread to snapshot the waiter
+    /// count before calling `advance()`, then passed to
+    /// `wait_for_waiters()` to detect when all woken threads have
+    /// re-entered `sleep()`.
+    pub fn waiters(&self) -> usize {
+        self.inner.waiters.load(Ordering::Acquire)
+    }
+
+    /// Block until at least `n` threads are blocked in `sleep()`.
+    ///
+    /// Used by the inject socket reader thread after `advance()` to
+    /// confirm that all woken threads have completed their per-tick
+    /// work and re-entered `sleep()`. This is the process-side half
+    /// of the ACK protocol: the reader thread records `n = waiters()`,
+    /// calls `advance()`, then `wait_for_waiters(n)`, then sends ACK.
+    ///
+    /// Uses a condvar (not a spin loop) so the reader thread sleeps
+    /// until a worker thread signals settlement by re-entering `sleep()`.
     pub fn wait_for_waiters(&self, n: usize) {
-        while self.inner.waiters.load(Ordering::Acquire) < n {
-            std::thread::yield_now();
-        }
+        let guard = self.inner.settlement_mu.lock().unwrap();
+        let _guard = self
+            .inner
+            .settlement
+            .wait_while(guard, |_| self.inner.waiters.load(Ordering::Acquire) < n)
+            .unwrap();
     }
 }
 
@@ -127,11 +151,15 @@ impl Clock for MockClock {
         let deadline = *guard + duration;
         if *guard < deadline {
             self.inner.waiters.fetch_add(1, Ordering::Release);
+            // Signal settlement: a thread has (re-)entered sleep.
+            // The reader thread's wait_for_waiters() checks the count.
+            self.inner.settlement.notify_all();
             while *guard < deadline {
                 guard = self.inner.condvar.wait(guard).unwrap();
             }
             self.inner.waiters.fetch_sub(1, Ordering::Release);
         }
+        // Re-entering sleep (next call): fetch_add above will signal.
     }
 }
 
