@@ -34,10 +34,13 @@ The checked items were completed as a prerequisite for item 6. The
 remaining items will be implemented as part of item 6 itself. See
 [testing doc](phase-20-testing.md) for the full spec.
 
-**Known issue:** `status_shows_recording_state` e2e test is `#[ignore]`d
-because `narrate status` is purely synchronous (no `clock.sleep()`), so
-mock time races ahead of wall-clock time under `wait_child_ticking`. The
-all-background execution model will fix this.
+- [x] `wait_child_ticking` uses wall-clock timeout (not mock-time timeout)
+
+**Known issue:** `status_shows_recording_state` e2e test is `#[ignore]`d.
+The daemon's detached-grandchild startup races `wait_child_ticking`'s
+scheduling: `yield_now()` between ACK-based ticks gives insufficient
+wall-clock time for the daemon to connect. The all-background execution
+model will fix this.
 
 ### Bug fixes discovered during implementation
 
