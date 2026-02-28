@@ -22,11 +22,11 @@ Testing detail: [Test Infrastructure](phase-20-testing.md)
 design (items 6-7) requires upgrades to both the inject socket protocol
 and the test harness that were designed after items 4-5 landed:
 
-- [x] Inject socket becomes bidirectional (ACK after `AdvanceTime`)
-- [x] `Connection` gains a reader for ACK messages
+- [x] Inject socket becomes bidirectional (ACK after `AdvanceTime`) — `bf748a2`
+- [x] `Connection` gains a reader for ACK messages — `bf748a2`
 - [x] `Inject` split into `CaptureInject` + `TimeInject` (type-level
-  enforcement: `broadcast_capture()` cannot send `AdvanceTime`)
-- [x] `MockClock::wait_for_waiters()` uses condvar (not spin)
+  enforcement: `broadcast_capture()` cannot send `AdvanceTime`) — `bf748a2`
+- [x] `MockClock::wait_for_waiters()` uses condvar (not spin) — `bf748a2`
 - [ ] `TestHarness` switches to all-background execution model
 - [ ] `HarnessId` replaces OS PIDs in trace output
 
@@ -34,7 +34,7 @@ The checked items were completed as a prerequisite for item 6. The
 remaining items will be implemented as part of item 6 itself. See
 [testing doc](phase-20-testing.md) for the full spec.
 
-- [x] `wait_child_ticking` uses wall-clock timeout (not mock-time timeout)
+- [x] `wait_child_ticking` uses wall-clock timeout (not mock-time timeout) — `de32820`
 
 **Known issue:** `status_shows_recording_state` e2e test is `#[ignore]`d.
 The daemon's detached-grandchild startup races `wait_child_ticking`'s

@@ -197,12 +197,10 @@ fn reader_loop(stream: UnixStream, ack_stream: UnixStream, clock: Arc<MockClock>
         };
         match msg {
             Inject::AdvanceTime { duration_ms } => {
-                // ACK protocol: snapshot waiters, advance, wait for
-                // settlement, then ACK. See phase-20-testing.md §Tick
-                // synchronization.
-                let n = clock.waiters();
-                clock.advance(Duration::from_millis(duration_ms));
-                clock.wait_for_waiters(n);
+                // ACK protocol: advance time and block until all woken
+                // threads have re-entered sleep(). See phase-20-testing.md
+                // §Tick synchronization.
+                clock.advance_and_settle(Duration::from_millis(duration_ms));
 
                 // If the process is exiting (a woken thread caused
                 // main() to return), wait_for_waiters blocks until

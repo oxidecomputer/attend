@@ -489,8 +489,8 @@ to fully settle after each tick before proceeding.
 2. Each process's inject-socket reader thread:
    a. Records `n = clock.waiters()` (threads currently sleeping).
    b. Calls `clock.advance(duration)` — wakes threads whose deadlines are met.
-   c. Calls `clock.wait_for_waiters(n)` — spin-yields until all woken
-      threads have completed their per-tick work and re-entered `sleep()`.
+   c. Calls `clock.wait_for_waiters(n)` — blocks on a settlement condvar
+      until all woken threads have re-entered `sleep()`.
    d. Writes `{"ack": true}\n` back to the harness on the inject socket.
 3. Harness waits for ACK (or connection drop) from every connected process.
 4. Only then proceeds to the next action.
@@ -519,7 +519,7 @@ so they don't affect the count. This is correct.
 **Process exit (implicit ACK).** If a thread wakes and the process
 exits (e.g., listener finds pending files → `main()` returns →
 process terminates), `waiters` stays below `n` and `wait_for_waiters`
-spins forever — but the process exit kills all threads, closing the
+blocks forever — but the process exit kills all threads, closing the
 inject socket. The harness detects the connection drop and treats it
 as an implicit ACK: "this process has nothing more to contribute to
 this tick."
@@ -564,19 +564,23 @@ The mock clock is `Arc<MockClockInner>`:
 struct MockClockInner {
     state: Mutex<DateTime<Utc>>,
     condvar: Condvar,
-    waiters: AtomicUsize,  // threads currently blocked in sleep()
+    waiters: AtomicUsize,      // threads currently blocked in sleep()
+    settlement: Condvar,       // signaled when a thread re-enters sleep()
+    settlement_mu: Mutex<()>,  // paired with settlement condvar
 }
 ```
 
 `advance()` locks, bumps time, and calls `condvar.notify_all()`.
 `sleep(d)` records `deadline = now() + d`, increments `waiters`,
-then loops on `condvar.wait()` until `now() >= deadline`, and
-decrements `waiters` on return.
+signals the settlement condvar, then loops on `condvar.wait()` until
+`now() >= deadline`, and decrements `waiters` on return.
 
-`wait_for_waiters(n)` spin-yields until `waiters >= n`. This is the
-primitive used by the ACK protocol: after `advance()`, the reader
-thread calls `wait_for_waiters(pre_advance_count)` to detect when
-all woken threads have re-entered `sleep()`.
+`wait_for_waiters(n)` blocks on `settlement.wait_while()` until
+`waiters >= n`. This is the primitive used by the ACK protocol:
+after `advance()`, the reader thread calls
+`wait_for_waiters(pre_advance_count)` to detect when all woken
+threads have re-entered `sleep()`. Uses a condvar (not spin) so the
+reader thread sleeps until signaled.
 
 Time advances only from one source: `AdvanceTime` injected by the
 harness. The harness is in full control — it injects events, advances
@@ -587,8 +591,8 @@ decides "5 minutes have passed"; the harness says so.
 `clock.sleep()`.** It is the only thread that can advance time (by
 calling `MockClock::advance()` on receipt of `AdvanceTime`). If it
 blocked on the clock condvar, no thread could wake it — deadlock.
-It MAY call `wait_for_waiters()`, which spin-yields on `waiters`
-(a different synchronization mechanism) — this is safe because
+It MAY call `advance_and_settle()`, which blocks on a settlement
+condvar (a different synchronization mechanism) — this is safe because
 the blocked threads will re-enter `sleep()` or the process will exit.
 
 Browser and shell events don't need injection — they're already external

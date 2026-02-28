@@ -13,7 +13,6 @@
 //! - `whisper.rs` / `parakeet.rs` bench functions: developer diagnostics.
 //! - `transcribe.rs` model load timing: diagnostic logging.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -74,17 +73,31 @@ pub struct MockClock {
 
 #[derive(Debug)]
 struct MockClockInner {
-    state: Mutex<DateTime<Utc>>,
+    state: Mutex<ClockState>,
     condvar: Condvar,
-    /// Number of threads currently blocked inside `sleep()`.
-    waiters: AtomicUsize,
-    /// Signaled when a thread re-enters `sleep()` after being woken.
-    /// The inject socket reader thread waits on this to detect when
-    /// all woken threads have settled (the ACK protocol).
+    /// Settlement tracking: signaled when a thread re-enters `sleep()`
+    /// after being woken by an advance. The reader thread's
+    /// `advance_and_settle()` blocks on this until all woken threads
+    /// have completed their per-tick work and re-entered `sleep()`.
     settlement: Condvar,
-    /// Mutex paired with `settlement`. Guards nothing — the waiter
-    /// count is atomic — but `Condvar` requires a `Mutex`.
-    settlement_mu: Mutex<()>,
+    settlement_state: Mutex<SettlementState>,
+}
+
+#[derive(Debug)]
+struct ClockState {
+    time: DateTime<Utc>,
+    /// Deadlines of threads currently blocked in `sleep()`.
+    /// Used by `advance_and_settle()` to count how many threads
+    /// will wake, so settlement knows what to wait for.
+    deadlines: Vec<DateTime<Utc>>,
+}
+
+#[derive(Debug, Default)]
+struct SettlementState {
+    /// Threads that have re-entered `sleep()` since the last advance.
+    settled: usize,
+    /// Threads that woke during the last advance (computed from deadlines).
+    expected: usize,
 }
 
 impl MockClock {
@@ -92,74 +105,116 @@ impl MockClock {
     pub fn new(start: DateTime<Utc>) -> Self {
         Self {
             inner: Arc::new(MockClockInner {
-                state: Mutex::new(start),
+                state: Mutex::new(ClockState {
+                    time: start,
+                    deadlines: Vec::new(),
+                }),
                 condvar: Condvar::new(),
-                waiters: AtomicUsize::new(0),
                 settlement: Condvar::new(),
-                settlement_mu: Mutex::new(()),
+                settlement_state: Mutex::new(SettlementState::default()),
             }),
+        }
+    }
+
+    /// Block until at least `n` threads are blocked in `sleep()`.
+    ///
+    /// Uses the deadline registry: each thread in `sleep()` registers
+    /// its deadline. This method waits on the time condvar (which
+    /// `sleep()` notifies after registering) until `n` deadlines exist.
+    pub fn wait_for_sleepers(&self, n: usize) {
+        let mut state = self.inner.state.lock().unwrap();
+        while state.deadlines.len() < n {
+            state = self.inner.condvar.wait(state).unwrap();
         }
     }
 
     /// Advance the clock by the given duration.
     ///
-    /// Wakes all threads blocked in `sleep()` whose deadlines are now met.
+    /// Wakes all threads blocked in `sleep()` whose deadlines are now
+    /// met. Does NOT wait for settlement — use `advance_and_settle()`
+    /// when you need the ACK protocol guarantee that woken threads
+    /// have completed their work and re-entered `sleep()`.
     pub fn advance(&self, duration: Duration) {
-        let mut guard = self.inner.state.lock().unwrap();
-        *guard += duration;
-        drop(guard);
+        let mut state = self.inner.state.lock().unwrap();
+        state.time += duration;
+        drop(state);
         self.inner.condvar.notify_all();
     }
 
-    /// Number of threads currently blocked inside `sleep()`.
-    ///
-    /// Used by the inject socket reader thread to snapshot the waiter
-    /// count before calling `advance()`, then passed to
-    /// `wait_for_waiters()` to detect when all woken threads have
+    /// Advance the clock and block until all woken threads have
     /// re-entered `sleep()`.
-    pub fn waiters(&self) -> usize {
-        self.inner.waiters.load(Ordering::Acquire)
-    }
+    ///
+    /// This is the process-side primitive for the ACK protocol:
+    /// the inject socket reader thread calls this on each `AdvanceTime`
+    /// message, then sends `{"ack":true}` to the harness.
+    ///
+    /// Threads whose sleep deadline is met by the new time will wake,
+    /// do their per-tick work, and call `sleep()` again. This method
+    /// returns only after all such threads have re-entered `sleep()`,
+    /// guaranteeing quiescence.
+    pub fn advance_and_settle(&self, duration: Duration) {
+        // Bump time and count how many threads will wake.
+        let mut state = self.inner.state.lock().unwrap();
+        state.time += duration;
+        let woken = state
+            .deadlines
+            .iter()
+            .filter(|dl| **dl <= state.time)
+            .count();
+        drop(state);
 
-    /// Block until at least `n` threads are blocked in `sleep()`.
-    ///
-    /// Used by the inject socket reader thread after `advance()` to
-    /// confirm that all woken threads have completed their per-tick
-    /// work and re-entered `sleep()`. This is the process-side half
-    /// of the ACK protocol: the reader thread records `n = waiters()`,
-    /// calls `advance()`, then `wait_for_waiters(n)`, then sends ACK.
-    ///
-    /// Uses a condvar (not a spin loop) so the reader thread sleeps
-    /// until a worker thread signals settlement by re-entering `sleep()`.
-    pub fn wait_for_waiters(&self, n: usize) {
-        let guard = self.inner.settlement_mu.lock().unwrap();
+        // Reset settlement counter before waking threads.
+        let mut ss = self.inner.settlement_state.lock().unwrap();
+        ss.expected = woken;
+        ss.settled = 0;
+        drop(ss);
+
+        // Wake all sleeping threads (those whose deadline isn't met
+        // will re-block immediately without affecting settlement).
+        self.inner.condvar.notify_all();
+
+        if woken == 0 {
+            return; // No threads to settle.
+        }
+
+        // Block until all woken threads have re-entered sleep().
+        let guard = self.inner.settlement_state.lock().unwrap();
         let _guard = self
             .inner
             .settlement
-            .wait_while(guard, |_| self.inner.waiters.load(Ordering::Acquire) < n)
+            .wait_while(guard, |ss| ss.settled < ss.expected)
             .unwrap();
     }
 }
 
 impl Clock for MockClock {
     fn now(&self) -> DateTime<Utc> {
-        *self.inner.state.lock().unwrap()
+        self.inner.state.lock().unwrap().time
     }
 
     fn sleep(&self, duration: Duration) {
         let mut guard = self.inner.state.lock().unwrap();
-        let deadline = *guard + duration;
-        if *guard < deadline {
-            self.inner.waiters.fetch_add(1, Ordering::Release);
-            // Signal settlement: a thread has (re-)entered sleep.
-            // The reader thread's wait_for_waiters() checks the count.
-            self.inner.settlement.notify_all();
-            while *guard < deadline {
+        let deadline = guard.time + duration;
+        if guard.time < deadline {
+            // Register deadline so advance_and_settle() can count
+            // how many threads will wake, and notify wait_for_sleepers.
+            guard.deadlines.push(deadline);
+            self.inner.condvar.notify_all();
+
+            // Signal settlement: this thread has (re-)entered sleep.
+            {
+                let mut ss = self.inner.settlement_state.lock().unwrap();
+                ss.settled += 1;
+                self.inner.settlement.notify_all();
+            }
+
+            while guard.time < deadline {
                 guard = self.inner.condvar.wait(guard).unwrap();
             }
-            self.inner.waiters.fetch_sub(1, Ordering::Release);
+
+            // Deregister deadline (we're leaving sleep).
+            guard.deadlines.retain(|d| *d != deadline);
         }
-        // Re-entering sleep (next call): fetch_add above will signal.
     }
 }
 

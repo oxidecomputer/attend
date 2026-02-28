@@ -1,4 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::*;
 
@@ -26,7 +27,7 @@ fn mock_clock_is_frozen_until_advanced() {
     assert_eq!(clock.now(), start + Duration::from_secs(10));
 }
 
-/// Multiple advance() calls accumulate.
+/// Multiple advance calls accumulate.
 #[test]
 fn mock_advance_accumulates() {
     let start = Utc::now();
@@ -47,7 +48,7 @@ fn mock_sleep_zero_returns_immediately() {
     assert_eq!(clock.now(), start);
 }
 
-/// sleep() blocks until advance() meets the deadline, and does not
+/// sleep() blocks until advance meets the deadline, and does not
 /// itself move time forward.
 #[test]
 fn mock_sleep_blocks_until_deadline() {
@@ -60,11 +61,10 @@ fn mock_sleep_blocks_until_deadline() {
         clock2.now()
     });
 
-    clock.wait_for_waiters(1);
+    clock.wait_for_sleepers(1);
     clock.advance(Duration::from_secs(10));
 
     let woke_at = handle.join().unwrap();
-    // Time is exactly what we advanced — sleep didn't add anything.
     assert_eq!(woke_at, start + Duration::from_secs(10));
 }
 
@@ -82,7 +82,7 @@ fn mock_sleep_partial_advance_stays_blocked() {
         woke2.store(true, Ordering::SeqCst);
     });
 
-    clock.wait_for_waiters(1);
+    clock.wait_for_sleepers(1);
     clock.advance(Duration::from_secs(5));
 
     // Thread needs 10s but only 5s have passed — still blocked.
@@ -112,16 +112,72 @@ fn mock_sleep_multiple_threads_different_deadlines() {
         c2.now()
     });
 
-    clock.wait_for_waiters(2);
+    clock.wait_for_sleepers(2);
     clock.advance(Duration::from_secs(5));
 
     let t1 = h1.join().unwrap();
     assert_eq!(t1, start + Duration::from_secs(5));
 
     // h2 should still be blocked; advance the remaining 5s.
-    clock.wait_for_waiters(1);
+    clock.wait_for_sleepers(1);
     clock.advance(Duration::from_secs(5));
 
     let t2 = h2.join().unwrap();
     assert_eq!(t2, start + Duration::from_secs(10));
+}
+
+/// ACK protocol invariant: advance_and_settle returns only after woken
+/// threads complete work and re-enter sleep.
+#[test]
+fn settlement_waits_for_resleep_after_work() {
+    let start = Utc::now();
+    let clock = MockClock::new(start);
+    let work_done = Arc::new(AtomicBool::new(false));
+
+    let c = clock.clone();
+    let done = Arc::clone(&work_done);
+    let _worker = std::thread::spawn(move || {
+        loop {
+            c.sleep(Duration::from_millis(100));
+            std::thread::yield_now();
+            done.store(true, Ordering::Release);
+        }
+    });
+
+    clock.wait_for_sleepers(1);
+    clock.advance_and_settle(Duration::from_millis(100));
+
+    assert!(work_done.load(Ordering::Acquire));
+}
+
+/// advance_and_settle with no sleeping threads returns immediately.
+#[test]
+fn settlement_no_sleepers_returns_immediately() {
+    let clock = MockClock::new(Utc::now());
+    clock.advance_and_settle(Duration::from_millis(100));
+}
+
+/// Multiple wake-work-resleep cycles: advance_and_settle returns
+/// correctly on each cycle without accumulation bugs.
+#[test]
+fn settlement_multiple_cycles() {
+    let start = Utc::now();
+    let clock = MockClock::new(start);
+    let cycle_count = Arc::new(AtomicUsize::new(0));
+
+    let c = clock.clone();
+    let count = Arc::clone(&cycle_count);
+    let _worker = std::thread::spawn(move || {
+        loop {
+            c.sleep(Duration::from_millis(50));
+            count.fetch_add(1, Ordering::Release);
+        }
+    });
+
+    clock.wait_for_sleepers(1);
+
+    for i in 1..=10 {
+        clock.advance_and_settle(Duration::from_millis(50));
+        assert_eq!(cycle_count.load(Ordering::Acquire), i);
+    }
 }
