@@ -487,42 +487,53 @@ to fully settle after each tick before proceeding.
 
 1. Harness sends `AdvanceTime { duration_ms }` to all connected processes.
 2. Each process's inject-socket reader thread:
-   a. Records `n = clock.waiters()` (threads currently sleeping).
-   b. Calls `clock.advance(duration)` — wakes threads whose deadlines are met.
-   c. Calls `clock.wait_for_waiters(n)` — blocks on a settlement condvar
-      until all woken threads have re-entered `sleep()`.
-   d. Writes `{"ack": true}\n` back to the harness on the inject socket.
+   a. Calls `clock.advance_and_settle(duration)` — bumps time,
+      counts threads whose deadlines are met, wakes all sleeping
+      threads, then blocks on a settlement condvar until all woken
+      threads have re-entered `sleep()`.
+   b. Writes `{"ack": true}\n` back to the harness on the inject socket.
 3. Harness waits for ACK (or connection drop) from every connected process.
 4. Only then proceeds to the next action.
 
-**Why `wait_for_waiters(n)` works.** A single `advance(d)` causes
-exactly one wake-work-resleep cycle per thread: the thread wakes,
-checks its state, does work, and calls `sleep()` again with a new
-deadline beyond the current time. It does NOT cycle multiple times —
-the new deadline is computed from the already-advanced clock. So the
-`waiters` count drops (threads waking), then returns to `n` (threads
-re-sleeping). `wait_for_waiters(n)` detects this.
+**How `advance_and_settle` works.** The mock clock tracks registered
+deadlines (one per sleeping thread). On advance:
+1. Lock the clock state, bump time.
+2. Count how many registered deadlines are now <= the new time (`expected`).
+3. Reset `settled = 0`.
+4. Broadcast the sleep condvar (wakes all sleeping threads; those whose
+   deadline isn't met re-block immediately).
+5. Wait on the settlement condvar until `settled >= expected`.
+
+Each woken thread exits `sleep()`, does its per-tick work, and calls
+`sleep()` again with a new deadline. Inside the new `sleep()` call,
+`settled` is incremented and the settlement condvar is notified. Once
+all `expected` threads have re-entered `sleep()`, `advance_and_settle`
+returns.
 
 **Daemon threads that sleep** (all gated by `clock.sleep()`):
 1. Main loop — `DAEMON_LOOP_POLL_MS` (sentinel polling, audio ingest)
 2. Editor capture — `EDITOR_POLL_MS`
 3. Diff capture — `FILE_DIFF_POLL_SECS`
 4. Ext capture — `EXT_POLL_MS`
-5. Clipboard capture — `CLIPBOARD_POLL_MS`
+5. Clipboard capture — `CLIPBOARD_POLL_MS` (or `PAUSED_POLL_MS` when paused)
 
 Not all threads wake on every tick — only those whose deadline was met.
-If a 50ms advance wakes the main loop (50ms poll) but not the clipboard
-thread (500ms poll), `waiters` drops by 1, then returns to `n` when the
-main loop re-sleeps. Threads that weren't woken never left `sleep()`,
-so they don't affect the count. This is correct.
+`expected` reflects only the woken threads, so threads with far-future
+deadlines don't affect settlement.
+
+**Invariant: woken threads must re-enter `sleep()`.** If a woken
+thread exits its loop (process exit, thread shutdown) without calling
+`clock.sleep()` again, `settled` never reaches `expected`, and
+`advance_and_settle` blocks forever. The harness's `ACK_TIMEOUT`
+(10s) is the safety net, but the real fix is ensuring all threads that
+participate in the clock keep re-entering sleep until the shared
+`stop` flag is set. See "Known limitation" below for the deeper fix.
 
 **Process exit (implicit ACK).** If a thread wakes and the process
 exits (e.g., listener finds pending files → `main()` returns →
-process terminates), `waiters` stays below `n` and `wait_for_waiters`
-blocks forever — but the process exit kills all threads, closing the
-inject socket. The harness detects the connection drop and treats it
-as an implicit ACK: "this process has nothing more to contribute to
-this tick."
+process terminates), `advance_and_settle` blocks — but the process
+exit kills all threads, closing the inject socket. The harness detects
+the connection drop and treats it as an implicit ACK.
 
 **Capture injections need no ACK.** They write to shared state
 instantly. No thread wakes, no work happens, no settling needed. The
@@ -562,25 +573,33 @@ settled before proceeding.
 The mock clock is `Arc<MockClockInner>`:
 ```rust
 struct MockClockInner {
-    state: Mutex<DateTime<Utc>>,
-    condvar: Condvar,
-    waiters: AtomicUsize,      // threads currently blocked in sleep()
-    settlement: Condvar,       // signaled when a thread re-enters sleep()
-    settlement_mu: Mutex<()>,  // paired with settlement condvar
+    state: Mutex<ClockState>,    // current time + registered deadlines
+    condvar: Condvar,            // sleep/wake coordination
+    settlement: Condvar,         // signaled when a thread re-enters sleep()
+    settlement_state: Mutex<SettlementState>,
+}
+
+struct ClockState {
+    time: DateTime<Utc>,
+    deadlines: Vec<DateTime<Utc>>,  // one per sleeping thread
+}
+
+struct SettlementState {
+    settled: usize,   // threads that re-entered sleep since last advance
+    expected: usize,  // threads woken by last advance
 }
 ```
 
-`advance()` locks, bumps time, and calls `condvar.notify_all()`.
-`sleep(d)` records `deadline = now() + d`, increments `waiters`,
-signals the settlement condvar, then loops on `condvar.wait()` until
-`now() >= deadline`, and decrements `waiters` on return.
+`advance_and_settle(d)` bumps time, counts deadlines <= new time
+(`expected`), resets `settled = 0`, broadcasts the condvar, and
+blocks on `settlement` until `settled >= expected`. This is the
+ACK protocol primitive: the inject socket reader thread calls it
+on each `AdvanceTime`, then sends `{"ack":true}` to the harness.
 
-`wait_for_waiters(n)` blocks on `settlement.wait_while()` until
-`waiters >= n`. This is the primitive used by the ACK protocol:
-after `advance()`, the reader thread calls
-`wait_for_waiters(pre_advance_count)` to detect when all woken
-threads have re-entered `sleep()`. Uses a condvar (not spin) so the
-reader thread sleeps until signaled.
+`sleep(d)` computes `deadline = now + d`, registers the deadline,
+increments `settled` and notifies the settlement condvar (signaling
+"I'm in sleep now"), then blocks on the condvar until `time >= deadline`.
+On exit, deregisters the deadline.
 
 Time advances only from one source: `AdvanceTime` injected by the
 harness. The harness is in full control — it injects events, advances
@@ -588,12 +607,11 @@ time by known amounts, and checks results. No process autonomously
 decides "5 minutes have passed"; the harness says so.
 
 **Invariant: the inject socket background thread must never call
-`clock.sleep()`.** It is the only thread that can advance time (by
-calling `MockClock::advance()` on receipt of `AdvanceTime`). If it
-blocked on the clock condvar, no thread could wake it — deadlock.
-It MAY call `advance_and_settle()`, which blocks on a settlement
-condvar (a different synchronization mechanism) — this is safe because
-the blocked threads will re-enter `sleep()` or the process will exit.
+`clock.sleep()`.** It is the only thread that calls
+`advance_and_settle()`. If it blocked on the clock condvar, no thread
+could wake it — deadlock. `advance_and_settle()` blocks on the
+*settlement* condvar (a different mechanism) — this is safe because
+sleeping threads will re-enter `sleep()` or the process will exit.
 
 Browser and shell events don't need injection — they're already external
 CLI commands (`attend browser-bridge`, `attend shell-hook`) that the
@@ -856,3 +874,139 @@ suites:
 The e2e suite adds: full-pipeline integration (CLI → IPC → daemon → capture
 stubs → merge → deliver via listener + hook), action sequence fuzzing, and
 differential testing across implementation strategies.
+
+---
+
+## Known limitation: settlement tracking is fragile
+
+### Problem
+
+`advance_and_settle` counts woken threads from the deadline registry
+and waits for all of them to re-enter `clock.sleep()`. If a woken
+thread exits its loop instead of re-sleeping (thread shutdown, panic,
+early return), `settled` never reaches `expected`, and
+`advance_and_settle` blocks until `ACK_TIMEOUT` (10s).
+
+This was discovered with the clipboard capture thread (`c9acc7b`):
+`CaptureHandle::pause()` called `stop_clipboard()` which set
+`stop=true` and joined the thread. On the stop tick, the clipboard
+thread woke, saw `stop=true`, exited its loop, and never re-entered
+`clock.sleep()`. Fix: clipboard now uses a `paused` flag like the
+other capture threads, staying alive (sleeping) during pause.
+
+The fix works but is specific to clipboard. The underlying fragility
+remains: any thread that exits without re-sleeping breaks settlement.
+
+### Improvement 1: MockClock participant tracking via Arc
+
+Track how many threads are **capable** of sleeping, not just how many
+are currently sleeping. This lets `advance_and_settle` detect when a
+thread has permanently exited.
+
+**Design:** Each thread that participates in the mock clock holds a
+`ClockParticipant` handle (a lightweight RAII guard wrapping an
+`Arc`). The mock clock tracks participants via `Arc::strong_count()`
+or an explicit counter:
+
+```rust
+/// RAII guard: while held, this thread is a clock participant.
+/// Dropping it signals that the thread will never call sleep() again.
+struct ClockParticipant {
+    inner: Arc<()>,  // shared with MockClockInner
+}
+
+struct MockClockInner {
+    // ... existing fields ...
+    /// One Arc per participant. strong_count() tells how many
+    /// threads are alive and capable of sleeping.
+    participant_anchor: Arc<()>,
+}
+```
+
+`advance_and_settle` would compute `expected` as:
+`min(woken_by_deadline, live_participants - 1)` (minus 1 for the
+reader thread, which never sleeps). If a thread exits and drops its
+`ClockParticipant`, `strong_count` decreases, and `expected`
+adjusts automatically.
+
+**Alternatively**, use an explicit `AtomicUsize` counter incremented
+on `ClockParticipant::new()` and decremented on drop:
+
+```rust
+struct ClockParticipant {
+    counter: Arc<AtomicUsize>,
+}
+
+impl Drop for ClockParticipant {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::Release);
+        // Notify settlement condvar so advance_and_settle can re-check.
+        // (needs access to the condvar — either store it in the struct
+        // or use a shared notification channel)
+    }
+}
+```
+
+The `AtomicUsize` approach is cleaner because it doesn't rely on
+`Arc::strong_count()` (which counts all clones, not just the ones
+representing participants). The drop notifies the settlement condvar
+so `advance_and_settle` can immediately re-evaluate `expected` when
+a thread exits, rather than waiting for a timeout.
+
+**Impact:** Threads that exit during a tick would no longer block
+settlement. `advance_and_settle` would see `expected` decrease and
+return as soon as all *remaining* participants have settled. No
+`ACK_TIMEOUT` fallback needed for this case.
+
+**Scope:** This is a `MockClock`-level change. Each daemon thread
+that calls `clock.sleep()` would acquire a `ClockParticipant` at
+startup and hold it for the thread's lifetime. The change is
+mechanical — find every thread that calls `clock.sleep()`, add
+a participant handle.
+
+### Improvement 2: condvar-based pause/resume for capture threads
+
+Currently all capture threads poll their `paused` and `stop` flags
+via `AtomicBool` loads at the top of each loop iteration. State
+changes (pause, resume, stop) take effect only when the thread wakes
+from its current `clock.sleep()` — up to `POLL_MS` of mock time
+later.
+
+**Design:** Replace the atomic flags with a shared condvar that
+capture threads wait on alongside their sleep deadline:
+
+```rust
+struct CaptureControl {
+    state: Mutex<CaptureState>,
+    notify: Condvar,
+}
+
+enum CaptureState {
+    Running,
+    Paused,
+    Stopped,
+}
+```
+
+Instead of `clock.sleep(poll_ms)`, capture threads would use a
+combined wait: sleep for the poll interval OR until the control
+condvar is notified, whichever comes first. On notification, the
+thread checks `CaptureState` and acts immediately (enter paused
+sleep loop, exit, etc.).
+
+**Benefits:**
+- Pause/resume/stop take effect immediately, not after a poll interval.
+- In test mode, mock time doesn't need to advance through polling
+  intervals for threads to notice state changes.
+- Cleaner than the atomic flag pattern — state transitions are
+  explicit enum variants, not combinations of two booleans.
+
+**Complexity:** The `clock.sleep()` API would need a variant that
+accepts an external condvar (or a cancellation token) to allow
+early wakeup. This touches the `Clock` trait, so it's a broader
+change. Alternatively, threads could use a short sleep (e.g. 10ms)
+in a loop that checks the condvar between sleeps — simpler but less
+efficient.
+
+**Priority:** Low. The current polling works correctly. This is a
+latency and code-cleanliness improvement, not a correctness fix.

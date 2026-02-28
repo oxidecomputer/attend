@@ -27,34 +27,10 @@ and the test harness that were designed after items 4-5 landed:
 - [x] `Inject` split into `CaptureInject` + `TimeInject` (type-level
   enforcement: `broadcast_capture()` cannot send `AdvanceTime`) — `bf748a2`
 - [x] `MockClock` uses deadline-based settlement with condvar — `3235e09`
-- [ ] `TestHarness` switches to all-background execution model
-- [ ] `HarnessId` replaces OS PIDs in trace output
+- [x] `TestHarness` switches to all-background execution model — `c9acc7b`
+- [x] `HarnessId` replaces OS PIDs in trace output — `c9acc7b`
 
-The checked items were completed as a prerequisite for item 6. The
-remaining items will be implemented as part of item 6 itself. See
-[testing doc](phase-20-testing.md) for the full spec.
-
-**What the all-background execution model must replace:**
-
-The current `wait_child_ticking` (per-command blocking model) uses
-`yield_now()` between ticks to give subprocesses wall-clock time.
-This is insufficient: the daemon (spawned as a detached grandchild)
-needs milliseconds to start, but ticks complete in microseconds.
-Result: 10s wall-clock delay on every `toggle()`/`start()` call,
-and `status_shows_recording_state` is `#[ignore]`d.
-
-Methods to delete when implementing the all-background model:
-- `wait_child_ticking()` — the per-command blocking loop
-- `run_command()` / `run_command_with_stdin()` — wrappers around it
-- `run_command_await_daemon()` — daemon-aware wrapper
-- `toggle()` / `start()` — use `run_command_await_daemon`
-- All per-command helpers (`stop`, `pause`, `yank`, `status`, etc.)
-  should be replaced with `spawn()` + `advance_time()` + `collect_exits()`
-
-The ACK protocol (`advance_time` with ACK reads, `advance_and_settle`
-on the process side) is correct and stays. The execution model change
-is purely about how the harness orchestrates commands — not about the
-time synchronization mechanism.
+All prerequisites for item 6 are complete.
 
 ### Bug fixes discovered during implementation
 
@@ -62,6 +38,12 @@ time synchronization mechanism.
 - `c383639` — Fix cross-run clipboard dedup: promote to global pass
 - `cd5c577` — Gate stub module behind `#[cfg(test)]`, document build verification
 - `f68eaec` — Fix panic on multi-byte UTF-8 in editor snapshot annotation
+- `c9acc7b` — Clipboard stop/join during pause broke MockClock settlement
+  (thread exited without re-entering `clock.sleep()`, `advance_and_settle`
+  blocked forever, 10s ACK_TIMEOUT on every test involving stop).
+  Fix: clipboard thread uses `paused` flag like editor/diff/ext, with a
+  `reseed` flag on resume to preserve the invariant that clipboard changes
+  during pause aren't captured.
 
 ## Existing traits and patterns
 
@@ -88,8 +70,8 @@ trait boundaries and supporting infrastructure:
 
 - **`CaptureConfig`** (`src/narrate/capture.rs`): bundles `Arc<dyn
   Clock>`, `Box<dyn EditorStateSource>`, `Option<Box<dyn
-  ExternalSource>>`, clipboard factory. `production(clock)` returns
-  real sources; test mode substitutes stubs.
+  ExternalSource>>`, `Option<Box<dyn ClipboardSource>>`.
+  `production(clock)` returns real sources; test mode substitutes stubs.
 
 - **`Clock` trait** (`src/clock.rs`): `now() → DateTime<Utc>`,
   `sleep(Duration)`. `RealClock` for production; `MockClock` (un-gated
@@ -205,17 +187,16 @@ the CLI's poll loop terminates — no real wall-clock delay anywhere.
 
 `TestHarness` struct that spawns a real daemon in test mode, drives
 it via real CLI subprocesses, and asserts on outputs. All IPC is real
-(whatever mechanism the binary under test uses). The harness reuses
-the hook test harness's `Outcome` type for parsing hook stdout/stderr.
+(whatever mechanism the binary under test uses).
 
-**Current state:** The harness uses a blocking per-command model:
-`run_command()` spawns a child, waits for its inject socket connection,
-then ticks time until it exits. This works for sequential e2e smoke
-tests but doesn't support the oracle's all-background execution model
-where multiple processes run concurrently and exits are observed during
-tick settlement. Item 6 will refactor the harness to the background
-model described in the
-[testing doc](phase-20-testing.md#test-harness).
+**All-background execution model** (`c9acc7b`): all CLI commands, hooks,
+and listeners are spawned as background children via `spawn()` /
+`spawn_with_stdin()`. The harness never blocks waiting for a specific
+process to exit. `advance_time()` broadcasts `AdvanceTime`, waits for
+ACK from each process, and returns `Vec<TraceEvent>` for exits
+observed via `try_wait()`. `HarnessId` provides deterministic,
+sequential process identifiers. `tick_until_exit()` is the convenience
+wrapper for smoke tests. 5 e2e tests, 0 ignored, ~0.7s.
 
 ### 6. Differential oracle
 
