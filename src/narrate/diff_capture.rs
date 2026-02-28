@@ -37,7 +37,7 @@ pub(super) fn spawn(
     open_paths: Arc<Mutex<Vec<Utf8PathBuf>>>,
     events: Arc<Mutex<Vec<Event>>>,
 ) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
+    crate::clock::spawn_clock_thread("diff", &*clock, move |clock| {
         let mut file_contents: HashMap<Utf8PathBuf, String> = HashMap::new();
         let mut file_mtimes: HashMap<Utf8PathBuf, std::time::SystemTime> = HashMap::new();
 

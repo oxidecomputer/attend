@@ -14,6 +14,7 @@
 //! - `transcribe.rs` model load timing: diagnostic logging.
 
 use std::sync::{Arc, Condvar, Mutex};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -31,6 +32,32 @@ pub trait Clock: Send + Sync {
     /// Production: real `thread::sleep()`.
     /// Test mode: blocks on a condvar until `advance()` meets the deadline.
     fn sleep(&self, duration: Duration);
+
+    /// Create a per-thread clock for settlement tracking.
+    ///
+    /// The returned clock signals departure when dropped, so
+    /// `advance_and_settle()` won't block waiting for a thread that has
+    /// exited. Production clocks return a plain clone (no-op drop).
+    fn for_thread(&self) -> Arc<dyn Clock> {
+        Arc::new(RealClock)
+    }
+}
+
+/// Spawn a thread that participates in the clock's settlement protocol.
+///
+/// The thread receives a per-thread clock via [`Clock::for_thread()`].
+/// When the thread exits, its clock drops and departure is signaled,
+/// so `advance_and_settle()` won't block waiting for a dead thread.
+pub fn spawn_clock_thread<F, T>(name: &str, clock: &dyn Clock, f: F) -> JoinHandle<T>
+where
+    F: FnOnce(Arc<dyn Clock>) -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let thread_clock = clock.for_thread();
+    std::thread::Builder::new()
+        .name(name.into())
+        .spawn(move || f(thread_clock))
+        .expect("failed to spawn clock thread")
 }
 
 /// Create the process-wide clock.
@@ -56,6 +83,10 @@ impl Clock for RealClock {
 
     fn sleep(&self, duration: Duration) {
         std::thread::sleep(duration);
+    }
+
+    fn for_thread(&self) -> Arc<dyn Clock> {
+        Arc::new(RealClock)
     }
 }
 
@@ -98,6 +129,12 @@ struct SettlementState {
     settled: usize,
     /// Threads that woke during the last advance (computed from deadlines).
     expected: usize,
+    /// Total thread departures since clock creation (monotonically increasing).
+    /// Incremented by `ParticipantMockClock::drop()`.
+    departed: usize,
+    /// Snapshot of `departed` at the start of the current `advance_and_settle`.
+    /// Departures since this snapshot count toward settlement.
+    departed_at_advance: usize,
 }
 
 impl MockClock {
@@ -163,10 +200,11 @@ impl MockClock {
             .count();
         drop(state);
 
-        // Reset settlement counter before waking threads.
+        // Reset settlement counter and snapshot departures before waking.
         let mut ss = self.inner.settlement_state.lock().unwrap();
         ss.expected = woken;
         ss.settled = 0;
+        ss.departed_at_advance = ss.departed;
         drop(ss);
 
         // Wake all sleeping threads (those whose deadline isn't met
@@ -177,12 +215,16 @@ impl MockClock {
             return; // No threads to settle.
         }
 
-        // Block until all woken threads have re-entered sleep().
+        // Block until all woken threads have either re-entered sleep()
+        // or permanently departed (ParticipantMockClock dropped).
         let guard = self.inner.settlement_state.lock().unwrap();
         let _guard = self
             .inner
             .settlement
-            .wait_while(guard, |ss| ss.settled < ss.expected)
+            .wait_while(guard, |ss| {
+                let departures = ss.departed - ss.departed_at_advance;
+                ss.settled + departures < ss.expected
+            })
             .unwrap();
     }
 }
@@ -193,28 +235,72 @@ impl Clock for MockClock {
     }
 
     fn sleep(&self, duration: Duration) {
-        let mut guard = self.inner.state.lock().unwrap();
-        let deadline = guard.time + duration;
-        if guard.time < deadline {
-            // Register deadline so advance_and_settle() can count
-            // how many threads will wake, and notify wait_for_sleepers.
-            guard.deadlines.push(deadline);
-            self.inner.condvar.notify_all();
+        mock_sleep(&self.inner, duration);
+    }
 
-            // Signal settlement: this thread has (re-)entered sleep.
-            {
-                let mut ss = self.inner.settlement_state.lock().unwrap();
-                ss.settled += 1;
-                self.inner.settlement.notify_all();
-            }
+    fn for_thread(&self) -> Arc<dyn Clock> {
+        Arc::new(ParticipantMockClock {
+            clock: self.clone(),
+        })
+    }
+}
 
-            while guard.time < deadline {
-                guard = self.inner.condvar.wait(guard).unwrap();
-            }
+/// Shared sleep implementation for `MockClock` and `ParticipantMockClock`.
+fn mock_sleep(inner: &MockClockInner, duration: Duration) {
+    let mut guard = inner.state.lock().unwrap();
+    let deadline = guard.time + duration;
+    if guard.time < deadline {
+        // Register deadline so advance_and_settle() can count
+        // how many threads will wake, and notify wait_for_sleepers.
+        guard.deadlines.push(deadline);
+        inner.condvar.notify_all();
 
-            // Deregister deadline (we're leaving sleep).
-            guard.deadlines.retain(|d| *d != deadline);
+        // Signal settlement: this thread has (re-)entered sleep.
+        {
+            let mut ss = inner.settlement_state.lock().unwrap();
+            ss.settled += 1;
+            inner.settlement.notify_all();
         }
+
+        while guard.time < deadline {
+            guard = inner.condvar.wait(guard).unwrap();
+        }
+
+        // Deregister deadline (we're leaving sleep).
+        guard.deadlines.retain(|d| *d != deadline);
+    }
+}
+
+/// A per-thread mock clock that signals departure from the settlement
+/// protocol when dropped. Created by [`MockClock::for_thread()`].
+///
+/// When the thread holding this clock exits (normally or via panic),
+/// the clock drops and increments the departure counter, so
+/// `advance_and_settle()` won't block waiting for a dead thread to
+/// re-enter `sleep()`.
+struct ParticipantMockClock {
+    clock: MockClock,
+}
+
+impl Clock for ParticipantMockClock {
+    fn now(&self) -> DateTime<Utc> {
+        self.clock.now()
+    }
+
+    fn sleep(&self, duration: Duration) {
+        mock_sleep(&self.clock.inner, duration);
+    }
+
+    fn for_thread(&self) -> Arc<dyn Clock> {
+        self.clock.for_thread()
+    }
+}
+
+impl Drop for ParticipantMockClock {
+    fn drop(&mut self) {
+        let mut ss = self.clock.inner.settlement_state.lock().unwrap();
+        ss.departed += 1;
+        self.clock.inner.settlement.notify_all();
     }
 }
 

@@ -877,136 +877,38 @@ differential testing across implementation strategies.
 
 ---
 
-## Known limitation: settlement tracking is fragile
+## Resolved: settlement tracking for departing threads
 
-### Problem
+### Problem (resolved)
 
-`advance_and_settle` counts woken threads from the deadline registry
-and waits for all of them to re-enter `clock.sleep()`. If a woken
-thread exits its loop instead of re-sleeping (thread shutdown, panic,
-early return), `settled` never reaches `expected`, and
-`advance_and_settle` blocks until `ACK_TIMEOUT` (10s).
+`advance_and_settle` counted woken threads from the deadline registry
+and waited for all of them to re-enter `clock.sleep()`. If a woken
+thread exited its loop instead of re-sleeping, `settled` never reached
+`expected`, and `advance_and_settle` blocked until `ACK_TIMEOUT`.
 
-This was discovered with the clipboard capture thread (`c9acc7b`):
-`CaptureHandle::pause()` called `stop_clipboard()` which set
-`stop=true` and joined the thread. On the stop tick, the clipboard
-thread woke, saw `stop=true`, exited its loop, and never re-entered
-`clock.sleep()`. Fix: clipboard now uses a `paused` flag like the
-other capture threads, staying alive (sleeping) during pause.
+### Solution: participant clocks with departure tracking
 
-The fix works but is specific to clipboard. The underlying fragility
-remains: any thread that exits without re-sleeping breaks settlement.
+The `Clock` trait gained `fn for_thread(&self) -> Arc<dyn Clock>`.
+`MockClock::for_thread()` returns a `ParticipantMockClock` that wraps
+the shared clock and signals departure on drop. When a thread exits
+(normally or via panic), its participant clock drops, incrementing a
+monotonic `departed` counter in `SettlementState`. `advance_and_settle`
+snapshots the counter before waking threads and waits for
+`settled + departures_since_snapshot >= expected`.
 
-### Improvement 1: MockClock participant tracking via Arc
+`spawn_clock_thread()` is the standard way to spawn a clock-aware
+thread: it calls `for_thread()` and passes the participant clock to
+the closure. All four capture threads (editor, diff, ext, clipboard)
+use it. The daemon main loop calls `clock.for_thread()` directly.
 
-Track how many threads are **capable** of sleeping, not just how many
-are currently sleeping. This lets `advance_and_settle` detect when a
-thread has permanently exited.
+Backward compatible: if `for_thread()` is never called, `departed`
+stays 0, and the condition reduces to `settled >= expected`.
 
-**Design:** Each thread that participates in the mock clock holds a
-`ClockParticipant` handle (a lightweight RAII guard wrapping an
-`Arc`). The mock clock tracks participants via `Arc::strong_count()`
-or an explicit counter:
-
-```rust
-/// RAII guard: while held, this thread is a clock participant.
-/// Dropping it signals that the thread will never call sleep() again.
-struct ClockParticipant {
-    inner: Arc<()>,  // shared with MockClockInner
-}
-
-struct MockClockInner {
-    // ... existing fields ...
-    /// One Arc per participant. strong_count() tells how many
-    /// threads are alive and capable of sleeping.
-    participant_anchor: Arc<()>,
-}
-```
-
-`advance_and_settle` would compute `expected` as:
-`min(woken_by_deadline, live_participants - 1)` (minus 1 for the
-reader thread, which never sleeps). If a thread exits and drops its
-`ClockParticipant`, `strong_count` decreases, and `expected`
-adjusts automatically.
-
-**Alternatively**, use an explicit `AtomicUsize` counter incremented
-on `ClockParticipant::new()` and decremented on drop:
-
-```rust
-struct ClockParticipant {
-    counter: Arc<AtomicUsize>,
-}
-
-impl Drop for ClockParticipant {
-    fn drop(&mut self) {
-        self.counter.fetch_sub(1, Ordering::Release);
-        // Notify settlement condvar so advance_and_settle can re-check.
-        // (needs access to the condvar — either store it in the struct
-        // or use a shared notification channel)
-    }
-}
-```
-
-The `AtomicUsize` approach is cleaner because it doesn't rely on
-`Arc::strong_count()` (which counts all clones, not just the ones
-representing participants). The drop notifies the settlement condvar
-so `advance_and_settle` can immediately re-evaluate `expected` when
-a thread exits, rather than waiting for a timeout.
-
-**Impact:** Threads that exit during a tick would no longer block
-settlement. `advance_and_settle` would see `expected` decrease and
-return as soon as all *remaining* participants have settled. No
-`ACK_TIMEOUT` fallback needed for this case.
-
-**Scope:** This is a `MockClock`-level change. Each daemon thread
-that calls `clock.sleep()` would acquire a `ClockParticipant` at
-startup and hold it for the thread's lifetime. The change is
-mechanical — find every thread that calls `clock.sleep()`, add
-a participant handle.
-
-### Improvement 2: condvar-based pause/resume for capture threads
+### Future improvement: condvar-based pause/resume
 
 Currently all capture threads poll their `paused` and `stop` flags
 via `AtomicBool` loads at the top of each loop iteration. State
-changes (pause, resume, stop) take effect only when the thread wakes
-from its current `clock.sleep()` — up to `POLL_MS` of mock time
-later.
-
-**Design:** Replace the atomic flags with a shared condvar that
-capture threads wait on alongside their sleep deadline:
-
-```rust
-struct CaptureControl {
-    state: Mutex<CaptureState>,
-    notify: Condvar,
-}
-
-enum CaptureState {
-    Running,
-    Paused,
-    Stopped,
-}
-```
-
-Instead of `clock.sleep(poll_ms)`, capture threads would use a
-combined wait: sleep for the poll interval OR until the control
-condvar is notified, whichever comes first. On notification, the
-thread checks `CaptureState` and acts immediately (enter paused
-sleep loop, exit, etc.).
-
-**Benefits:**
-- Pause/resume/stop take effect immediately, not after a poll interval.
-- In test mode, mock time doesn't need to advance through polling
-  intervals for threads to notice state changes.
-- Cleaner than the atomic flag pattern — state transitions are
-  explicit enum variants, not combinations of two booleans.
-
-**Complexity:** The `clock.sleep()` API would need a variant that
-accepts an external condvar (or a cancellation token) to allow
-early wakeup. This touches the `Clock` trait, so it's a broader
-change. Alternatively, threads could use a short sleep (e.g. 10ms)
-in a loop that checks the condvar between sleeps — simpler but less
-efficient.
-
-**Priority:** Low. The current polling works correctly. This is a
-latency and code-cleanliness improvement, not a correctness fix.
+changes take effect only when the thread wakes from its current
+`clock.sleep()`. Replacing the atomic flags with a condvar-based
+`CaptureControl` would make state transitions immediate. Low
+priority — current polling works correctly.

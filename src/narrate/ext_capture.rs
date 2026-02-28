@@ -143,55 +143,59 @@ pub(super) fn spawn(
         return None;
     }
 
-    Some(thread::spawn(move || {
-        let mut tracker = ExtDwellTracker::new();
+    Some(crate::clock::spawn_clock_thread(
+        "ext",
+        &*clock,
+        move |clock| {
+            let mut tracker = ExtDwellTracker::new();
 
-        while !stop.load(Ordering::Relaxed) {
-            if paused.load(Ordering::Relaxed) {
-                clock.sleep(Duration::from_millis(PAUSED_POLL_MS));
-                continue;
-            }
-
-            clock.sleep(Duration::from_millis(EXT_POLL_MS));
-
-            let now = clock.now();
-
-            // Query the platform backend.
-            let Some(snapshot) = source.query() else {
-                continue;
-            };
-
-            // Skip apps in the ignore list (case-insensitive).
-            if ignore_apps
-                .iter()
-                .any(|ignored| ignored.eq_ignore_ascii_case(&snapshot.app))
-            {
-                continue;
-            }
-
-            // Emit or extend based on tracker result.
-            match tracker.update(snapshot, now) {
-                ExtUpdate::New(snapshot) => {
-                    let timestamp = clock.now();
-                    events.lock().unwrap().push(Event::ExternalSelection {
-                        timestamp,
-                        last_seen: timestamp,
-                        app: snapshot.app,
-                        window_title: snapshot.window_title,
-                        text: snapshot.selected_text.unwrap_or_default(),
-                    });
+            while !stop.load(Ordering::Relaxed) {
+                if paused.load(Ordering::Relaxed) {
+                    clock.sleep(Duration::from_millis(PAUSED_POLL_MS));
+                    continue;
                 }
-                ExtUpdate::Extend => {
-                    let now_utc = clock.now();
-                    let mut guard = events.lock().unwrap();
-                    if let Some(Event::ExternalSelection { last_seen, .. }) = guard.last_mut() {
-                        *last_seen = now_utc;
+
+                clock.sleep(Duration::from_millis(EXT_POLL_MS));
+
+                let now = clock.now();
+
+                // Query the platform backend.
+                let Some(snapshot) = source.query() else {
+                    continue;
+                };
+
+                // Skip apps in the ignore list (case-insensitive).
+                if ignore_apps
+                    .iter()
+                    .any(|ignored| ignored.eq_ignore_ascii_case(&snapshot.app))
+                {
+                    continue;
+                }
+
+                // Emit or extend based on tracker result.
+                match tracker.update(snapshot, now) {
+                    ExtUpdate::New(snapshot) => {
+                        let timestamp = clock.now();
+                        events.lock().unwrap().push(Event::ExternalSelection {
+                            timestamp,
+                            last_seen: timestamp,
+                            app: snapshot.app,
+                            window_title: snapshot.window_title,
+                            text: snapshot.selected_text.unwrap_or_default(),
+                        });
                     }
+                    ExtUpdate::Extend => {
+                        let now_utc = clock.now();
+                        let mut guard = events.lock().unwrap();
+                        if let Some(Event::ExternalSelection { last_seen, .. }) = guard.last_mut() {
+                            *last_seen = now_utc;
+                        }
+                    }
+                    ExtUpdate::None => {}
                 }
-                ExtUpdate::None => {}
             }
-        }
-    }))
+        },
+    ))
 }
 
 #[cfg(test)]

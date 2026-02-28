@@ -1201,7 +1201,7 @@ pub fn daemon(clock: Arc<dyn Clock>) -> anyhow::Result<()> {
 
     let now = clock.now();
     let mut state = DaemonState {
-        clock,
+        clock: clock.for_thread(),
         transcriber,
         audio_capture: Some(capture),
         editor_capture: Some(editor_events),

@@ -164,7 +164,7 @@ pub(super) fn spawn(
     events: Arc<Mutex<Vec<Event>>>,
     open_paths: Arc<Mutex<Vec<Utf8PathBuf>>>,
 ) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
+    crate::clock::spawn_clock_thread("editor", &*clock, move |clock| {
         let mut lang_cache = view::LanguageCache::new();
         let mut tracker = DwellTracker::new(TimeDelta::milliseconds(CURSOR_DWELL_MS as i64));
 

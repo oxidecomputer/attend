@@ -32,6 +32,14 @@ and the test harness that were designed after items 4-5 landed:
 
 All prerequisites for item 6 are complete.
 
+### Infrastructure improvements
+
+- [x] `ParticipantMockClock` and `spawn_clock_thread()` — `3f5d351`.
+  Settlement tracks thread departures via monotonic counter, so threads
+  that exit without re-sleeping no longer block `advance_and_settle()`.
+  All capture threads and the daemon main loop use participant clocks.
+  Resolves the "Known limitation" in `phase-20-testing.md`.
+
 ### Bug fixes discovered during implementation
 
 - `92f8cc7` — Fix vacuous empty-string match in clipboard dedup

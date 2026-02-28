@@ -204,53 +204,57 @@ pub(super) fn spawn(
     let seed_image = source.get_image();
     let mut tracker = ClipboardTracker::new_seeded(seed_text.as_deref(), seed_image.as_ref());
 
-    Some(std::thread::spawn(move || {
-        while !stop.load(Ordering::Relaxed) {
-            if paused.load(Ordering::Relaxed) {
-                clock.sleep(Duration::from_millis(PAUSED_POLL_MS));
-                continue;
-            }
+    Some(crate::clock::spawn_clock_thread(
+        "clipboard",
+        &*clock,
+        move |clock| {
+            while !stop.load(Ordering::Relaxed) {
+                if paused.load(Ordering::Relaxed) {
+                    clock.sleep(Duration::from_millis(PAUSED_POLL_MS));
+                    continue;
+                }
 
-            // Re-seed after resume: treat current clipboard as baseline
-            // so changes during pause aren't captured.
-            if reseed.swap(false, Ordering::Relaxed) {
+                // Re-seed after resume: treat current clipboard as baseline
+                // so changes during pause aren't captured.
+                if reseed.swap(false, Ordering::Relaxed) {
+                    let text = source.get_text();
+                    let image = source.get_image();
+                    tracker = ClipboardTracker::new_seeded(text.as_deref(), image.as_ref());
+                }
+
+                clock.sleep(Duration::from_millis(CLIPBOARD_POLL_MS));
+
+                // Try text first, then image. First success wins.
                 let text = source.get_text();
-                let image = source.get_image();
-                tracker = ClipboardTracker::new_seeded(text.as_deref(), image.as_ref());
-            }
+                let image_data = source.get_image();
 
-            clock.sleep(Duration::from_millis(CLIPBOARD_POLL_MS));
-
-            // Try text first, then image. First success wins.
-            let text = source.get_text();
-            let image_data = source.get_image();
-
-            match tracker.check(text.as_deref(), image_data.as_ref()) {
-                ClipboardUpdate::Changed(ClipboardContent::Text { text }) => {
-                    let timestamp = clock.now();
-                    events.lock().unwrap().push(Event::ClipboardSelection {
-                        timestamp,
-                        content: ClipboardContent::Text { text },
-                    });
+                match tracker.check(text.as_deref(), image_data.as_ref()) {
+                    ClipboardUpdate::Changed(ClipboardContent::Text { text }) => {
+                        let timestamp = clock.now();
+                        events.lock().unwrap().push(Event::ClipboardSelection {
+                            timestamp,
+                            content: ClipboardContent::Text { text },
+                        });
+                    }
+                    ClipboardUpdate::Changed(ClipboardContent::Image { .. }) => {
+                        // Encode the image to PNG and stage it.
+                        let Some(ref img) = image_data else {
+                            continue;
+                        };
+                        let Some(path) = stage_image_png(img, &staging_dir, clock.now()) else {
+                            continue;
+                        };
+                        let timestamp = clock.now();
+                        events.lock().unwrap().push(Event::ClipboardSelection {
+                            timestamp,
+                            content: ClipboardContent::Image { path },
+                        });
+                    }
+                    ClipboardUpdate::Unchanged => {}
                 }
-                ClipboardUpdate::Changed(ClipboardContent::Image { .. }) => {
-                    // Encode the image to PNG and stage it.
-                    let Some(ref img) = image_data else {
-                        continue;
-                    };
-                    let Some(path) = stage_image_png(img, &staging_dir, clock.now()) else {
-                        continue;
-                    };
-                    let timestamp = clock.now();
-                    events.lock().unwrap().push(Event::ClipboardSelection {
-                        timestamp,
-                        content: ClipboardContent::Image { path },
-                    });
-                }
-                ClipboardUpdate::Unchanged => {}
             }
-        }
-    }))
+        },
+    ))
 }
 
 /// Encode image data to PNG and write to the clipboard staging directory.

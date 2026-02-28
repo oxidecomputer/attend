@@ -181,3 +181,51 @@ fn settlement_multiple_cycles() {
         assert_eq!(cycle_count.load(Ordering::Acquire), i);
     }
 }
+
+/// Settlement completes when a woken thread exits instead of re-sleeping,
+/// provided it uses a participant clock (via `for_thread()`).
+#[test]
+fn settlement_completes_on_participant_departure() {
+    let clock = MockClock::new(Utc::now());
+
+    let thread_clock = clock.for_thread();
+    let _worker = std::thread::spawn(move || {
+        thread_clock.sleep(Duration::from_millis(100));
+        // Thread exits without re-sleeping. The ParticipantMockClock
+        // drops, signaling departure so settlement doesn't block.
+    });
+
+    clock.wait_for_sleepers(1);
+    clock.advance_and_settle(Duration::from_millis(100));
+    // If we get here, settlement correctly handled the departure.
+}
+
+/// Settlement handles a mix of threads that re-sleep and threads that depart.
+#[test]
+fn settlement_mixed_resleep_and_departure() {
+    let clock = MockClock::new(Utc::now());
+    let work_done = Arc::new(AtomicBool::new(false));
+
+    // Thread A: loops and re-sleeps (stays alive).
+    let stayer_clock = clock.for_thread();
+    let done = Arc::clone(&work_done);
+    let _stayer = std::thread::spawn(move || {
+        loop {
+            stayer_clock.sleep(Duration::from_millis(100));
+            done.store(true, Ordering::Release);
+        }
+    });
+
+    // Thread B: sleeps once, then exits.
+    let leaver_clock = clock.for_thread();
+    let _leaver = std::thread::spawn(move || {
+        leaver_clock.sleep(Duration::from_millis(100));
+        // Exits — participant clock drops.
+    });
+
+    clock.wait_for_sleepers(2);
+    clock.advance_and_settle(Duration::from_millis(100));
+
+    // Thread A settled by re-sleeping, Thread B settled by departing.
+    assert!(work_done.load(Ordering::Acquire));
+}
