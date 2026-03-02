@@ -693,6 +693,34 @@ The one long-lived connection (`Wait`) gets its own thread that blocks on a
 channel receiver until the daemon signals readiness. No tokio, no futures,
 no async runtime overhead.
 
+### Settlement tracking for the acceptor thread
+
+The acceptor thread must participate in the MockClock settlement
+protocol. Commands like `Toggle`, `Stop`, `Pause`, and
+`ActivateSession` mutate daemon state that capture threads observe. If
+the acceptor runs outside settlement, a capture thread could observe a
+state change mid-tick, breaking determinism.
+
+The acceptor thread should use `clock.for_thread()` to get a
+`ParticipantMockClock` (departure tracking on exit) and bracket its
+`accept()` call with `clock.park()` (settled while waiting for a
+connection, expected += 1 when a connection arrives). This way
+`advance_and_settle()` won't return until the acceptor has finished
+processing any in-flight command and is back waiting on `accept()`.
+
+The harness controls when commands are sent relative to time advances,
+so it can choose to send a command before or after an advance. Settlement
+guarantees the command is fully processed before the next tick begins.
+
+The `Wait` thread similarly needs settlement tracking: `park()` around
+its channel `recv()`, so settlement knows it's blocked and not
+mid-processing.
+
+Note: `clippy.toml` already flags `UnixListener::accept`,
+`Receiver::recv`, and bare condvar waits as `disallowed_methods`. The
+acceptor and wait threads will need `#[allow(clippy::disallowed_methods)]`
+annotations with comments confirming they are park-guarded.
+
 ---
 
 ## Migration path

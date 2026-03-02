@@ -272,7 +272,9 @@ fn init_connects_and_processes_inject_messages() {
     init();
     connect();
 
-    // Accept the connection.
+    // Accept the connection (test thread acting as harness, not
+    // clock-managed).
+    #[allow(clippy::disallowed_methods)]
     let (stream, _) = listener.accept().unwrap();
     let mut reader = BufReader::new(&stream);
 

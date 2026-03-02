@@ -1,28 +1,55 @@
 # Project-level clippy configuration.
 #
-# These rules enforce the clock and settlement protocol conventions:
-# all sleeps go through SyncClock, and condvar waits use park guards.
+# These rules enforce the clock and settlement protocol conventions.
+#
+# Any operation that can block a thread indefinitely must be visible to
+# the MockClock settlement protocol, either by going through
+# SyncClock::sleep() or by bracketing the block with SyncClock::park().
+# Operations that are invisible to settlement cause advance_and_settle()
+# to hang waiting for a thread that will never re-enter sleep().
+#
+# Legitimate uses add #[allow(clippy::disallowed_methods)] with a
+# comment explaining why the block is safe (e.g. not on a clock-managed
+# thread, or correctly park-guarded).
+#
+# NOT LINTED (too broad to flag as methods, enforce via design review):
+# - Blocking socket/pipe reads (Read::read, BufRead::read_line): these
+#   are trait methods that also cover file I/O. A blocking read on a
+#   socket in a clock-managed thread is just as invisible to settlement
+#   as a condvar wait. Use non-blocking I/O with try_read() in a
+#   clock.sleep() poll loop, or bracket with park() and have the test
+#   harness write to the socket to unblock.
 
 disallowed-methods = [
-    # All thread sleeping must go through SyncClock::sleep() so the
-    # MockClock settlement protocol can track it. Direct thread::sleep
-    # is invisible to the test harness and breaks deterministic time.
-    #
-    # Legitimate exceptions (audio playback, test coordination) use
-    # #[allow(clippy::disallowed_methods)] with an explaining comment.
+    # --- Thread sleeping ---
+    # All thread sleeping must go through SyncClock::sleep().
     { path = "std::thread::sleep", reason = "use SyncClock::sleep() for settlement-compatible sleeping" },
 
-    # Condvar waits in clock-managed threads must be bracketed by a
-    # SyncClock::park() guard so advance_and_settle() can track the
-    # blocked thread. Bare condvar waits are invisible to settlement
-    # and can cause hangs.
-    #
-    # The mock-clock crate's internal condvar usage is exempt (it has
-    # its own clippy.toml). In the main crate, the only legitimate
-    # condvar wait is in CaptureControl::wait_while_paused(), which
-    # is already park-guarded.
+    # --- Thread parking ---
+    # Easily confused with SyncClock::park() but completely unrelated.
+    { path = "std::thread::park", reason = "use SyncClock::park() for settlement-compatible blocking; std::thread::park is invisible to the clock" },
+    { path = "std::thread::park_timeout", reason = "use SyncClock::sleep() for settlement-compatible timed blocking" },
+
+    # --- Condvar waits ---
+    # Must be bracketed by a SyncClock::park() guard. The mock-clock
+    # crate's internal condvar usage is exempt (it has its own
+    # clippy.toml).
     { path = "std::sync::Condvar::wait", reason = "use SyncClock::park() guard around condvar waits in clock-managed threads" },
     { path = "std::sync::Condvar::wait_while", reason = "use SyncClock::park() guard around condvar waits in clock-managed threads" },
     { path = "std::sync::Condvar::wait_timeout", reason = "use SyncClock::park() guard around condvar waits in clock-managed threads" },
     { path = "std::sync::Condvar::wait_timeout_while", reason = "use SyncClock::park() guard around condvar waits in clock-managed threads" },
+
+    # --- Channel receives ---
+    # Blocking recv() waits indefinitely for a message. Use try_recv()
+    # in a clock.sleep() poll loop, or bracket with park() if the
+    # channel is driven by another clock-managed thread.
+    { path = "std::sync::mpsc::Receiver::recv", reason = "use try_recv() in a SyncClock::sleep() loop, or bracket with SyncClock::park()" },
+    { path = "std::sync::mpsc::Receiver::recv_timeout", reason = "use try_recv() in a SyncClock::sleep() loop" },
+
+    # --- Socket / listener operations ---
+    # These block indefinitely waiting for I/O. In clock-managed
+    # threads, bracket with SyncClock::park(). The test_mode inject
+    # reader is exempt (it is the settlement driver, not a participant).
+    { path = "std::os::unix::net::UnixListener::accept", reason = "bracket with SyncClock::park() in clock-managed threads" },
+    { path = "std::os::unix::net::UnixListener::incoming", reason = "bracket with SyncClock::park() in clock-managed threads" },
 ]

@@ -653,6 +653,33 @@ The harness cannot observe daemon-internal state (in-memory buffers,
 thread state, model load status). This is intentional — the `RunTrace`
 captures the contract, not the implementation.
 
+### Intra-tick ordering and trace equivalence
+
+The MockClock settlement protocol linearizes *ticks*: each
+`advance_and_settle()` completes before the next begins, and every
+thread is in a known blocked state (sleeping or parked) before the
+harness proceeds. But within a single tick, concurrently woken threads
+execute in nondeterministic OS scheduling order.
+
+This means two events with the same mock timestamp may appear in
+either order in the trace. The oracle must treat same-timestamp events
+as an unordered set. Concretely:
+
+- **Differential oracle**: before comparing traces, sort events within
+  each timestamp group. Two runs that produce the same events in
+  different intra-tick order are equivalent.
+- **Declarative oracle**: express invariants in terms that don't depend
+  on intra-tick ordering (e.g., "after N ticks, these events have been
+  emitted" rather than "events appear in this exact sequence").
+- **Proptest**: when generating expected output from an action sequence,
+  group by timestamp and compare as sets, not lists.
+
+This is a fundamental property of the settlement protocol: it provides
+deterministic time and quiescence, not deterministic scheduling.
+Capture threads write to independent event vecs, so intra-tick
+ordering rarely affects outcomes, but the oracle must not assume a
+total order within a tick.
+
 ---
 
 ## Test harness
