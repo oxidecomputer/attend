@@ -62,11 +62,11 @@ impl NarrateCommand {
 
         let clock = crate::clock::process_clock();
         match self {
-            NarrateCommand::Toggle => record::toggle(&*clock),
-            NarrateCommand::Start => record::start(&*clock),
-            NarrateCommand::Stop => record::stop(&*clock),
+            NarrateCommand::Toggle => record::toggle(&*clock.for_thread()),
+            NarrateCommand::Start => record::start(&*clock.for_thread()),
+            NarrateCommand::Stop => record::stop(&*clock.for_thread()),
             NarrateCommand::Pause => record::pause(),
-            NarrateCommand::Yank => record::yank(&*clock),
+            NarrateCommand::Yank => record::yank(&*clock.for_thread()),
             NarrateCommand::Status => crate::narrate::status(),
             NarrateCommand::Clean { older_than } => crate::narrate::clean(older_than),
             NarrateCommand::RecordDaemon => record::daemon(clock),

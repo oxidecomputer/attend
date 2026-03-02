@@ -1,0 +1,28 @@
+# Project-level clippy configuration.
+#
+# These rules enforce the clock and settlement protocol conventions:
+# all sleeps go through SyncClock, and condvar waits use park guards.
+
+disallowed-methods = [
+    # All thread sleeping must go through SyncClock::sleep() so the
+    # MockClock settlement protocol can track it. Direct thread::sleep
+    # is invisible to the test harness and breaks deterministic time.
+    #
+    # Legitimate exceptions (audio playback, test coordination) use
+    # #[allow(clippy::disallowed_methods)] with an explaining comment.
+    { path = "std::thread::sleep", reason = "use SyncClock::sleep() for settlement-compatible sleeping" },
+
+    # Condvar waits in clock-managed threads must be bracketed by a
+    # SyncClock::park() guard so advance_and_settle() can track the
+    # blocked thread. Bare condvar waits are invisible to settlement
+    # and can cause hangs.
+    #
+    # The mock-clock crate's internal condvar usage is exempt (it has
+    # its own clippy.toml). In the main crate, the only legitimate
+    # condvar wait is in CaptureControl::wait_while_paused(), which
+    # is already park-guarded.
+    { path = "std::sync::Condvar::wait", reason = "use SyncClock::park() guard around condvar waits in clock-managed threads" },
+    { path = "std::sync::Condvar::wait_while", reason = "use SyncClock::park() guard around condvar waits in clock-managed threads" },
+    { path = "std::sync::Condvar::wait_timeout", reason = "use SyncClock::park() guard around condvar waits in clock-managed threads" },
+    { path = "std::sync::Condvar::wait_timeout_while", reason = "use SyncClock::park() guard around condvar waits in clock-managed threads" },
+]

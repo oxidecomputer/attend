@@ -25,7 +25,7 @@ use super::{
     flush_sentinel_path, pause_sentinel_path, pending_dir, record_lock_path, resolve_session,
     stop_sentinel_path, yank_sentinel_path, yanked_dir,
 };
-use crate::clock::Clock;
+use crate::clock::{Clock, SyncClock};
 use crate::config::Config;
 use crate::state::SessionId;
 use crate::util::format_utc_nanos;
@@ -111,7 +111,7 @@ impl DeferredTranscriber {
 /// }
 /// ```
 struct DaemonState {
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn SyncClock>,
     transcriber: DeferredTranscriber,
     /// Audio capture handle. `Some` during recording, `None` after finalize.
     audio_capture: Option<Box<dyn audio::AudioSource>>,
@@ -766,7 +766,7 @@ impl DaemonState {
 /// - **Lock + no pause sentinel** → recording → send stop (daemon enters idle).
 /// - **Lock + pause sentinel** → idle → delete pause sentinel (daemon resumes).
 /// - **No lock** → spawn new daemon.
-pub fn toggle(clock: &dyn Clock) -> anyhow::Result<()> {
+pub fn toggle(clock: &dyn SyncClock) -> anyhow::Result<()> {
     let lock = record_lock_path();
     if lock.exists() {
         if is_lock_stale(&lock) {
@@ -816,7 +816,7 @@ pub(crate) fn is_lock_stale(lock_path: &Utf8Path) -> bool {
 /// - **No lock** → spawn new daemon.
 /// - **Lock + pause sentinel (idle)** → resume by deleting pause sentinel.
 /// - **Lock + recording** → flush (submit current narration, keep recording).
-pub fn start(clock: &dyn Clock) -> anyhow::Result<()> {
+pub fn start(clock: &dyn SyncClock) -> anyhow::Result<()> {
     let lock = record_lock_path();
 
     if lock.exists() {
@@ -842,7 +842,7 @@ pub fn start(clock: &dyn Clock) -> anyhow::Result<()> {
 ///
 /// When no agent session is active, the daemon writes to `yanked/` and
 /// this function copies the content to the clipboard.
-fn flush(clock: &dyn Clock) -> anyhow::Result<()> {
+fn flush(clock: &dyn SyncClock) -> anyhow::Result<()> {
     let session_id = resolve_session(None);
     let to_clipboard = session_id.is_none();
 
@@ -924,7 +924,7 @@ fn spawn_daemon() -> anyhow::Result<()> {
 /// this function copies the content to the clipboard.
 ///
 /// If not recording (no lock or already idle), this is a no-op.
-pub fn stop(clock: &dyn Clock) -> anyhow::Result<()> {
+pub fn stop(clock: &dyn SyncClock) -> anyhow::Result<()> {
     if !record_lock_path().exists() {
         eprintln!("Not recording. Run `attend narrate toggle` or `attend narrate start` to begin.");
         return Ok(());
@@ -998,7 +998,7 @@ pub fn pause() -> anyhow::Result<()> {
 /// Writes the yank sentinel (not stop), waits for the daemon to exit, reads
 /// the yanked output, renders to markdown, and copies to clipboard. If no
 /// content was captured, prints a message and leaves the clipboard unchanged.
-pub fn yank(clock: &dyn Clock) -> anyhow::Result<()> {
+pub fn yank(clock: &dyn SyncClock) -> anyhow::Result<()> {
     if !record_lock_path().exists() {
         eprintln!("Not recording. Run `attend narrate toggle` or `attend narrate start` to begin.");
         return Ok(());

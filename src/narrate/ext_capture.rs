@@ -12,7 +12,6 @@
 #[cfg(target_os = "macos")]
 mod macos;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -25,9 +24,6 @@ use super::merge::Event;
 
 /// How often to poll for external selection changes (ms).
 const EXT_POLL_MS: u64 = 200;
-
-/// Sleep interval when paused (ms).
-const PAUSED_POLL_MS: u64 = 500;
 
 /// Minimum dwell time before emitting an external selection (ms).
 /// A snapshot of the currently selected text in the focused application.
@@ -126,12 +122,11 @@ impl ExtDwellTracker {
 ///
 /// Returns the join handle, or `None` if accessibility permission is not
 /// granted. The thread pushes `ExternalSelection` events into `events`
-/// until `stop` is set.
+/// until stopped via `control`.
 pub(super) fn spawn(
     source: Box<dyn ExternalSource>,
     clock: Arc<dyn Clock>,
-    stop: Arc<AtomicBool>,
-    paused: Arc<AtomicBool>,
+    control: Arc<super::capture::CaptureControl>,
     events: Arc<Mutex<Vec<Event>>>,
     ignore_apps: Vec<String>,
 ) -> Option<thread::JoinHandle<()>> {
@@ -149,10 +144,9 @@ pub(super) fn spawn(
         move |clock| {
             let mut tracker = ExtDwellTracker::new();
 
-            while !stop.load(Ordering::Relaxed) {
-                if paused.load(Ordering::Relaxed) {
-                    clock.sleep(Duration::from_millis(PAUSED_POLL_MS));
-                    continue;
+            loop {
+                if control.wait_while_paused(&*clock) {
+                    break;
                 }
 
                 clock.sleep(Duration::from_millis(EXT_POLL_MS));

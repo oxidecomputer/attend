@@ -12,7 +12,6 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -175,27 +174,19 @@ fn hash_image_data(img: &ImageData) -> u64 {
 /// How often to poll the clipboard for changes (ms).
 const CLIPBOARD_POLL_MS: u64 = 500;
 
-/// How often to poll while paused (ms). Slow loop just to keep the
-/// thread alive for MockClock settlement.
-const PAUSED_POLL_MS: u64 = 500;
-
 /// Spawn the clipboard polling thread.
 ///
 /// Returns the join handle. The thread pushes `ClipboardSelection`
-/// events into `events` until `stop` is set.
+/// events into `events` until stopped via `control`.
 ///
-/// Unlike other capture threads, clipboard polling has no paused state.
-/// The thread stays alive during pause (sleeping with `PAUSED_POLL_MS`)
-/// so `MockClock::advance_and_settle` can track it. On resume, the
-/// `reseed` flag tells the thread to re-seed its tracker from the
-/// current clipboard, so changes made while paused (e.g. yank copying
-/// rendered narration) are treated as baseline, not as new events.
+/// On resume, the `clipboard_reseed` flag in `CaptureControl` tells
+/// the thread to re-seed its tracker from the current clipboard, so
+/// changes made while paused (e.g. yank copying rendered narration)
+/// are treated as baseline, not as new events.
 pub(super) fn spawn(
     mut source: Box<dyn ClipboardSource>,
     clock: Arc<dyn Clock>,
-    stop: Arc<AtomicBool>,
-    paused: Arc<AtomicBool>,
-    reseed: Arc<AtomicBool>,
+    control: Arc<super::capture::CaptureControl>,
     events: Arc<Mutex<Vec<Event>>>,
     staging_dir: camino::Utf8PathBuf,
 ) -> Option<std::thread::JoinHandle<()>> {
@@ -208,15 +199,14 @@ pub(super) fn spawn(
         "clipboard",
         &*clock,
         move |clock| {
-            while !stop.load(Ordering::Relaxed) {
-                if paused.load(Ordering::Relaxed) {
-                    clock.sleep(Duration::from_millis(PAUSED_POLL_MS));
-                    continue;
+            loop {
+                if control.wait_while_paused(&*clock) {
+                    break;
                 }
 
                 // Re-seed after resume: treat current clipboard as baseline
                 // so changes during pause aren't captured.
-                if reseed.swap(false, Ordering::Relaxed) {
+                if control.take_clipboard_reseed() {
                     let text = source.get_text();
                     let image = source.get_image();
                     tracker = ClipboardTracker::new_seeded(text.as_deref(), image.as_ref());

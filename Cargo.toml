@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/test-harness", "tools/xtask"]
+members = [".", "crates/mock-clock", "crates/test-harness", "tools/xtask"]
 
 [package]
 name = "attend"
@@ -17,7 +17,11 @@ categories = ["command-line-utilities", "development-tools"]
 [lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
 
+[lints.clippy]
+disallowed_methods = "warn"
+
 [dependencies]
+attend-mock-clock = { path = "crates/mock-clock" }
 anyhow = "1"
 clap = { version = "4", features = ["derive", "color"] }
 crossterm = "0.29"

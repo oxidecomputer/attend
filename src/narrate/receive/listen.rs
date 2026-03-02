@@ -13,7 +13,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 
 use super::pending::{archive_pending, auto_prune, collect_pending};
 use super::read_pending;
-use crate::clock::Clock;
+use crate::clock::SyncClock;
 use crate::config::Config;
 use crate::narrate::transcribe::Engine;
 use crate::narrate::{receive_lock_path, resolve_session};
@@ -71,7 +71,11 @@ pub fn stop(session_filter: Option<String>) -> anyhow::Result<()> {
 ///
 /// Without `--wait`: check once, print if found, exit.
 /// With `--wait`: poll until narration arrives or session is stolen.
-pub fn run(wait: bool, session_flag: Option<String>, clock: Arc<dyn Clock>) -> anyhow::Result<()> {
+pub fn run(
+    wait: bool,
+    session_flag: Option<String>,
+    clock: Arc<dyn SyncClock>,
+) -> anyhow::Result<()> {
     let session_id = resolve_session(session_flag);
 
     if wait {
@@ -111,7 +115,7 @@ fn run_once(session_id: Option<SessionId>) -> anyhow::Result<()> {
 }
 
 /// Polling wait: hold a lock, poll for narration, detect session steal.
-fn run_wait(session_id: Option<SessionId>, clock: Arc<dyn Clock>) -> anyhow::Result<()> {
+fn run_wait(session_id: Option<SessionId>, clock: Arc<dyn SyncClock>) -> anyhow::Result<()> {
     let session_id = match session_id {
         Some(s) => s,
         None => {
@@ -196,7 +200,7 @@ fn run_wait(session_id: Option<SessionId>, clock: Arc<dyn Clock>) -> anyhow::Res
 fn acquire_lock_with_retry(
     lock_path: &Utf8Path,
     session_id: &SessionId,
-    clock: &dyn Clock,
+    clock: &dyn SyncClock,
 ) -> Option<lockfile::Lockfile> {
     // Fast path: try once.
     if let Some(guard) = try_lock(lock_path) {

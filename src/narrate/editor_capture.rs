@@ -7,7 +7,6 @@
 //! snapshots are deferred until the cursor rests for a configurable
 //! duration, while real selections emit immediately.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -146,20 +145,15 @@ impl DwellTracker {
     }
 }
 
-/// Sleep interval when paused: long enough to save CPU, short enough
-/// that resume is detected promptly.
-const PAUSED_POLL_MS: u64 = 500;
-
 /// Spawn the editor polling thread.
 ///
 /// Returns the join handle. The thread pushes `EditorSnapshot` events into
-/// `events` until `stop` is set. It also publishes the current set of open
-/// file paths into `open_paths` for the diff capture thread to read.
+/// `events` until stopped via `control`. It also publishes the current set
+/// of open file paths into `open_paths` for the diff capture thread to read.
 pub(super) fn spawn(
     source: Box<dyn EditorStateSource>,
     clock: Arc<dyn Clock>,
-    stop: Arc<AtomicBool>,
-    paused: Arc<AtomicBool>,
+    control: Arc<super::capture::CaptureControl>,
     cwd: Option<Utf8PathBuf>,
     events: Arc<Mutex<Vec<Event>>>,
     open_paths: Arc<Mutex<Vec<Utf8PathBuf>>>,
@@ -168,10 +162,9 @@ pub(super) fn spawn(
         let mut lang_cache = view::LanguageCache::new();
         let mut tracker = DwellTracker::new(TimeDelta::milliseconds(CURSOR_DWELL_MS as i64));
 
-        while !stop.load(Ordering::Relaxed) {
-            if paused.load(Ordering::Relaxed) {
-                clock.sleep(Duration::from_millis(PAUSED_POLL_MS));
-                continue;
+        loop {
+            if control.wait_while_paused(&*clock) {
+                break;
             }
 
             clock.sleep(Duration::from_millis(EDITOR_POLL_MS));

@@ -422,7 +422,7 @@ proptest! {
         // Collect words in the order they'd appear after sorting by timestamp
         // (the first thing compress_and_merge does).
         let mut sorted = events.clone();
-        sorted.sort_by(|a, b| a.timestamp().cmp(&b.timestamp()));
+        sorted.sort_by_key(|a| a.timestamp());
         let words_before: Vec<String> = sorted
             .iter()
             .filter_map(|e| match e {
@@ -711,7 +711,7 @@ proptest! {
     fn merge_preserves_diff_paths(events in arb_events()) {
         // Sort input the same way compress_and_merge does.
         let mut sorted = events.clone();
-        sorted.sort_by(|a, b| a.timestamp().cmp(&b.timestamp()));
+        sorted.sort_by_key(|a| a.timestamp());
 
         // For each wordless run, compute expected surviving diff paths.
         let mut expected_paths: std::collections::HashSet<String> = std::collections::HashSet::new();

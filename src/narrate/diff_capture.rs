@@ -9,7 +9,6 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -21,19 +20,15 @@ use crate::clock::Clock;
 /// How often to poll for file content changes (secs).
 const FILE_DIFF_POLL_SECS: u64 = 1;
 
-/// Sleep interval when paused (ms).
-const PAUSED_POLL_MS: u64 = 500;
-
 /// Spawn the file diff tracking thread.
 ///
 /// Reads the current set of open files from `open_paths` (published by
 /// the editor capture thread) instead of querying the editor directly.
 /// Returns the join handle. The thread pushes `FileDiff` events into
-/// `events` until `stop` is set.
+/// `events` until stopped via `control`.
 pub(super) fn spawn(
     clock: Arc<dyn Clock>,
-    stop: Arc<AtomicBool>,
-    paused: Arc<AtomicBool>,
+    control: Arc<super::capture::CaptureControl>,
     open_paths: Arc<Mutex<Vec<Utf8PathBuf>>>,
     events: Arc<Mutex<Vec<Event>>>,
 ) -> std::thread::JoinHandle<()> {
@@ -56,10 +51,9 @@ pub(super) fn spawn(
             }
         }
 
-        while !stop.load(Ordering::Relaxed) {
-            if paused.load(Ordering::Relaxed) {
-                clock.sleep(Duration::from_millis(PAUSED_POLL_MS));
-                continue;
+        loop {
+            if control.wait_while_paused(&*clock) {
+                break;
             }
 
             clock.sleep(Duration::from_secs(FILE_DIFF_POLL_SECS));

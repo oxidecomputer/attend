@@ -1,0 +1,9 @@
+[package]
+name = "attend-mock-clock"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Injectable clock with deterministic MockClock for tests"
+
+[dependencies]
+chrono = "0.4"

@@ -173,13 +173,13 @@ mod tests {
         /// Some(tag) or None — never a different tag.
         #[test]
         fn normalize_idempotent(s in "\\PC{0,50}") {
-            if let Some(ref tag) = normalize_language(&s) {
-                if let Some(ref tag2) = normalize_language(tag) {
-                    prop_assert_eq!(
-                        tag, tag2,
-                        "normalize is not idempotent: {:?} -> {:?} -> {:?}", s, tag, tag2
-                    );
-                }
+            if let Some(ref tag) = normalize_language(&s)
+                && let Some(ref tag2) = normalize_language(tag)
+            {
+                prop_assert_eq!(
+                    tag, tag2,
+                    "normalize is not idempotent: {:?} -> {:?} -> {:?}", s, tag, tag2
+                );
             }
         }
 

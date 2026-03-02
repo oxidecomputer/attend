@@ -1,0 +1,2 @@
+# Empty: the test harness doesn't use the clock or settlement protocol.
+# The restrictions in the workspace root's clippy.toml don't apply here.

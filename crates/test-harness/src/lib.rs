@@ -121,7 +121,6 @@ struct Connection {
     /// For reading ACK messages after `AdvanceTime`. Set with a read
     /// timeout (`ACK_TIMEOUT`) so bugs don't cause infinite hangs.
     reader: BufReader<UnixStream>,
-    argv: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -294,9 +293,8 @@ impl TestHarness {
         // for an ACK that will never arrive.
         let mut pre_dead = Vec::new();
         for (&pid, tracked) in &mut self.children {
-            match tracked.child.try_wait() {
-                Ok(Some(_)) => pre_dead.push(pid),
-                _ => {}
+            if let Ok(Some(_)) = tracked.child.try_wait() {
+                pre_dead.push(pid);
             }
         }
         if !pre_dead.is_empty() {
@@ -606,7 +604,6 @@ fn accept_loop(listener: UnixListener, shared: Arc<(Mutex<SharedState>, Condvar)
             Connection {
                 writer: BufWriter::new(stream),
                 reader,
-                argv: handshake.argv,
             },
         );
         cvar.notify_all();
@@ -637,7 +634,7 @@ fn collect_output(mut child: Child, status: ExitStatus) -> Output {
 impl Drop for TestHarness {
     fn drop(&mut self) {
         // Kill all tracked children (ephemeral CLI commands still running).
-        for (_, tracked) in &mut self.children {
+        for tracked in self.children.values_mut() {
             let _ = tracked.child.kill();
         }
 

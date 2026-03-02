@@ -36,7 +36,7 @@ impl GlanceArgs {
                 false,
                 None,
                 None,
-                crate::clock::process_clock(),
+                crate::clock::process_clock().for_thread(),
             )
         } else {
             if let Some(state) = crate::state::EditorState::current(self.dir.as_deref(), &[])? {

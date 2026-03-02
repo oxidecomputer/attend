@@ -54,7 +54,7 @@ impl LookArgs {
                 self.full,
                 self.before,
                 self.after,
-                crate::clock::process_clock(),
+                crate::clock::process_clock().for_thread(),
             )
         } else {
             let entries = if self.args.is_empty() {

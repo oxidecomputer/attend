@@ -163,6 +163,9 @@ fn play_buffer(samples: &[f32], sample_rate: f64) -> anyhow::Result<()> {
     stream.play()?;
 
     let duration_secs = samples.len() as f32 / sample_rate as f32 + PLAYBACK_PADDING_SECS;
+    // Audio playback timing: not clock-gated because chime is a
+    // no-op in test mode and doesn't participate in settlement.
+    #[allow(clippy::disallowed_methods)]
     std::thread::sleep(std::time::Duration::from_secs_f32(duration_secs));
 
     Ok(())

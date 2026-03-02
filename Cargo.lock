@@ -204,6 +204,7 @@ dependencies = [
  "accessibility-sys",
  "anyhow",
  "arboard",
+ "attend-mock-clock",
  "attend-test-harness",
  "audioadapter-buffers",
  "base64 0.22.1",
@@ -246,6 +247,13 @@ dependencies = [
  "webrtc-vad",
  "which 8.0.0",
  "whisper-rs",
+]
+
+[[package]]
+name = "attend-mock-clock"
+version = "0.1.0"
+dependencies = [
+ "chrono",
 ]
 
 [[package]]

@@ -6,7 +6,7 @@ use std::time::Duration;
 use camino::Utf8Path;
 
 use crate::cli::Format;
-use crate::clock::Clock;
+use crate::clock::SyncClock;
 use crate::state::EditorState;
 use crate::terminal::{AlternateScreen, clear_screen, fit_to_terminal, flush_stdout};
 
@@ -44,7 +44,7 @@ struct WatchConfig<'a> {
     full: bool,
     before: Option<usize>,
     after: Option<usize>,
-    clock: &'a dyn Clock,
+    clock: &'a dyn SyncClock,
 }
 
 /// Entry point for the watch loop (used by Glance --watch, Look --watch, and Meditate).
@@ -57,7 +57,7 @@ pub fn run(
     full: bool,
     before: Option<usize>,
     after: Option<usize>,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn SyncClock>,
 ) -> anyhow::Result<()> {
     let cfg = WatchConfig {
         mode,
@@ -149,7 +149,7 @@ fn sleep_interruptible(
     duration: Duration,
     interrupted: &AtomicBool,
     resized: &AtomicBool,
-    clock: &dyn Clock,
+    clock: &dyn SyncClock,
 ) {
     let timeout = chrono::TimeDelta::from_std(duration).unwrap_or(chrono::TimeDelta::MAX);
     let deadline = clock.now() + timeout;

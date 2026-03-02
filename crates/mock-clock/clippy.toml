@@ -1,0 +1,3 @@
+# Empty: the mock-clock crate's internal use of std::thread::sleep and
+# condvar waits is the implementation of the settlement protocol itself.
+# The restrictions in the workspace root's clippy.toml don't apply here.
