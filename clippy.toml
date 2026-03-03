@@ -12,6 +12,15 @@
 # comment explaining why the block is safe (e.g. not on a clock-managed
 # thread, or correctly park-guarded).
 #
+# THEORETICAL NOTE: park-guarding ANY blocking call is always correct,
+# including on the settlement driver thread and around brief mutex
+# contention. The park guard's settled/expected accounting is balanced
+# per guard lifecycle (settled +1 on creation, expected +1 on drop),
+# stale values are wiped by advance_and_settle's reset at each cycle,
+# and the guard is a no-op under RealClock. The only reason to omit a
+# park guard is cost (two mutex ops per guard under test) or noise
+# (annotations on every mutex lock), never correctness.
+#
 # NOT LINTED (too broad to flag as methods, enforce via design review):
 # - Blocking socket/pipe reads (Read::read, BufRead::read_line): these
 #   are trait methods that also cover file I/O. A blocking read on a
@@ -19,6 +28,8 @@
 #   as a condvar wait. Use non-blocking I/O with try_read() in a
 #   clock.sleep() poll loop, or bracket with park() and have the test
 #   harness write to the socket to unblock.
+# - Mutex::lock: brief contention, ubiquitous. Correct to park-guard
+#   but the cost/noise ratio is poor.
 
 disallowed-methods = [
     # --- Thread sleeping ---
