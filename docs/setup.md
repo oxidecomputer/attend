@@ -181,16 +181,37 @@ Paths:
 
 ### Microphone and accessibility permissions (macOS)
 
-The recording daemon needs microphone access. macOS prompts for permission the
-first time the daemon is launched from a given parent process. If narration
-starts but produces no speech, check **System Settings > Privacy & Security >
-Microphone** and ensure the **focused app** has microphone permissions, because
-the keyboard shortcut is triggering the script from within that app's context. A
-similar dance may be necessary to grant *accessibility* permissions as well.
+The recording daemon needs **Microphone** access for speech capture and
+**Accessibility** access for capturing text selections in other applications.
+On macOS, these permissions are granted to the `attend` binary itself —
+you grant each permission once, and it works regardless of which app
+(Zed, iTerm2, Terminal, Shortcuts) triggered the hotkey.
 
-If the permission prompt never appeared, the daemon may have been blocked
-silently. Try running `attend narrate toggle` directly in a terminal to trigger
-the prompt.
+**First-time setup:** the first time you start recording after installation
+(or after updating `attend`), macOS will prompt you to grant Microphone
+access. Grant it in the system dialog or in **System Settings > Privacy &
+Security > Microphone**. For text selection capture, add `attend` in
+**System Settings > Privacy & Security > Accessibility**.
+
+The binary location is typically `~/.cargo/bin/attend`. You can verify
+with `which attend`.
+
+**After updating `attend`:** when the binary is replaced (by `cargo install`
+or other means), macOS may invalidate the previous permission grants. If
+narration stops capturing speech or text selections after an update:
+
+1. Kill all running `attend` processes: `killall attend`.
+2. Open **System Settings > Privacy & Security**.
+3. Under **Microphone** and **Accessibility**, remove `attend` and re-add it.
+4. Start narration again — a fresh daemon will pick up the new permissions.
+
+The daemon checks accessibility permission once at startup. If you change
+the permission while the daemon is running, you must restart it (`killall
+attend`) for the change to take effect.
+
+**If the permission prompt never appeared**, the daemon may have been blocked
+silently. Try running `attend narrate toggle` directly in a terminal to
+trigger the prompt.
 
 ## Uninstall
 
