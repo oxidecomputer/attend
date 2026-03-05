@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/mock-clock", "crates/test-harness", "tools/xtask"]
+members = [".", "crates/mock-clock", "crates/macos-disclaim", "crates/test-harness", "tools/xtask"]
 
 [package]
 name = "attend"
@@ -65,6 +65,7 @@ tempfile = "3"
 accessibility = "0.2"
 accessibility-sys = "0.2"
 core-foundation = "0.10"
+macos-disclaim = { path = "crates/macos-disclaim" }
 objc = "0.2"
 
 [dev-dependencies]

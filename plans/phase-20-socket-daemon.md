@@ -930,17 +930,20 @@ None at this time. All major design decisions are resolved above.
 
 ## Appendix: `responsibility_spawnattrs_setdisclaim()`
 
-This private macOS API could break the TCC responsible-process chain without
+This private macOS API breaks the TCC responsible-process chain without
 requiring a LaunchAgent. It still works on Sequoia 15.x and is used by LLDB,
-Qt Creator, and Facebook's sado project. Ghostty evaluated and rejected it,
-but their concern (shells as privilege escalation trampolines) doesn't apply
-to us: our daemon is a bounded, known binary, not an arbitrary-code executor.
+Firefox, Chromium, Qt Creator, and Facebook's sado project. Ghostty evaluated
+and rejected it, but their concern (shells as privilege escalation trampolines)
+doesn't apply to us: our daemon is a bounded, known binary, not an
+arbitrary-code executor.
 
-However, the service-manager approach is strictly better:
-- Supported, public API
-- Gives us on-demand activation for free
-- Does not require `unsafe` `posix_spawn` calls
-- The socket-based architecture is independently valuable
-- Works cross-platform (systemd on Linux, not just macOS)
+**Implemented** in the `macos-disclaim` crate (`crates/macos-disclaim/`).
+The `spawn_daemon()` function in `record.rs` now uses `posix_spawn` with the
+disclaim flag on macOS, causing TCC permissions (microphone, accessibility)
+to accrue to the `attend` binary rather than the terminal/editor that spawned
+the CLI. The symbol is resolved at runtime via `dlsym` with graceful fallback
+if unavailable. Linux retains the existing `std::process::Command` path.
 
-Documented here for posterity. Not planned for use.
+The service-manager approach (launchd/systemd) remains independently valuable
+for on-demand activation and socket-based IPC, but is no longer the only path
+to correct TCC attribution.

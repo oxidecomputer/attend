@@ -872,44 +872,63 @@ fn flush(clock: &dyn SyncClock) -> anyhow::Result<()> {
 }
 
 /// Spawn a detached recording daemon process.
+///
+/// On macOS, uses `responsibility_spawnattrs_setdisclaim` so that TCC
+/// permissions (microphone, accessibility) accrue to the `attend` binary
+/// rather than whichever app (Zed, iTerm2, Terminal) spawned the CLI.
 fn spawn_daemon() -> anyhow::Result<()> {
-    use std::os::unix::process::CommandExt;
-
     let exe = std::env::current_exe()?;
-    let mut cmd = std::process::Command::new(exe);
-    cmd.arg("narrate").arg("_record-daemon");
+    let mut extra_env: Vec<(&str, String)> = Vec::new();
+    let mut stderr_file = None;
 
-    // Put the child in its own process group immediately (before exec).
-    // This closes the race window where Zed's task runner kills the parent's
-    // process group before the daemon has a chance to call setsid().
-    // The daemon still calls setsid() at startup for full session isolation.
-    cmd.process_group(0);
-
-    // Propagate test mode env vars so the daemon connects to the same
-    // inject socket and cache directory as the parent CLI process.
     if crate::test_mode::is_active() {
-        cmd.env("ATTEND_TEST_MODE", "1");
+        extra_env.push(("ATTEND_TEST_MODE", "1".to_string()));
         if let Ok(val) = std::env::var("ATTEND_CACHE_DIR") {
-            cmd.env("ATTEND_CACHE_DIR", &val);
-            // In test mode, redirect daemon stderr to a log file for debugging.
             let log_path = std::path::PathBuf::from(&val).join("daemon-stderr.log");
-            let log_file = std::fs::File::create(&log_path).ok();
-            cmd.stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(log_file.map_or_else(std::process::Stdio::null, std::process::Stdio::from));
+            stderr_file = std::fs::File::create(&log_path).ok();
+            extra_env.push(("ATTEND_CACHE_DIR", val));
         }
-    } else {
-        // Detach stdio so the daemon doesn't hold the parent's descriptors.
-        cmd.stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
     }
 
-    cmd.spawn()?;
+    #[cfg(target_os = "macos")]
+    {
+        let extra_env_refs: Vec<(&str, &str)> =
+            extra_env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        let result = macos_disclaim::spawn(macos_disclaim::DisclaimedSpawn {
+            exe: exe.as_path(),
+            argv: &["attend", "narrate", "_record-daemon"],
+            extra_env: &extra_env_refs,
+            stderr_file,
+        })?;
+        if !result.disclaimed {
+            tracing::warn!(
+                "responsibility_spawnattrs_setdisclaim unavailable: \
+                 TCC permissions will accrue to the parent process"
+            );
+        }
+    }
 
-    // No grace period needed: the daemon acquires the record lock at startup.
-    // If the user double-toggles, the second spawn will find the lock held
-    // and the toggle logic handles it (stop or stale-lock cleanup).
+    #[cfg(not(target_os = "macos"))]
+    {
+        use std::os::unix::process::CommandExt;
+
+        let mut cmd = std::process::Command::new(exe);
+        cmd.arg("narrate").arg("_record-daemon");
+        cmd.process_group(0);
+        for (k, v) in &extra_env {
+            cmd.env(k, v);
+        }
+        if let Some(log_file) = stderr_file {
+            cmd.stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::from(log_file));
+        } else {
+            cmd.stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+        }
+        cmd.spawn()?;
+    }
 
     Ok(())
 }
