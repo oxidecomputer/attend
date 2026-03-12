@@ -167,6 +167,20 @@ fn merge_unique(existing: &mut Vec<String>, new: Vec<String>) {
     }
 }
 
+/// Return `explicit` if non-empty, otherwise collect all names from
+/// the registry when `use_all` is set.
+fn resolve_or_all(
+    explicit: Vec<String>,
+    all_names: impl Iterator<Item = &'static str>,
+    use_all: bool,
+) -> Vec<String> {
+    if use_all {
+        all_names.map(str::to_string).collect()
+    } else {
+        explicit
+    }
+}
+
 /// Create a wrapper script that invokes `attend browser-bridge`.
 ///
 /// Firefox's native messaging protocol launches the binary directly with no
@@ -207,38 +221,26 @@ fn uninstall(
 ) -> anyhow::Result<()> {
     let uninstall_all =
         agent.is_empty() && editor.is_empty() && browser.is_empty() && shell.is_empty();
-    let agents: Vec<String> = if uninstall_all {
-        crate::agent::AGENTS
-            .iter()
-            .map(|a| a.name().to_string())
-            .collect()
-    } else {
-        agent
-    };
-    let editors: Vec<String> = if uninstall_all {
-        crate::editor::EDITORS
-            .iter()
-            .map(|e| e.name().to_string())
-            .collect()
-    } else {
-        editor
-    };
-    let browsers: Vec<String> = if uninstall_all {
-        crate::browser::BROWSERS
-            .iter()
-            .map(|b| b.name().to_string())
-            .collect()
-    } else {
-        browser
-    };
-    let shells: Vec<String> = if uninstall_all {
-        crate::shell::SHELLS
-            .iter()
-            .map(|s| s.name().to_string())
-            .collect()
-    } else {
-        shell
-    };
+    let agents = resolve_or_all(
+        agent,
+        crate::agent::AGENTS.iter().map(|a| a.name()),
+        uninstall_all,
+    );
+    let editors = resolve_or_all(
+        editor,
+        crate::editor::EDITORS.iter().map(|e| e.name()),
+        uninstall_all,
+    );
+    let browsers = resolve_or_all(
+        browser,
+        crate::browser::BROWSERS.iter().map(|b| b.name()),
+        uninstall_all,
+    );
+    let shells = resolve_or_all(
+        shell,
+        crate::shell::SHELLS.iter().map(|s| s.name()),
+        uninstall_all,
+    );
 
     // When no --project is given, also uninstall from all tracked project paths.
     if project.is_none()
