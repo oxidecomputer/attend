@@ -34,24 +34,39 @@ pub(crate) fn atomic_write_str(path: impl AsRef<Path>, content: &str) -> io::Res
 
 /// Atomically replace a directory's contents.
 ///
-/// Writes files to a staging directory (`<dir>.staging`), removes the
-/// old directory, and renames the staging directory into place. This
-/// prevents readers from seeing a partially-written skill directory.
+/// Writes files to a staging directory (`<dir>.staging`), then swaps it
+/// into place via rename. A crash at any point is recoverable: the old
+/// directory is preserved as `<dir>.old` until the new one is in place.
+///
+/// Recovery on next call:
+/// - `.staging` leftover: removed (incomplete write from prior crash).
+/// - `.old` exists without `dir`: renamed back (crash between step 1–2).
+/// - Both `.old` and `dir` exist: `.old` removed (stale from prior crash).
 pub(crate) fn atomic_replace_dir(dir: impl AsRef<Path>, files: &[(&str, &str)]) -> io::Result<()> {
     let dir = dir.as_ref();
     let staging = dir.with_extension("staging");
+    let old = dir.with_extension("old");
 
-    // Clean up any leftover staging directory from a prior crash.
+    // Recover from a prior crash.
     let _ = fs::remove_dir_all(&staging);
-    fs::create_dir_all(&staging)?;
+    if old.exists() && !dir.exists() {
+        fs::rename(&old, dir)?;
+    }
+    let _ = fs::remove_dir_all(&old);
 
+    // Build new content in staging.
+    fs::create_dir_all(&staging)?;
     for (name, content) in files {
         fs::write(staging.join(name), content)?;
     }
 
-    // Swap: remove old dir, rename staging into place.
-    let _ = fs::remove_dir_all(dir);
-    fs::rename(&staging, dir)
+    // Three-step swap: old dir preserved until staging is in place.
+    if dir.exists() {
+        fs::rename(dir, &old)?; // step 1: current -> .old
+    }
+    fs::rename(&staging, dir)?; // step 2: staging -> current
+    let _ = fs::remove_dir_all(&old); // step 3: clean up .old
+    Ok(())
 }
 
 /// Format a UTC timestamp as ISO 8601 (e.g. `2026-02-18T15:30:45Z`).
@@ -109,3 +124,6 @@ impl<T: Serialize> Timestamped<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
