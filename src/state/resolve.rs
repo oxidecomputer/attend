@@ -222,6 +222,8 @@ impl Position {
         let mut col = 1usize;
         let mut cursor = 0;
         let mut offset_idx = 0;
+        // Tracks whether the previous byte was \r. If the next byte is \n,
+        // this is a \r\n pair and we skip the extra line increment.
         let mut after_cr = false;
 
         while cursor <= max_offset && offset_idx < offsets.len() {
@@ -242,6 +244,8 @@ impl Position {
             let n = buf.len().min(need);
             for &b in &buf[..n] {
                 match b {
+                    // \n half of a \r\n pair: clear flag, don't increment
+                    // line (already counted for the \r).
                     b'\n' if after_cr => {
                         after_cr = false;
                     }
@@ -249,6 +253,8 @@ impl Position {
                         line += 1;
                         col = 1;
                     }
+                    // Bare \r (classic Mac) or first byte of \r\n: increment
+                    // line now. Set after_cr so a following \n is absorbed.
                     b'\r' => {
                         line += 1;
                         col = 1;
