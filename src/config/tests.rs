@@ -230,3 +230,367 @@ fn unknown_engine_ignored() {
     // serde will fail to deserialize an unknown engine variant
     assert!(config.is_none());
 }
+
+// ── Config::merge coverage ──────────────────────────────────────────────────
+
+/// Helper: build a Config with every field populated.
+fn fully_populated() -> Config {
+    Config {
+        include_dirs: vec![Utf8PathBuf::from("/populated/dir")],
+        engine: Some(Engine::Whisper),
+        model: Some(Utf8PathBuf::from("/populated/model")),
+        silence_duration: Some(2.5),
+        archive_retention: Some("14d".to_string()),
+        ext_ignore_apps: vec!["PopApp".into()],
+        clipboard_capture: Some(true),
+        daemon_idle_timeout: Some("8m".to_string()),
+    }
+}
+
+/// Scalar fields use first-wins semantics: when both configs set a scalar,
+/// the existing (self) value is preserved.
+#[test]
+fn merge_scalar_first_wins() {
+    let mut a = Config {
+        engine: Some(Engine::Whisper),
+        model: Some(Utf8PathBuf::from("/a/model")),
+        silence_duration: Some(5.0),
+        archive_retention: Some("7d".to_string()),
+        clipboard_capture: Some(true),
+        daemon_idle_timeout: Some("5m".to_string()),
+        ..Config::default()
+    };
+    let b = Config {
+        engine: Some(Engine::Parakeet),
+        model: Some(Utf8PathBuf::from("/b/model")),
+        silence_duration: Some(10.0),
+        archive_retention: Some("30d".to_string()),
+        clipboard_capture: Some(false),
+        daemon_idle_timeout: Some("15m".to_string()),
+        ..Config::default()
+    };
+    a.merge(b);
+    assert_eq!(a.engine, Some(Engine::Whisper));
+    assert_eq!(a.model, Some(Utf8PathBuf::from("/a/model")));
+    assert_eq!(a.silence_duration, Some(5.0));
+    assert_eq!(a.archive_retention, Some("7d".to_string()));
+    assert_eq!(a.clipboard_capture, Some(true));
+    assert_eq!(a.daemon_idle_timeout, Some("5m".to_string()));
+}
+
+/// Scalar fields with None in self are filled from other.
+#[test]
+fn merge_scalar_fills_none() {
+    let mut a = Config {
+        engine: None,
+        model: None,
+        silence_duration: None,
+        archive_retention: None,
+        clipboard_capture: None,
+        daemon_idle_timeout: None,
+        ..Config::default()
+    };
+    let b = Config {
+        engine: Some(Engine::Parakeet),
+        model: Some(Utf8PathBuf::from("/b/model")),
+        silence_duration: Some(3.0),
+        archive_retention: Some("30d".to_string()),
+        clipboard_capture: Some(false),
+        daemon_idle_timeout: Some("10m".to_string()),
+        ..Config::default()
+    };
+    a.merge(b);
+    assert_eq!(a.engine, Some(Engine::Parakeet));
+    assert_eq!(a.model, Some(Utf8PathBuf::from("/b/model")));
+    assert_eq!(a.silence_duration, Some(3.0));
+    assert_eq!(a.archive_retention, Some("30d".to_string()));
+    assert_eq!(a.clipboard_capture, Some(false));
+    assert_eq!(a.daemon_idle_timeout, Some("10m".to_string()));
+}
+
+/// Vector fields are concatenated with self's items first, then other's.
+#[test]
+fn merge_array_concatenation_order() {
+    let mut a = Config {
+        include_dirs: vec![Utf8PathBuf::from("/a")],
+        ext_ignore_apps: vec!["AppA".into()],
+        ..Config::default()
+    };
+    let b = Config {
+        include_dirs: vec![Utf8PathBuf::from("/b")],
+        ext_ignore_apps: vec!["AppB".into()],
+        ..Config::default()
+    };
+    a.merge(b);
+    assert_eq!(
+        a.include_dirs,
+        vec![Utf8PathBuf::from("/a"), Utf8PathBuf::from("/b")]
+    );
+    assert_eq!(a.ext_ignore_apps, vec!["AppA", "AppB"]);
+}
+
+/// Merging three layers preserves first-wins for scalars across all layers
+/// and accumulates arrays in merge order.
+#[test]
+fn merge_three_layers() {
+    let mut a = Config {
+        include_dirs: vec![Utf8PathBuf::from("/a")],
+        engine: Some(Engine::Whisper),
+        model: None,
+        silence_duration: None,
+        archive_retention: None,
+        ext_ignore_apps: vec!["AppA".into()],
+        clipboard_capture: None,
+        daemon_idle_timeout: None,
+    };
+    let b = Config {
+        include_dirs: vec![Utf8PathBuf::from("/b")],
+        engine: Some(Engine::Parakeet),
+        model: Some(Utf8PathBuf::from("/b/model")),
+        silence_duration: Some(3.0),
+        archive_retention: None,
+        ext_ignore_apps: vec!["AppB".into()],
+        clipboard_capture: None,
+        daemon_idle_timeout: Some("8m".to_string()),
+    };
+    let c = Config {
+        include_dirs: vec![Utf8PathBuf::from("/c")],
+        engine: Some(Engine::Parakeet),
+        model: Some(Utf8PathBuf::from("/c/model")),
+        silence_duration: Some(10.0),
+        archive_retention: Some("90d".to_string()),
+        ext_ignore_apps: vec!["AppC".into()],
+        clipboard_capture: Some(false),
+        daemon_idle_timeout: Some("20m".to_string()),
+    };
+
+    // Merge C into B, then B into A (simulates hierarchical walk:
+    // A = closest, B = mid, C = farthest).
+    a.merge(b);
+    a.merge(c);
+
+    // Scalars: first-wins across three layers
+    assert_eq!(a.engine, Some(Engine::Whisper), "engine: A wins");
+    assert_eq!(
+        a.model,
+        Some(Utf8PathBuf::from("/b/model")),
+        "model: B wins (A was None)"
+    );
+    assert_eq!(a.silence_duration, Some(3.0), "silence_duration: B wins");
+    assert_eq!(
+        a.archive_retention,
+        Some("90d".to_string()),
+        "archive_retention: C wins (A and B were None)"
+    );
+    assert_eq!(
+        a.clipboard_capture,
+        Some(false),
+        "clipboard_capture: C wins (A and B were None)"
+    );
+    assert_eq!(
+        a.daemon_idle_timeout,
+        Some("8m".to_string()),
+        "daemon_idle_timeout: B wins (A was None)"
+    );
+
+    // Arrays: accumulated in merge order (A, then B, then C)
+    assert_eq!(
+        a.include_dirs,
+        vec![
+            Utf8PathBuf::from("/a"),
+            Utf8PathBuf::from("/b"),
+            Utf8PathBuf::from("/c"),
+        ]
+    );
+    assert_eq!(a.ext_ignore_apps, vec!["AppA", "AppB", "AppC"]);
+}
+
+/// Merging a default (empty) config into a fully populated config changes nothing.
+#[test]
+fn merge_empty_into_populated() {
+    let mut populated = fully_populated();
+    let empty = Config {
+        include_dirs: Vec::new(),
+        ext_ignore_apps: Vec::new(),
+        engine: None,
+        model: None,
+        silence_duration: None,
+        archive_retention: None,
+        clipboard_capture: None,
+        daemon_idle_timeout: None,
+    };
+    populated.merge(empty);
+
+    // Scalars unchanged
+    assert_eq!(populated.engine, Some(Engine::Whisper));
+    assert_eq!(populated.model, Some(Utf8PathBuf::from("/populated/model")));
+    assert_eq!(populated.silence_duration, Some(2.5));
+    assert_eq!(populated.archive_retention, Some("14d".to_string()));
+    assert_eq!(populated.clipboard_capture, Some(true));
+    assert_eq!(populated.daemon_idle_timeout, Some("8m".to_string()));
+    // Arrays unchanged (nothing to extend with)
+    assert_eq!(
+        populated.include_dirs,
+        vec![Utf8PathBuf::from("/populated/dir")]
+    );
+    assert_eq!(populated.ext_ignore_apps, vec!["PopApp"]);
+}
+
+/// Merging a fully populated config into an empty one fills all scalars
+/// and populates arrays.
+#[test]
+fn merge_populated_into_empty() {
+    let mut empty = Config {
+        include_dirs: Vec::new(),
+        ext_ignore_apps: Vec::new(),
+        engine: None,
+        model: None,
+        silence_duration: None,
+        archive_retention: None,
+        clipboard_capture: None,
+        daemon_idle_timeout: None,
+    };
+    empty.merge(fully_populated());
+
+    // All scalars filled from other
+    assert_eq!(empty.engine, Some(Engine::Whisper));
+    assert_eq!(empty.model, Some(Utf8PathBuf::from("/populated/model")));
+    assert_eq!(empty.silence_duration, Some(2.5));
+    assert_eq!(empty.archive_retention, Some("14d".to_string()));
+    assert_eq!(empty.clipboard_capture, Some(true));
+    assert_eq!(empty.daemon_idle_timeout, Some("8m".to_string()));
+    // Arrays populated
+    assert_eq!(
+        empty.include_dirs,
+        vec![Utf8PathBuf::from("/populated/dir")]
+    );
+    assert_eq!(empty.ext_ignore_apps, vec!["PopApp"]);
+}
+
+/// Merging a default config is an identity operation: for any config `a`,
+/// `a.merge(default_empty)` leaves `a` unchanged (scalars are first-wins
+/// so None never overwrites, and extending with an empty vec is a no-op).
+///
+/// Note: we use a truly empty default (no serde defaults) to test pure
+/// merge semantics. The `Config::default()` has `ext_ignore_apps: ["Zed"]`
+/// from `default_ext_ignore_apps`, which would extend the array.
+mod prop {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn arb_engine() -> impl Strategy<Value = Option<Engine>> {
+        prop_oneof![
+            Just(None),
+            Just(Some(Engine::Whisper)),
+            Just(Some(Engine::Parakeet)),
+        ]
+    }
+
+    fn arb_opt_path() -> impl Strategy<Value = Option<Utf8PathBuf>> {
+        prop_oneof![
+            Just(None),
+            "[a-z/]{1,20}".prop_map(|s| Some(Utf8PathBuf::from(s))),
+        ]
+    }
+
+    fn arb_opt_f64() -> impl Strategy<Value = Option<f64>> {
+        prop_oneof![Just(None), (0.1..30.0f64).prop_map(Some),]
+    }
+
+    fn arb_opt_string() -> impl Strategy<Value = Option<String>> {
+        prop_oneof![
+            Just(None),
+            prop_oneof!["7d", "14d", "30d", "forever"].prop_map(|s| Some(s.to_string())),
+        ]
+    }
+
+    fn arb_opt_bool() -> impl Strategy<Value = Option<bool>> {
+        prop_oneof![Just(None), Just(Some(true)), Just(Some(false)),]
+    }
+
+    fn arb_paths() -> impl Strategy<Value = Vec<Utf8PathBuf>> {
+        proptest::collection::vec("[a-z/]{1,15}".prop_map(Utf8PathBuf::from), 0..4)
+    }
+
+    fn arb_strings() -> impl Strategy<Value = Vec<String>> {
+        proptest::collection::vec("[A-Za-z]{1,10}", 0..4)
+    }
+
+    fn arb_config() -> impl Strategy<Value = Config> {
+        (
+            arb_paths(),
+            arb_engine(),
+            arb_opt_path(),
+            arb_opt_f64(),
+            arb_opt_string(),
+            arb_strings(),
+            arb_opt_bool(),
+            arb_opt_string(),
+        )
+            .prop_map(
+                |(
+                    include_dirs,
+                    engine,
+                    model,
+                    silence_duration,
+                    archive_retention,
+                    ext_ignore_apps,
+                    clipboard_capture,
+                    daemon_idle_timeout,
+                )| {
+                    Config {
+                        include_dirs,
+                        engine,
+                        model,
+                        silence_duration,
+                        archive_retention,
+                        ext_ignore_apps,
+                        clipboard_capture,
+                        daemon_idle_timeout,
+                    }
+                },
+            )
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(200))]
+
+        /// Merging an empty config (all None, empty vecs) into any config is
+        /// an identity operation: no scalar changes, no array growth.
+        #[test]
+        fn merge_idempotent_with_empty(a in arb_config()) {
+            let empty = Config {
+                include_dirs: Vec::new(),
+                ext_ignore_apps: Vec::new(),
+                engine: None,
+                model: None,
+                silence_duration: None,
+                archive_retention: None,
+                clipboard_capture: None,
+                daemon_idle_timeout: None,
+            };
+
+            // Snapshot before merge
+            let dirs_before = a.include_dirs.clone();
+            let apps_before = a.ext_ignore_apps.clone();
+            let engine_before = a.engine;
+            let model_before = a.model.clone();
+            let silence_before = a.silence_duration;
+            let retention_before = a.archive_retention.clone();
+            let clipboard_before = a.clipboard_capture;
+            let idle_before = a.daemon_idle_timeout.clone();
+
+            let mut a = a;
+            a.merge(empty);
+
+            prop_assert_eq!(&a.include_dirs, &dirs_before, "include_dirs changed");
+            prop_assert_eq!(&a.ext_ignore_apps, &apps_before, "ext_ignore_apps changed");
+            prop_assert_eq!(a.engine, engine_before, "engine changed");
+            prop_assert_eq!(&a.model, &model_before, "model changed");
+            prop_assert_eq!(a.silence_duration, silence_before, "silence_duration changed");
+            prop_assert_eq!(&a.archive_retention, &retention_before, "archive_retention changed");
+            prop_assert_eq!(a.clipboard_capture, clipboard_before, "clipboard_capture changed");
+            prop_assert_eq!(&a.daemon_idle_timeout, &idle_before, "daemon_idle_timeout changed");
+        }
+    }
+}
