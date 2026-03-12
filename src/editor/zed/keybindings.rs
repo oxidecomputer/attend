@@ -3,6 +3,22 @@
 use super::jsonc::JsoncArray;
 use super::{NARRATION_KEYS, zed_config_dir};
 
+/// Yield task names from `task::Spawn` bindings in a keymap entry.
+///
+/// Each Zed keymap entry has `{ "bindings": { "<key>": ["task::Spawn", {"task_name": "..."}] } }`.
+/// This drills through that structure and yields the `task_name` for every
+/// binding whose action is `task::Spawn`.
+fn bound_task_names(entry: &serde_json::Value) -> impl Iterator<Item = &str> {
+    entry
+        .get("bindings")
+        .and_then(|b| b.as_object())
+        .into_iter()
+        .flat_map(|bindings| bindings.values())
+        .filter_map(|v| v.as_array())
+        .filter(|a| a.first().and_then(|s| s.as_str()) == Some("task::Spawn"))
+        .filter_map(|a| a.get(1)?.get("task_name")?.as_str())
+}
+
 /// Install a Zed keybinding for a narration task.
 ///
 /// Skips installation if the task is already bound to any key (user may have
@@ -12,21 +28,9 @@ pub(super) fn install_keybinding(key: &str, task_name: &str) -> anyhow::Result<(
     let mut keymap = JsoncArray::open(&keymap_path)?;
     let elements = keymap.elements();
 
-    let task_already_bound = elements.iter().any(|e| {
-        e.get("bindings")
-            .and_then(|b| b.as_object())
-            .is_some_and(|b| {
-                b.values().any(|v| {
-                    v.as_array().is_some_and(|a| {
-                        a.first().and_then(|s| s.as_str()) == Some("task::Spawn")
-                            && a.get(1)
-                                .and_then(|o| o.get("task_name"))
-                                .and_then(|n| n.as_str())
-                                == Some(task_name)
-                    })
-                })
-            })
-    });
+    let task_already_bound = elements
+        .iter()
+        .any(|e| bound_task_names(e).any(|n| n == task_name));
     if task_already_bound {
         return Ok(());
     }
