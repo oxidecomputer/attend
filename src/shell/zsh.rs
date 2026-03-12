@@ -1,7 +1,6 @@
 //! Zsh shell integration: preexec/precmd hooks and completions.
 
 use std::fs;
-use std::path::PathBuf;
 
 use camino::Utf8PathBuf;
 use clap::CommandFactory;
@@ -21,15 +20,6 @@ fn completions_dir() -> Option<Utf8PathBuf> {
     Some(super::xdg_config_home()?.join("attend/completions"))
 }
 
-/// Resolve the absolute path to the attend binary for the hook script.
-fn resolve_bin(bin_cmd: &str) -> anyhow::Result<PathBuf> {
-    if std::path::Path::new(bin_cmd).is_absolute() {
-        Ok(bin_cmd.into())
-    } else {
-        which::which(bin_cmd).map_err(|e| anyhow::anyhow!("cannot find {bin_cmd} on PATH: {e}"))
-    }
-}
-
 pub struct Zsh;
 
 impl super::Shell for Zsh {
@@ -40,7 +30,7 @@ impl super::Shell for Zsh {
     fn install_hooks(&self, bin_cmd: &str) -> anyhow::Result<()> {
         let path = hook_path()
             .ok_or_else(|| anyhow::anyhow!("cannot determine attend config directory"))?;
-        let abs_bin = resolve_bin(bin_cmd)?;
+        let abs_bin = super::resolve_bin(bin_cmd)?;
         let lock_path = crate::narrate::record_lock_path();
 
         let script = format!(

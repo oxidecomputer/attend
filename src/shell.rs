@@ -1,7 +1,18 @@
+use std::path::PathBuf;
+
 use camino::Utf8PathBuf;
 
 mod fish;
 mod zsh;
+
+/// Resolve the absolute path to the attend binary for hook scripts.
+pub(crate) fn resolve_bin(bin_cmd: &str) -> anyhow::Result<PathBuf> {
+    if std::path::Path::new(bin_cmd).is_absolute() {
+        Ok(bin_cmd.into())
+    } else {
+        which::which(bin_cmd).map_err(|e| anyhow::anyhow!("cannot find {bin_cmd} on PATH: {e}"))
+    }
+}
 
 /// XDG config home: delegates to [`crate::util::xdg_config_home`].
 fn xdg_config_home() -> Option<Utf8PathBuf> {
