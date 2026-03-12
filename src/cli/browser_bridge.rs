@@ -13,8 +13,8 @@ use std::io;
 
 use serde::Deserialize;
 
+use crate::narrate::browser_staging_dir;
 use crate::narrate::merge::Event;
-use crate::narrate::{browser_staging_dir, cache_dir};
 use crate::state;
 use crate::util;
 
@@ -96,8 +96,6 @@ pub(super) fn run() -> anyhow::Result<()> {
     util::atomic_write_str(&path, &json)?;
 
     native_messaging::host::send_json(&mut stdout, &serde_json::json!({"status": "ok"}))?;
-
-    let _ = fs::File::open(cache_dir());
 
     Ok(())
 }
