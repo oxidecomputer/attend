@@ -1,3 +1,86 @@
+// Hook system: editor context injection and narration delivery.
+//
+// The hook binary is invoked by Claude Code at lifecycle boundaries
+// (SessionStart, SessionEnd, UserPromptSubmit, Stop, PreToolUse,
+// PostToolUse). Each invocation is stateless: all state lives in the
+// filesystem (listening file, session markers, pending narration files).
+//
+// ## Sessions and ownership
+//
+// A "session" is a single Claude Code conversation, identified by a
+// session ID provided in the hook input. One session at a time can own
+// narration: its ID is written to the listening file. The owning session
+// receives pending narration via its PreToolUse hooks.
+//
+// A session becomes the owner via:
+// - Explicit `/attend` (UserPromptSubmit writes the listening file)
+// - Auto-claim (`attend listen` PreToolUse on an Inactive session that
+//   hasn't been displaced — lets agents self-activate)
+//
+// ## Displacement
+//
+// When session B activates while session A owns narration, A is
+// "displaced": on its next hook, it receives a one-shot SessionMoved
+// advisory, then goes silent. The displaced state is recorded as a
+// marker file and acts as a ratchet: once displaced, a session cannot
+// auto-reclaim. The user must type `/attend` again to re-activate.
+//
+// This ratchet prevents livelock: without it, two sessions could
+// steal narration back and forth on alternating hooks.
+//
+// ## Narration delivery pipeline
+//
+// The recording daemon writes pending narration files. Delivery happens
+// synchronously during PreToolUse of `attend listen`:
+//
+//   daemon (record.rs) -> writes pending files
+//   -> PreToolUse(attend listen) reads and delivers content
+//   -> archives pending files
+//   -> approves so the background listener restarts
+//
+// For non-listen hooks, pending narration triggers a NarrationReady
+// block that tells the agent to run `attend listen` to pick it up.
+//
+// ## Dispatch axes
+//
+// The dispatcher classifies each hook along three axes:
+//
+//   1. Session relation: Active | Stolen | Inactive
+//   2. Listen command:   Listen | ListenStop | None
+//   3. Hook type:        the six HookType variants
+//
+// Listen/ListenStop hooks route to handle_listen_hook and
+// handle_unlisten_hook respectively. Everything else routes to
+// handle_general_hook, which uses the pure general_decision()
+// function for its logic.
+//
+// ## Decision table (general hooks, listen_cmd = None)
+//
+//   Relation  | has_pending | receiver_alive | Decision
+//   ----------|-------------|----------------|---------
+//   Inactive  | -           | -              | Silent
+//   Stolen    | -           | -              | SessionMoved (once, then Silent)
+//   Active    | true        | -              | Block(NarrationReady)
+//   Active    | false       | true           | Silent
+//   Active    | false       | false          | StartReceiver (Block on Stop, Approve otherwise)
+//
+// ## Decision table (listen hooks, listen_cmd = Listen)
+//
+//   Relation  | Hook phase   | Decision
+//   ----------|--------------|-----------------------------------
+//   Stolen    | PreToolUse   | Block(SessionMoved)
+//   Active    | PreToolUse   | deliver pending, or Silent if none
+//   Inactive  | PreToolUse   | auto-claim or Block(Deactivated)
+//   any       | PostToolUse  | Approve(ListenerStarted)
+//
+// ## Decision table (unlisten hooks, listen_cmd = ListenStop)
+//
+//   Relation           | Hook phase   | Decision
+//   -------------------|--------------|----------------------------
+//   Active             | PreToolUse   | Approve(Deactivated)
+//   Stolen / Inactive  | PreToolUse   | Block(SessionMoved)
+//   any                | PostToolUse  | Silent
+
 mod command;
 mod decision;
 mod session_state;
