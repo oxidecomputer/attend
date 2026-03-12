@@ -9,18 +9,17 @@ dependency tree, then large reorganizations, then cross-cutting audits.
 Within each section, items are ordered by dependency: foundational modules
 before their consumers, and items that gate other items come first.
 
-## Progress (2026-03-12)
+## Progress
 
 Items marked with status:
+
 - ✅ = done and merged
 - 🔧 = done as part of a related fix (not a standalone item)
 - ⬜ = not started
 
-Summary: 12/38 items complete. Phase 1 done, Phase 3 mostly done, Phases 2/4-8 not started.
-
-Additional fix not in original review: **CaptureHandle::collect() deadlock** — thread
-joins now wrapped in `clock.park()` so MockClock can advance time during joins
-(commit `25d242b`). Discovered while writing the `yank_writes_to_yanked_dir` e2e test.
+**EXTREMELY IMPORTANT:** ALWAYS update this file to reflect current status EVERY TIME you
+commit changes. This is very important because it allows future agents to pick up where
+you leave off.
 
 ## Topological Dependency Chart
 
@@ -304,7 +303,7 @@ Files: `tests/e2e.rs`.
 Bugs, safety issues, and semantic errors. Fix these before any refactoring
 so the refactored code inherits correct behavior.
 
-### ⬜ 49. `src/util.rs:53-54` — `atomic_replace_dir` crash window
+### ✅ 49. `src/util.rs:53-54` — `atomic_replace_dir` crash window
 
 **Not fully atomic: crash between `remove_dir_all` and `rename` loses data.**
 If the process dies after removing the old dir but before renaming staging
@@ -346,7 +345,7 @@ Files: `src/util.rs`. Add tests for crash-recovery scenarios.
 
 ---
 
-### ⬜ 44. Audit all `Utc::now()` usage — Correctness
+### ✅ 44. Audit all `Utc::now()` usage — Correctness
 
 **Capture threads use `Utc::now()` directly instead of `clock.now()`.**
 All timestamp sources must go through the injectable clock. Audit the
@@ -607,7 +606,7 @@ Files: `src/narrate/transcribe.rs`, call site file.
 
 ---
 
-### ⬜ 7. `src/config.rs:32-34` — Unnecessary config
+### ✅ 7. `src/config.rs:32-34` — Unnecessary config
 
 **`ext_ignore_apps` is unnecessary.**
 The default ignores Zed because it doesn't expose `AXSelectedText`, but capture
@@ -647,7 +646,7 @@ depends on. Fix these before their consumers.
 
 ---
 
-### ⬜ 9. `src/terminal.rs:61-100` — Replace hand-rolled truncation
+### ✅ 9. `src/terminal.rs:61-100` — Replace hand-rolled truncation
 
 **Replace `truncate_line` with `console::truncate_str`.**
 The hand-rolled ANSI-aware truncation only handles SGR sequences (ending in `m`)
@@ -768,7 +767,7 @@ Files: `src/config.rs`, `src/narrate/record.rs`, `src/config/tests.rs`.
 
 ---
 
-### ⬜ 6. `src/state/resolve.rs:211-275` — Documentation
+### ✅ 6. `src/state/resolve.rs:211-275` — Documentation
 
 **`Position::from_offsets` core loop could use more inline documentation.**
 The forward-scan algorithm handling `\n`, `\r\n`, `\r` with the `after_cr`
@@ -899,7 +898,7 @@ Files: `src/cli/browser_bridge.rs`.
 
 ---
 
-### ⬜ 36. `src/hook.rs` — State machine documentation
+### ✅ 36. `src/hook.rs` — State machine documentation
 
 **Add module-level prose documentation explaining the hook state machine.**
 What are the possible session states (Active, Stolen, Inactive, Displaced)?
@@ -932,7 +931,7 @@ Files: `src/hook.rs`.
 
 ---
 
-### ⬜ 38. `src/cli/install.rs:210-241` — DRY violation in uninstall
+### ✅ 38. `src/cli/install.rs:210-241` — DRY violation in uninstall
 
 **Uninstall rebuilds agent/editor/browser/shell lists with a repeated
 conditional pattern.** Extract a helper or refactor to share the iteration
@@ -1987,3 +1986,41 @@ question is whether to pull audio/silence/chime/transcribe into a separate
 `narrate/` is fine once the large files are decomposed.
 
 Files: depends on earlier items.
+
+---
+
+## Phase 9: Untriaged
+
+Items discovered after the initial review. Triage and slot into the
+appropriate phase/tier before implementation.
+
+### ⬜ 57. Hook installation not idempotent — duplicates in settings
+
+**User-reported: duplicate hook entries for `attend` in Claude Code
+settings.** The install code (`src/agent/claude/settings/install.rs`)
+uses an `_installed_by: "attend"` marker with `retain()` + `push()`
+to replace its own hooks. This should be idempotent. Possible causes:
+
+1. **Legacy hooks from before the marker was added.** Early installs
+   may not have the `_installed_by` field, so `is_our_hook()` returns
+   false and they're never cleaned up.
+2. **Global + project-local overlap.** Auto-upgrade (upgrade.rs:29)
+   always reinstalls with `project: None` (global), but the user may
+   also have `--project` installs. Claude Code merges both files, so
+   the effective settings have hooks from each.
+3. **`is_our_hook()` matching failure.** Some hook format variation
+   that causes the marker check to miss.
+
+**Investigation steps:**
+1. Ask the user which settings file(s) contain the duplicates
+   (`~/.claude/settings.json` vs project-local `settings.local.json`).
+2. Inspect the duplicate entries: do they have `_installed_by`?
+3. If legacy hooks without the marker exist, add a fallback match on
+   the command pattern (e.g. `command.contains("attend hook")`).
+4. If global+project overlap, consider deduplication or only installing
+   hooks in one location.
+5. Add an integration test: `install_then_reinstall_no_duplicates`
+   covering the exact scenario.
+
+Files: `src/agent/claude/settings/install.rs`,
+`src/agent/claude/settings/tests.rs`, `src/hook/upgrade.rs`.
