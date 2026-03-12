@@ -9,13 +9,13 @@ fn short_line_unchanged() {
 
 /// A line whose visible length equals max_cols must not be truncated.
 /// A line one visible character over max_cols must be truncated and end
-/// with RESET + "…".
+/// with an ANSI reset.
 #[test]
 fn truncation_at_boundary() {
     // Exactly at max_cols: not truncated.
     assert_eq!(truncate_line("hello", 5), "hello");
-    // One over: truncated.
-    assert_eq!(truncate_line("hello!", 5), "hell\x1b[0m…");
+    // One over: truncated to 4 visible + "…" + reset.
+    assert_eq!(truncate_line("hello!", 5), "hell…\x1b[0m");
 }
 
 /// ANSI escape sequences do not contribute to visible width. A string
@@ -29,14 +29,13 @@ fn ansi_escape_passthrough() {
 }
 
 /// When truncation occurs inside ANSI-styled text, the output must
-/// include a RESET (\x1b[0m) before the "…" to avoid style leaking.
+/// include a RESET (\x1b[0m) after the "…" to avoid style leaking.
 #[test]
 fn ansi_mid_truncation() {
     let styled = "\x1b[1mhello world\x1b[0m";
     // 11 visible chars, max_cols = 8: truncate after 7 visible chars.
     let result = truncate_line(styled, 8);
-    assert!(result.ends_with("\x1b[0m…"), "result was: {result:?}");
-    // The visible portion before the ellipsis should be "hello w" (7 chars).
+    assert!(result.ends_with("\x1b[0m"), "result was: {result:?}");
     assert!(
         result.starts_with("\x1b[1mhello w"),
         "result was: {result:?}"
@@ -50,7 +49,7 @@ fn utf8_multi_byte() {
     // "café" is 4 visible characters ('c', 'a', 'f', 'é').
     assert_eq!(truncate_line("café", 4), "café");
     // max_cols = 4 with 5-char input: truncate after 3 visible chars.
-    assert_eq!(truncate_line("café!", 4), "caf\x1b[0m…");
+    assert_eq!(truncate_line("café!", 4), "caf…\x1b[0m");
 }
 
 /// max_cols of zero always produces the empty string.
@@ -63,4 +62,16 @@ fn zero_max_cols() {
 #[test]
 fn empty_line() {
     assert_eq!(truncate_line("", 5), "");
+}
+
+/// CJK ideographs are double-width: each occupies two terminal columns.
+/// "日本語" is 3 characters but 6 columns wide.
+#[test]
+fn cjk_double_width() {
+    // 6 columns, max_cols = 6: fits exactly.
+    assert_eq!(truncate_line("日本語", 6), "日本語");
+    // max_cols = 5: only "日本" fits (4 cols) + "…" (1 col) = 5.
+    assert_eq!(truncate_line("日本語", 5), "日本…\x1b[0m");
+    // max_cols = 4: only "日" fits (2 cols) + "…" (1 col) = 3 <= 4.
+    assert_eq!(truncate_line("日本語", 4), "日…\x1b[0m");
 }

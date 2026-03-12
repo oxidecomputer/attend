@@ -26,6 +26,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive", "color"] }
 crossterm = "0.29"
 clap_complete = "4"
+console = "0.15"
 dirs = "6"
 camino = { version = "1", features = ["serde1"] }
 chrono = { version = "0.4", features = ["serde"] }

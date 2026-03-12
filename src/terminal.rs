@@ -58,45 +58,28 @@ pub(crate) fn terminal_size() -> (usize, usize) {
 
 /// Truncate a line to `max_cols` visible columns, ANSI-aware.
 /// Appends RESET + "…" if truncated.
+///
+/// Uses `console::truncate_str` for proper Unicode display-width handling
+/// (including CJK double-width characters) and full ANSI escape support.
 fn truncate_line(line: &str, max_cols: usize) -> String {
     if max_cols == 0 {
         return String::new();
     }
-    let bytes = line.as_bytes();
 
-    // Record the byte offset of each visible character's start.
-    let mut char_offsets: Vec<usize> = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == 0x1b {
-            // Skip ANSI escape sequence (\x1b[...m).
-            while i < bytes.len() {
-                let b = bytes[i];
-                i += 1;
-                if b == b'm' {
-                    break;
-                }
-            }
-            continue;
-        }
-        // Count UTF-8 start bytes as visible characters.
-        if bytes[i] & 0xC0 != 0x80 {
-            char_offsets.push(i);
-        }
-        i += 1;
-    }
-
-    let visible = char_offsets.len();
-    if visible <= max_cols {
-        // Fits: return unchanged.
+    // Check display width first: if it fits, return unchanged.
+    if console::measure_text_width(line) <= max_cols {
         return line.to_string();
     }
 
-    // Truncate: keep max_cols - 1 visible chars, then RESET + "…".
-    let cut = char_offsets[max_cols - 1];
-    let mut out = line[..cut].to_string();
-    out.push_str("\x1b[0m…");
-    out
+    // Truncate. The width budget includes the tail character.
+    let s = console::truncate_str(line, max_cols, "…").into_owned();
+
+    // Append ANSI reset if not already present, to prevent style leaking.
+    if s.ends_with("\x1b[0m") {
+        s
+    } else {
+        format!("{s}\x1b[0m")
+    }
 }
 
 /// Fit output to terminal dimensions (width + height truncation).
