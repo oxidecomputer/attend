@@ -47,7 +47,7 @@ fn bench() -> anyhow::Result<()> {
             tracing::info!("Ensuring model: {name}");
             engine.preload(&path)?;
             tracing::info!("--- {name} ---");
-            let mut transcriber = engine.ensure_and_load(&path)?;
+            let mut transcriber = engine.preload(&path)?;
             transcriber.bench(&samples);
         }
     }

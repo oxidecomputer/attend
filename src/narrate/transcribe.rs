@@ -112,11 +112,6 @@ impl Engine {
             Engine::Parakeet => parakeet::MODEL_NAMES,
         }
     }
-
-    /// Ensure a model variant and load it (for benchmarking).
-    pub fn ensure_and_load(&self, path: &Utf8Path) -> anyhow::Result<Box<dyn Transcriber>> {
-        self.preload(path)
-    }
 }
 
 /// Verify a downloaded file against an expected SHA-256 hex digest.
