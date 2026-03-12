@@ -53,13 +53,16 @@ applications of interest, like [browsers](#browser-integration), etc.).
 
 Reinstallation respects any keybinding changes you've made within Zed.
 
-### Global hotkeys (macOS / Linux)
+### Global hotkeys
 
 If you use a hotkey manager that can assign commands to keys, you can bind
 *global* hotkeys to the narrate subcommands. On macOS, you can [bind a global
 keyboard shortcut to a script using the Shortcuts
 app](https://support.apple.com/guide/shortcuts-mac/launch-a-shortcut-from-another-app-apd163eb9f95/mac).
-Your favorite Linux distribution almost certainly has some way to do this too.
+Pre-made shortcuts for the above 4 `attend` actions are in [`shortcuts/`](shortcuts/);
+open them on your Mac to install. You will still need to manually open the Shortcuts app
+and edit each action to assign a keyboard shortcut, because the `.shortcut` format does
+not provide a way to embed a keymapping.
 
 ### iTerm2
 
