@@ -255,15 +255,10 @@ impl CaptureHandle {
 /// Start background threads for editor polling, file diff tracking, and
 /// external selection capture.
 ///
-/// All capture threads use `Utc::now()` for event timestamps, so there is
-/// no shared time epoch to maintain. The recording daemon computes word
-/// timestamps from `period_start_utc + word.start_secs`, which is also UTC.
-///
 /// Pass `None` for `cwd` to keep paths absolute (filtering deferred to receive).
 pub(crate) fn start(
     config: CaptureConfig,
     cwd: Option<Utf8PathBuf>,
-    ext_ignore_apps: Vec<String>,
     clipboard_capture: bool,
     clipboard_staging_dir: camino::Utf8PathBuf,
 ) -> anyhow::Result<CaptureHandle> {
@@ -299,7 +294,6 @@ pub(crate) fn start(
             Arc::clone(&config.clock),
             Arc::clone(&control),
             Arc::clone(&ext_events),
-            ext_ignore_apps,
         )
     } else {
         None

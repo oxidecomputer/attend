@@ -128,7 +128,6 @@ pub(super) fn spawn(
     clock: Arc<dyn Clock>,
     control: Arc<super::capture::CaptureControl>,
     events: Arc<Mutex<Vec<Event>>>,
-    ignore_apps: Vec<String>,
 ) -> Option<thread::JoinHandle<()>> {
     if !source.is_available() {
         eprintln!(
@@ -157,14 +156,6 @@ pub(super) fn spawn(
                 let Some(snapshot) = source.query() else {
                     continue;
                 };
-
-                // Skip apps in the ignore list (case-insensitive).
-                if ignore_apps
-                    .iter()
-                    .any(|ignored| ignored.eq_ignore_ascii_case(&snapshot.app))
-                {
-                    continue;
-                }
 
                 // Emit or extend based on tracker result.
                 match tracker.update(snapshot, now) {

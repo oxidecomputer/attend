@@ -117,7 +117,6 @@ fn merge_semantics() {
         model: None,
         silence_duration: None,
         archive_retention: None,
-        ext_ignore_apps: vec!["Zed".into()],
         clipboard_capture: None,
         daemon_idle_timeout: None,
     };
@@ -127,7 +126,6 @@ fn merge_semantics() {
         model: Some(Utf8PathBuf::from("/model")),
         silence_duration: Some(3.0),
         archive_retention: Some("30d".to_string()),
-        ext_ignore_apps: vec!["Slack".into()],
         clipboard_capture: Some(false),
         daemon_idle_timeout: Some("10m".to_string()),
     };
@@ -142,8 +140,6 @@ fn merge_semantics() {
     assert_eq!(base.model, Some(Utf8PathBuf::from("/model")));
     assert_eq!(base.silence_duration, Some(3.0));
     assert_eq!(base.archive_retention, Some("30d".to_string()));
-    // Arrays are concatenated
-    assert_eq!(base.ext_ignore_apps, vec!["Zed", "Slack"]);
     // None is filled from other
     assert_eq!(base.daemon_idle_timeout, Some("10m".to_string()));
 }
@@ -241,7 +237,6 @@ fn fully_populated() -> Config {
         model: Some(Utf8PathBuf::from("/populated/model")),
         silence_duration: Some(2.5),
         archive_retention: Some("14d".to_string()),
-        ext_ignore_apps: vec!["PopApp".into()],
         clipboard_capture: Some(true),
         daemon_idle_timeout: Some("8m".to_string()),
     }
@@ -313,12 +308,10 @@ fn merge_scalar_fills_none() {
 fn merge_array_concatenation_order() {
     let mut a = Config {
         include_dirs: vec![Utf8PathBuf::from("/a")],
-        ext_ignore_apps: vec!["AppA".into()],
         ..Config::default()
     };
     let b = Config {
         include_dirs: vec![Utf8PathBuf::from("/b")],
-        ext_ignore_apps: vec!["AppB".into()],
         ..Config::default()
     };
     a.merge(b);
@@ -326,7 +319,6 @@ fn merge_array_concatenation_order() {
         a.include_dirs,
         vec![Utf8PathBuf::from("/a"), Utf8PathBuf::from("/b")]
     );
-    assert_eq!(a.ext_ignore_apps, vec!["AppA", "AppB"]);
 }
 
 /// Merging three layers preserves first-wins for scalars across all layers
@@ -339,7 +331,6 @@ fn merge_three_layers() {
         model: None,
         silence_duration: None,
         archive_retention: None,
-        ext_ignore_apps: vec!["AppA".into()],
         clipboard_capture: None,
         daemon_idle_timeout: None,
     };
@@ -349,7 +340,6 @@ fn merge_three_layers() {
         model: Some(Utf8PathBuf::from("/b/model")),
         silence_duration: Some(3.0),
         archive_retention: None,
-        ext_ignore_apps: vec!["AppB".into()],
         clipboard_capture: None,
         daemon_idle_timeout: Some("8m".to_string()),
     };
@@ -359,7 +349,6 @@ fn merge_three_layers() {
         model: Some(Utf8PathBuf::from("/c/model")),
         silence_duration: Some(10.0),
         archive_retention: Some("90d".to_string()),
-        ext_ignore_apps: vec!["AppC".into()],
         clipboard_capture: Some(false),
         daemon_idle_timeout: Some("20m".to_string()),
     };
@@ -402,7 +391,6 @@ fn merge_three_layers() {
             Utf8PathBuf::from("/c"),
         ]
     );
-    assert_eq!(a.ext_ignore_apps, vec!["AppA", "AppB", "AppC"]);
 }
 
 /// Merging a default (empty) config into a fully populated config changes nothing.
@@ -411,7 +399,6 @@ fn merge_empty_into_populated() {
     let mut populated = fully_populated();
     let empty = Config {
         include_dirs: Vec::new(),
-        ext_ignore_apps: Vec::new(),
         engine: None,
         model: None,
         silence_duration: None,
@@ -433,7 +420,6 @@ fn merge_empty_into_populated() {
         populated.include_dirs,
         vec![Utf8PathBuf::from("/populated/dir")]
     );
-    assert_eq!(populated.ext_ignore_apps, vec!["PopApp"]);
 }
 
 /// Merging a fully populated config into an empty one fills all scalars
@@ -442,7 +428,6 @@ fn merge_empty_into_populated() {
 fn merge_populated_into_empty() {
     let mut empty = Config {
         include_dirs: Vec::new(),
-        ext_ignore_apps: Vec::new(),
         engine: None,
         model: None,
         silence_duration: None,
@@ -464,16 +449,11 @@ fn merge_populated_into_empty() {
         empty.include_dirs,
         vec![Utf8PathBuf::from("/populated/dir")]
     );
-    assert_eq!(empty.ext_ignore_apps, vec!["PopApp"]);
 }
 
 /// Merging a default config is an identity operation: for any config `a`,
 /// `a.merge(default_empty)` leaves `a` unchanged (scalars are first-wins
 /// so None never overwrites, and extending with an empty vec is a no-op).
-///
-/// Note: we use a truly empty default (no serde defaults) to test pure
-/// merge semantics. The `Config::default()` has `ext_ignore_apps: ["Zed"]`
-/// from `default_ext_ignore_apps`, which would extend the array.
 mod prop {
     use super::*;
     use proptest::prelude::*;
@@ -512,10 +492,6 @@ mod prop {
         proptest::collection::vec("[a-z/]{1,15}".prop_map(Utf8PathBuf::from), 0..4)
     }
 
-    fn arb_strings() -> impl Strategy<Value = Vec<String>> {
-        proptest::collection::vec("[A-Za-z]{1,10}", 0..4)
-    }
-
     fn arb_config() -> impl Strategy<Value = Config> {
         (
             arb_paths(),
@@ -523,7 +499,6 @@ mod prop {
             arb_opt_path(),
             arb_opt_f64(),
             arb_opt_string(),
-            arb_strings(),
             arb_opt_bool(),
             arb_opt_string(),
         )
@@ -534,7 +509,6 @@ mod prop {
                     model,
                     silence_duration,
                     archive_retention,
-                    ext_ignore_apps,
                     clipboard_capture,
                     daemon_idle_timeout,
                 )| {
@@ -544,7 +518,6 @@ mod prop {
                         model,
                         silence_duration,
                         archive_retention,
-                        ext_ignore_apps,
                         clipboard_capture,
                         daemon_idle_timeout,
                     }
@@ -561,7 +534,6 @@ mod prop {
         fn merge_idempotent_with_empty(a in arb_config()) {
             let empty = Config {
                 include_dirs: Vec::new(),
-                ext_ignore_apps: Vec::new(),
                 engine: None,
                 model: None,
                 silence_duration: None,
@@ -572,7 +544,6 @@ mod prop {
 
             // Snapshot before merge
             let dirs_before = a.include_dirs.clone();
-            let apps_before = a.ext_ignore_apps.clone();
             let engine_before = a.engine;
             let model_before = a.model.clone();
             let silence_before = a.silence_duration;
@@ -584,7 +555,6 @@ mod prop {
             a.merge(empty);
 
             prop_assert_eq!(&a.include_dirs, &dirs_before, "include_dirs changed");
-            prop_assert_eq!(&a.ext_ignore_apps, &apps_before, "ext_ignore_apps changed");
             prop_assert_eq!(a.engine, engine_before, "engine changed");
             prop_assert_eq!(&a.model, &model_before, "model changed");
             prop_assert_eq!(a.silence_duration, silence_before, "silence_duration changed");

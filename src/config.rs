@@ -13,7 +13,7 @@ use serde::Deserialize;
 use crate::narrate::transcribe::Engine;
 
 /// Attend configuration.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct Config {
     /// Additional directories to include beyond the project root.
     /// Files in these directories will not be filtered out of dictation/editor context.
@@ -28,35 +28,12 @@ pub struct Config {
     /// How long to keep archived narrations (e.g. `"7d"`, `"24h"`).
     /// Set to `"forever"` to disable automatic cleanup. Defaults to `"7d"`.
     pub archive_retention: Option<String>,
-    /// Applications to ignore for external text capture (case-insensitive).
-    /// Defaults to `["Zed"]` since Zed's GPUI does not expose AXSelectedText.
-    #[serde(default = "default_ext_ignore_apps")]
-    pub ext_ignore_apps: Vec<String>,
     /// Whether to capture clipboard changes (text and images). Defaults to true.
     #[serde(default)]
     pub clipboard_capture: Option<bool>,
     /// How long the persistent daemon idles before auto-exiting (e.g. `"5m"`, `"10m"`).
     /// Set to `"forever"` to never auto-exit. Defaults to `"5m"`.
     pub daemon_idle_timeout: Option<String>,
-}
-
-fn default_ext_ignore_apps() -> Vec<String> {
-    vec!["Zed".to_string()]
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            include_dirs: Vec::new(),
-            engine: None,
-            model: None,
-            silence_duration: None,
-            archive_retention: None,
-            ext_ignore_apps: default_ext_ignore_apps(),
-            clipboard_capture: None,
-            daemon_idle_timeout: None,
-        }
-    }
 }
 
 impl Config {
@@ -135,7 +112,6 @@ impl Config {
     /// the existing value is kept if already set, otherwise the new value is taken.
     pub fn merge(&mut self, other: Config) {
         self.include_dirs.extend(other.include_dirs);
-        self.ext_ignore_apps.extend(other.ext_ignore_apps);
         if self.engine.is_none() {
             self.engine = other.engine;
         }
