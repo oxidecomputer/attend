@@ -56,7 +56,7 @@ To install `attend`, you'll need
 [Rust](https://rust-lang.org/learn/get-started/); then, you should:
 
 ```bash
-cargo install --git --locked https://github.com/oxidecomputer/attend
+cargo install --locked --git https://github.com/oxidecomputer/attend attend
 attend install --agent claude --editor zed   # for example
 ```
 
