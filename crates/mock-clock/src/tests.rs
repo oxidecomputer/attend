@@ -39,9 +39,9 @@ fn mock_advance_accumulates() {
     assert_eq!(clock.now(), start + Duration::from_secs(8));
 }
 
-/// sleep(Duration::ZERO) returns immediately without blocking.
+/// sleep(Duration::ZERO) does not advance logical time.
 #[test]
-fn mock_sleep_zero_returns_immediately() {
+fn mock_sleep_zero_does_not_advance_time() {
     let start = Utc::now();
     let clock = MockClock::new(start);
     let sleeper = clock.for_thread();
