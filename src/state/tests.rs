@@ -241,6 +241,147 @@ proptest! {
     }
 }
 
+// ── reorder_by_newness: edge-case unit tests ────────────────────────────────
+
+/// Helper: construct a cursor (zero-width selection) at a given line:col.
+fn cursor(line: usize, col: usize) -> Selection {
+    let pos = Position::of(line, col).unwrap();
+    Selection {
+        start: pos,
+        end: pos,
+    }
+}
+
+/// Helper: construct a FileEntry from a path and list of selections.
+fn file(path: &str, selections: Vec<Selection>) -> FileEntry {
+    FileEntry {
+        path: Utf8PathBuf::from(path),
+        selections,
+    }
+}
+
+/// First invocation (no cached state): output order matches input order exactly.
+#[test]
+fn reorder_empty_previous() {
+    let mut state = EditorState {
+        files: vec![
+            file("c.rs", vec![cursor(1, 1)]),
+            file("a.rs", vec![cursor(2, 3)]),
+            file("b.rs", vec![cursor(1, 5)]),
+        ],
+        cwd: None,
+    };
+    let original_paths: Vec<Utf8PathBuf> = state.files.iter().map(|f| f.path.clone()).collect();
+    let original_sels: Vec<Vec<Selection>> =
+        state.files.iter().map(|f| f.selections.clone()).collect();
+
+    state.reorder_relative_to(&EditorState::default());
+
+    let result_paths: Vec<&Utf8Path> = state.files.iter().map(|f| f.path.as_path()).collect();
+    let expected_paths: Vec<&Utf8Path> = original_paths.iter().map(|p| p.as_path()).collect();
+    assert_eq!(result_paths, expected_paths);
+
+    // Selections should also be unchanged.
+    for (f, expected) in state.files.iter().zip(original_sels.iter()) {
+        assert_eq!(&f.selections, expected);
+    }
+}
+
+/// All files removed between invocations: result is empty.
+#[test]
+fn reorder_empty_current() {
+    let previous = EditorState {
+        files: vec![
+            file("a.rs", vec![cursor(1, 1)]),
+            file("b.rs", vec![cursor(2, 1)]),
+        ],
+        cwd: None,
+    };
+    let mut state = EditorState {
+        files: vec![],
+        cwd: None,
+    };
+
+    state.reorder_relative_to(&previous);
+
+    assert!(state.files.is_empty());
+}
+
+/// Three files all touched: they appear in the same relative order as the
+/// input, not alphabetically re-sorted or reordered by any other criterion.
+#[test]
+fn reorder_touched_preserves_input_order() {
+    let previous = EditorState {
+        files: vec![
+            file("a.rs", vec![cursor(1, 1)]),
+            file("b.rs", vec![cursor(1, 1)]),
+            file("c.rs", vec![cursor(1, 1)]),
+        ],
+        cwd: None,
+    };
+    // All files have different selections from previous → all touched.
+    let mut state = EditorState {
+        files: vec![
+            file("c.rs", vec![cursor(3, 1)]),
+            file("a.rs", vec![cursor(2, 1)]),
+            file("b.rs", vec![cursor(4, 1)]),
+        ],
+        cwd: None,
+    };
+
+    state.reorder_relative_to(&previous);
+
+    // Touched files preserve input order: c, a, b.
+    assert_eq!(state.files[0].path, "c.rs");
+    assert_eq!(state.files[1].path, "a.rs");
+    assert_eq!(state.files[2].path, "b.rs");
+}
+
+/// File has duplicate selections in both current and previous: the multiset
+/// is preserved (no accidental dedup from HashMap keying).
+#[test]
+fn reorder_selection_dedup() {
+    let sel_a = Selection {
+        start: Position::of(1, 1).unwrap(),
+        end: Position::of(1, 5).unwrap(),
+    };
+    let sel_b = Selection {
+        start: Position::of(2, 1).unwrap(),
+        end: Position::of(2, 5).unwrap(),
+    };
+
+    // Previous has two copies of sel_a.
+    let previous = EditorState {
+        files: vec![file("a.rs", vec![sel_a, sel_a, sel_b])],
+        cwd: None,
+    };
+    // Current also has two copies of sel_a plus sel_b (same multiset).
+    let mut state = EditorState {
+        files: vec![file("a.rs", vec![sel_a, sel_a, sel_b])],
+        cwd: None,
+    };
+
+    state.reorder_relative_to(&previous);
+
+    // Multiset must be preserved: still 3 selections total.
+    assert_eq!(state.files.len(), 1);
+    assert_eq!(state.files[0].selections.len(), 3);
+
+    // Count occurrences: should be exactly 2x sel_a and 1x sel_b.
+    let count_a = state.files[0]
+        .selections
+        .iter()
+        .filter(|s| **s == sel_a)
+        .count();
+    let count_b = state.files[0]
+        .selections
+        .iter()
+        .filter(|s| **s == sel_b)
+        .count();
+    assert_eq!(count_a, 2, "expected 2 copies of sel_a");
+    assert_eq!(count_b, 1, "expected 1 copy of sel_b");
+}
+
 // ── reorder_by_newness: selection-level properties ──────────────────────────
 
 proptest! {
