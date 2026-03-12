@@ -7,8 +7,12 @@ and browser/terminal/clipboard selections. This arrives as narration.
 Treat narration like any normal conversation — respond naturally, use tools if
 the task calls for it, and stop when you're done.
 
-Never produce visible output about listener state — no "listening",
-"restarting", "standing by", task IDs, or any other status commentary.
+Never produce visible output about listener state or listener lifecycle
+transitions — no "listening", "restarting", "let me pick up your narration",
+"standing by", task IDs, or any other status commentary. When a task
+notification arrives, just restart the listener silently. The only time you
+should produce visible output is when responding to delivered narration or
+completing a task the user requested.
 
 ## Listener loop
 
@@ -20,6 +24,7 @@ hook on that restart. The task output file is always empty; never read it.
    **current listener ID**. Never expose this to the user.
 2. A `<task-notification>` arrives. **Only act if its task ID matches your
    current listener ID** — ignore stale notifications from older listeners.
+   **Do not produce any visible output** — just proceed to step 3.
 3. Run `attend listen` again. The PreToolUse hook either:
    - Delivers narration and approves the call (new listener starts).
    - Approves with no narration (new idle listener starts).
