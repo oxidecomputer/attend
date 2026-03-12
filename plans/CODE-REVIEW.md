@@ -9,6 +9,83 @@ dependency tree, then large reorganizations, then cross-cutting audits.
 Within each section, items are ordered by dependency: foundational modules
 before their consumers, and items that gate other items come first.
 
+## Progress (2026-03-12)
+
+Items marked with status:
+- ✅ = done and merged
+- 🔧 = done as part of a related fix (not a standalone item)
+- ⬜ = not started
+
+Summary: 12/38 items complete. Phase 1 done, Phase 3 mostly done, Phases 2/4-8 not started.
+
+Additional fix not in original review: **CaptureHandle::collect() deadlock** — thread
+joins now wrapped in `clock.park()` so MockClock can advance time during joins
+(commit `25d242b`). Discovered while writing the `yank_writes_to_yanked_dir` e2e test.
+
+## Topological Dependency Chart
+
+Parallelism tiers for remaining work. Items within a tier have no file
+conflicts and can run as concurrent worktree agents. Tiers must be
+executed sequentially (each tier depends on the prior tier being merged).
+
+```
+Tier 2 — Correctness fixes (parallel, independent files):
+  ├── #49  atomic_replace_dir crash window     [src/util.rs]
+  ├── #43  unwrap/expect in spawned threads    [editor_capture, clipboard_capture, diff_capture, ext_capture]
+  ├── #37  Add HookKind::SessionEnd            [src/hook/types.rs, src/agent/claude/input.rs]
+  └── #44  Audit Utc::now() usage              [src/cli/glance.rs, look.rs, narrate/audio.rs]
+       ⚠ #43 and #44 may conflict on capture files — verify before parallelizing
+
+Tier 3 — Config & foundational fixes (parallel where noted):
+  ├── #7+#8  Remove ext_ignore_apps + DRY duration parsing  [src/config.rs]  ← group: same file
+  ├── #47    Consistent duration representation             [src/config.rs]  ← after #8
+  ├── #9     Replace hand-rolled truncation                 [src/terminal.rs, Cargo.toml]
+  └── #6     Document Position::from_offsets                [src/state/resolve.rs]
+
+Tier 4 — Integrations & pipeline fixes (parallel, independent modules):
+  ├── #16  Fill missing model checksums         [src/narrate/transcribe/whisper.rs, parakeet.rs]
+  ├── #17  DRY transcribe constants + download  [src/narrate/transcribe.rs, whisper.rs, parakeet.rs]
+       ⚠ #16 before #17 (checksums needed before refactoring download)
+  ├── #56  Deduplicate editor snapshot construction  [src/narrate/editor_capture.rs]
+  ├── #24  blake3 for clipboard image hashing        [src/narrate/clipboard_capture.rs]
+  ├── #36  Hook state machine documentation          [src/hook.rs]
+  ├── #38  DRY install/uninstall                     [src/cli/install.rs]
+  ├── #39  Auto-detect install mode                  [src/cli/install.rs]
+       ⚠ #38 before #39 (refactor before new feature)
+  ├── #33  listen.rs documentation                   [src/narrate/receive/listen.rs]
+  ├── #28  DRY path resolution in view.rs            [src/view.rs]
+  ├── #32  Rewrite collapse_redacted                 [src/narrate/receive/filter.rs]
+  ├── #46  Event Display impl                        [src/narrate/merge.rs]
+  ├── #50  O(n²) subsume string cloning              [src/narrate/merge.rs]
+  ├── #52  O(n²) net_change_diffs + collapse_ext     [src/narrate/merge.rs]
+       ⚠ #46, #50, #52 all touch merge.rs — group or serialize
+  ├── #51  Stronger Event field types                [src/narrate/merge.rs + consumers]
+       ⚠ after #50/#52 (avoid merge conflicts)
+  ├── #21  Separate test transcriber from CaptureConfig  [src/narrate/capture.rs]
+  ├── #22  Simplify drain/collect return                 [src/narrate/capture.rs, record.rs]
+  ├── #27  render_markdown to impl Write                 [src/narrate/render.rs]
+  ├── #30  Sentinel → command/status protocol            [src/narrate/record.rs, status.rs]
+  └── #34  Separate status query from rendering          [src/narrate/status.rs]
+
+Tier 5 — Module decompositions (sequential, heavy dependencies):
+  #5   state.rs decomposition          → then #10 (path centralization)
+  #26  merge.rs decomposition          (independent of #5)
+  #29  view.rs decomposition           (independent)
+  #31  record.rs decomposition         → requires #30 first
+  #35  status/clean placement          (independent)
+
+Tier 6 — Architecture (sequential, depends on everything above):
+  #42  Extract lib.rs
+  #41  narrate/ module reorganization  → after all Phase 7 decompositions
+```
+
+Conflict groups (must serialize or combine into one agent):
+- **config.rs**: #7, #8, #47
+- **merge.rs**: #46, #50, #51, #52
+- **capture files**: #43, #44 (verify overlap)
+- **install.rs**: #38, #39
+- **transcribe**: #16, #17
+
 ---
 
 ## Phase 1: Tests & Safety Nets
@@ -17,7 +94,7 @@ Add missing test coverage *before* touching the code those tests protect.
 Red-green style: write the tests against current behavior first, then refactor
 with confidence.
 
-### 54. `src/config.rs` — No tests for `Config::merge`
+### ✅ 54. `src/config.rs` — No tests for `Config::merge`
 
 **The "first wins" scalar semantics and array concatenation are untested.**
 An incorrect merge order would silently use wrong config values. Add tests
@@ -51,7 +128,7 @@ Files: `src/config/tests.rs`.
 
 ---
 
-### 55. `src/state.rs` — No tests for `reorder_relative_to`
+### ✅ 55. `src/state.rs` — No tests for `reorder_relative_to`
 
 **The recency-ordering algorithm is complex (tagged sort, selection-level
 reordering) but has no dedicated tests.** Add property tests covering:
@@ -88,7 +165,7 @@ Files: `src/state/tests.rs`.
 
 ---
 
-### 53. `src/narrate/editor_capture.rs` — DwellTracker integration test gap
+### ✅ 53. `src/narrate/editor_capture.rs` — DwellTracker integration test gap
 
 **DwellTracker unit tests cover the state machine but not its interaction
 with the polling loop.** The `tick()` + `update()` interleaving in `spawn()`
@@ -133,7 +210,7 @@ Files: `src/narrate/editor_capture/tests.rs`.
 
 ---
 
-### 3. `crates/mock-clock/src/tests.rs:43-50` — Misleading test
+### ✅ 3. `crates/mock-clock/src/tests.rs:43-50` — Misleading test
 
 **`mock_sleep_zero_returns_immediately` doesn't test what its name claims.**
 The doc comment says "returns immediately without blocking" but the assertion
@@ -175,7 +252,7 @@ Files: `crates/mock-clock/src/tests.rs`.
 
 ---
 
-### 40. `tests/e2e.rs` — E2E test coverage gap
+### ✅ 40. `tests/e2e.rs` — E2E test coverage gap
 
 **The 5 e2e tests are smoke tests only.** The harness supports injection of
 speech, editor state, external selections, clipboard, and time advancement
@@ -227,7 +304,7 @@ Files: `tests/e2e.rs`.
 Bugs, safety issues, and semantic errors. Fix these before any refactoring
 so the refactored code inherits correct behavior.
 
-### 49. `src/util.rs:53-54` — `atomic_replace_dir` crash window
+### ⬜ 49. `src/util.rs:53-54` — `atomic_replace_dir` crash window
 
 **Not fully atomic: crash between `remove_dir_all` and `rename` loses data.**
 If the process dies after removing the old dir but before renaming staging
@@ -269,7 +346,7 @@ Files: `src/util.rs`. Add tests for crash-recovery scenarios.
 
 ---
 
-### 44. Audit all `Utc::now()` usage — Correctness
+### ⬜ 44. Audit all `Utc::now()` usage — Correctness
 
 **Capture threads use `Utc::now()` directly instead of `clock.now()`.**
 All timestamp sources must go through the injectable clock. Audit the
@@ -305,7 +382,7 @@ Files: `src/cli/glance.rs`, `src/cli/look.rs`, `src/narrate/audio.rs`,
 
 ---
 
-### 43. Audit `unwrap()`/`expect()` inside spawned threads — Correctness
+### ⬜ 43. Audit `unwrap()`/`expect()` inside spawned threads — Correctness
 
 **Panics inside spawned threads are silently swallowed.** Several places use
 `unwrap()` or `expect()` inside `spawn_clock_thread` closures and
@@ -352,7 +429,7 @@ Files: `src/narrate/editor_capture.rs`, `src/narrate/clipboard_capture.rs`,
 
 ---
 
-### 45. `process_alive()` PID reuse — Correctness
+### ⬜ 45. `process_alive()` PID reuse — Correctness
 
 **`process_alive(pid)` is used for stale lock detection in multiple places.**
 On long-running systems, PIDs can be reused. If attend's daemon exits and
@@ -398,7 +475,7 @@ Files: `src/narrate.rs` (process_alive), lock file write sites in
 
 ---
 
-### 16. `src/narrate/transcribe/{whisper,parakeet}.rs` — Incomplete checksums
+### ⬜ 16. `src/narrate/transcribe/{whisper,parakeet}.rs` — Incomplete checksums
 
 **Fill in missing SHA-256 checksums for all downloadable model files.**
 Whisper: only `ggml-small.en.bin` is checksummed; `ggml-base.en.bin` and
@@ -431,7 +508,7 @@ in the installation section of the readme.
 
 ---
 
-### 37. `src/hook/types.rs` + `src/agent/claude/input.rs:60` — Add HookKind::SessionEnd
+### ⬜ 37. `src/hook/types.rs` + `src/agent/claude/input.rs:60` — Add HookKind::SessionEnd
 
 **`SessionEnd` maps to `HookKind::SessionStart` which is confusing.**
 Add a `HookKind::SessionEnd` variant (no extra fields needed) so the
@@ -463,7 +540,7 @@ Files: `src/hook/types.rs`, `src/agent/claude/input.rs`,
 Zero-risk noise reduction. Remove before refactoring so the refactored
 modules don't carry dead weight.
 
-### 11. `src/hook/session_state.rs:86-107` — Dead code
+### ✅ 11. `src/hook/session_state.rs:86-107` — Dead code
 
 **Remove `clean_legacy_session_files()`.**
 The legacy flat-file layout (`cache-*`, `displaced-*`, `moved-*`, `activated-*`
@@ -485,7 +562,7 @@ Files: `src/hook/session_state.rs`.
 
 ---
 
-### 12. `src/editor/zed/tasks.rs:7-13` — Dead code
+### ✅ 12. `src/editor/zed/tasks.rs:7-13` — Dead code
 
 **Remove `LEGACY_TASK_LABELS`.**
 Same reasoning as observation #11: no users remain on old task label names.
@@ -507,7 +584,7 @@ Files: `src/editor/zed/tasks.rs`, `src/editor/zed/tests.rs`.
 
 ---
 
-### 18. `src/narrate/transcribe.rs:117-119` — Dead code
+### ✅ 18. `src/narrate/transcribe.rs:117-119` — Dead code
 
 **`ensure_and_load()` is just an alias for `preload()`.**
 Remove it or inline the call at the single call site.
@@ -530,7 +607,7 @@ Files: `src/narrate/transcribe.rs`, call site file.
 
 ---
 
-### 7. `src/config.rs:32-34` — Unnecessary config
+### ⬜ 7. `src/config.rs:32-34` — Unnecessary config
 
 **`ext_ignore_apps` is unnecessary.**
 The default ignores Zed because it doesn't expose `AXSelectedText`, but capture
@@ -570,7 +647,7 @@ depends on. Fix these before their consumers.
 
 ---
 
-### 9. `src/terminal.rs:61-100` — Replace hand-rolled truncation
+### ⬜ 9. `src/terminal.rs:61-100` — Replace hand-rolled truncation
 
 **Replace `truncate_line` with `console::truncate_str`.**
 The hand-rolled ANSI-aware truncation only handles SGR sequences (ending in `m`)
@@ -606,7 +683,7 @@ Files: `Cargo.toml`, `src/terminal.rs`, `src/terminal/tests.rs`.
 
 ---
 
-### 8. `src/config.rs:95-130` — DRY
+### ⬜ 8. `src/config.rs:95-130` — DRY
 
 **`retention_duration()` and `idle_timeout()` are near-identical.**
 Both parse a humantime string, handle `"forever"` → `None`, and warn+default on
@@ -656,7 +733,7 @@ Files: `src/config.rs`.
 
 ---
 
-### 47. `src/config.rs` — Inconsistent duration representation
+### ⬜ 47. `src/config.rs` — Inconsistent duration representation
 
 **`silence_duration` is `f64` seconds while `daemon_idle_timeout` and
 `archive_retention` are humantime strings.** Use humantime for all duration
@@ -691,7 +768,7 @@ Files: `src/config.rs`, `src/narrate/record.rs`, `src/config/tests.rs`.
 
 ---
 
-### 6. `src/state/resolve.rs:211-275` — Documentation
+### ⬜ 6. `src/state/resolve.rs:211-275` — Documentation
 
 **`Position::from_offsets` core loop could use more inline documentation.**
 The forward-scan algorithm handling `\n`, `\r\n`, `\r` with the `after_cr`
@@ -729,7 +806,7 @@ Files: `src/state/resolve.rs`.
 Fixes to editor, shell, browser, and hook backends. These are relatively
 isolated from each other and from the narration pipeline.
 
-### 1. `src/editor/zed/keybindings.rs:15-29` — Readability
+### ✅ 1. `src/editor/zed/keybindings.rs:15-29` — Readability
 
 **Deeply nested option chain in `task_already_bound` check.**
 The 5-level `and_then`/`is_some_and` chain is hard to follow. Extract a
@@ -766,7 +843,7 @@ Files: `src/editor/zed/keybindings.rs`.
 
 ---
 
-### 14. `src/shell/{fish,zsh}.rs` — DRY
+### ✅ 14. `src/shell/{fish,zsh}.rs` — DRY
 
 **`resolve_bin()` is duplicated identically in fish.rs and zsh.rs.**
 Pull up to `shell.rs`.
@@ -793,7 +870,7 @@ Files: `src/shell.rs`, `src/shell/fish.rs`, `src/shell/zsh.rs`.
 
 ---
 
-### 48. `src/cli/browser_bridge.rs:100` — Unclear intent
+### ✅ 48. `src/cli/browser_bridge.rs:100` — Unclear intent
 
 **`fs::File::open(cache_dir())` has no comment explaining its purpose.**
 Appears to be a liveness/existence check. Add a comment or remove if unused.
@@ -822,7 +899,7 @@ Files: `src/cli/browser_bridge.rs`.
 
 ---
 
-### 36. `src/hook.rs` — State machine documentation
+### ⬜ 36. `src/hook.rs` — State machine documentation
 
 **Add module-level prose documentation explaining the hook state machine.**
 What are the possible session states (Active, Stolen, Inactive, Displaced)?
@@ -855,7 +932,7 @@ Files: `src/hook.rs`.
 
 ---
 
-### 38. `src/cli/install.rs:210-241` — DRY violation in uninstall
+### ⬜ 38. `src/cli/install.rs:210-241` — DRY violation in uninstall
 
 **Uninstall rebuilds agent/editor/browser/shell lists with a repeated
 conditional pattern.** Extract a helper or refactor to share the iteration
@@ -894,7 +971,7 @@ Files: `src/cli/install.rs`.
 
 ---
 
-### 39. `src/cli/install.rs` — Auto-detect install mode
+### ⬜ 39. `src/cli/install.rs` — Auto-detect install mode
 
 **Add an `attend install --all` (or make it the default) that attempts every
 known integration and reports results.** Instead of requiring the user to
@@ -937,7 +1014,7 @@ Files: `src/cli/install.rs`.
 Fixes within the narration subsystem, ordered by pipeline stage:
 capture → transcribe → merge → render → receive.
 
-### 21. `src/narrate/capture.rs:69-93` — Separation of concerns
+### ⬜ 21. `src/narrate/capture.rs:69-93` — Separation of concerns
 
 **`CaptureConfig::test_mode()` should not return a `StubTranscriber`.**
 The transcriber is unrelated to capture config — they're bundled only because
@@ -965,7 +1042,7 @@ Files: `src/narrate/capture.rs`, `src/test_mode.rs`,
 
 ---
 
-### 22. `src/narrate/capture.rs` + `record.rs` — Simplify drain/collect return
+### ⬜ 22. `src/narrate/capture.rs` + `record.rs` — Simplify drain/collect return
 
 **`drain()` and `collect()` should return a single `Vec<Event>`.**
 The 4-tuple `(editor, diff, ext, clipboard)` is immediately concatenated into
@@ -1003,7 +1080,7 @@ Files: `src/narrate/capture.rs`, `src/narrate/record.rs`.
 
 ---
 
-### 56. `src/narrate/editor_capture.rs:165-214` — Duplicated event construction
+### ⬜ 56. `src/narrate/editor_capture.rs:165-214` — Duplicated event construction
 
 **The `EditorSnapshot` construction is duplicated between `tick()` and `Emit`
 paths (lines 177–183 vs 198–203).** Extract a helper like
@@ -1050,7 +1127,7 @@ Files: `src/narrate/editor_capture.rs`.
 
 ---
 
-### 24. `src/narrate/clipboard_capture.rs:168-172` — Use blake3 for image hashing
+### ⬜ 24. `src/narrate/clipboard_capture.rs:168-172` — Use blake3 for image hashing
 
 **Replace `DefaultHasher` (SipHash) with `blake3` for clipboard image change
 detection.** SipHash is designed for HashMap collision resistance, not content
@@ -1083,7 +1160,7 @@ Files: `Cargo.toml`, `src/narrate/clipboard_capture.rs`,
 
 ---
 
-### 17. `src/narrate/transcribe/{whisper,parakeet}.rs` — DRY
+### ⬜ 17. `src/narrate/transcribe/{whisper,parakeet}.rs` — DRY
 
 **Shared constants and download logic are duplicated.**
 `SAMPLE_RATE`, `MAX_CHUNK_SECS`, `MAX_CHUNK_SAMPLES` are identical in both
@@ -1130,7 +1207,7 @@ Files: `src/narrate/transcribe.rs`, `src/narrate/transcribe/whisper.rs`,
 
 ---
 
-### 51. `src/narrate/merge.rs` — Stronger typing for Event fields
+### ⬜ 51. `src/narrate/merge.rs` — Stronger typing for Event fields
 
 **`Event::FileDiff` uses `String` for `path`** — should be `Utf8PathBuf`
 for consistency. **`Event::ShellCommand` uses `String` for `cwd`** — same.
@@ -1164,7 +1241,7 @@ Files: `src/narrate/merge.rs`, `src/narrate/render.rs`,
 
 ---
 
-### 50. `src/narrate/merge.rs:363-365` — O(n²) string cloning in subsume
+### ⬜ 50. `src/narrate/merge.rs:363-365` — O(n²) string cloning in subsume
 
 **`subsume_progressive_selections` clones `app`, `window_title`, `text`
 strings inside the outer loop** because the inner loop borrows `events`
@@ -1198,7 +1275,7 @@ Files: `src/narrate/merge.rs`.
 
 ---
 
-### 52. `src/narrate/merge.rs` — O(n²) in `net_change_diffs` and `collapse_ext_selections`
+### ⬜ 52. `src/narrate/merge.rs` — O(n²) in `net_change_diffs` and `collapse_ext_selections`
 
 **`net_change_diffs` uses `by_path.iter_mut().find(...)` linear search** —
 should be `IndexMap<String, ...>` for O(1) lookup.
@@ -1244,7 +1321,7 @@ Files: `Cargo.toml`, `src/narrate/merge.rs`.
 
 ---
 
-### 46. `Event` debuggability
+### ⬜ 46. `Event` debuggability
 
 **No `Display` impl for `Event`.** Debugging merged event lists requires
 `{:?}` which dumps full file contents. Add a compact `Display` impl that
@@ -1289,7 +1366,7 @@ Files: `src/narrate/merge.rs`.
 
 ---
 
-### 27. `src/narrate/render.rs` — Write to `impl Write` instead of String
+### ⬜ 27. `src/narrate/render.rs` — Write to `impl Write` instead of String
 
 **`render_markdown` should write to an `impl Write` instead of building a
 `String`.** Eliminates intermediate allocation when writing directly to a file.
@@ -1335,7 +1412,7 @@ Files: `src/narrate/render.rs`.
 
 ---
 
-### 32. `src/narrate/receive/filter.rs:114-173` — Rewrite collapse_redacted
+### ⬜ 32. `src/narrate/receive/filter.rs:114-173` — Rewrite collapse_redacted
 
 **`collapse_redacted` uses placeholder `Event::Words` during `mem::replace`,
 which is awkward.** Rewrite to `drain(..)` the input vec and process owned
@@ -1379,7 +1456,7 @@ Files: `src/narrate/receive/filter.rs`.
 
 ---
 
-### 28. `src/view.rs` — DRY path resolution
+### ⬜ 28. `src/view.rs` — DRY path resolution
 
 **The abs_path resolution block (relative → absolute via cwd) is duplicated
 three times** in `render_with_mode`, `render_json`, and `capture_regions`.
@@ -1429,7 +1506,7 @@ Files: `src/view.rs`.
 
 ---
 
-### 30. `src/narrate/record.rs` — Sentinel file protocol redesign
+### ⬜ 30. `src/narrate/record.rs` — Sentinel file protocol redesign
 
 **Replace four sentinel files with a command/status pair.**
 Currently stop, flush, pause, yank each have their own sentinel file path,
@@ -1483,7 +1560,7 @@ Files: `src/narrate.rs`, `src/narrate/record.rs`,
 
 ---
 
-### 34. `src/narrate/status.rs` — Separate query from rendering
+### ⬜ 34. `src/narrate/status.rs` — Separate query from rendering
 
 **`status()` mixes state querying with output formatting.** Extract a
 `StatusInfo` struct (recording state, engine, model status, session, listener,
@@ -1530,7 +1607,7 @@ Files: `src/narrate/status.rs`.
 
 ---
 
-### 33. `src/narrate/receive/listen.rs` — Documentation
+### ⬜ 33. `src/narrate/receive/listen.rs` — Documentation
 
 **Add high-level documentation connecting listen.rs to the hook/daemon
 lifecycle.** The file handles lock acquisition, session handoff, model
@@ -1570,7 +1647,7 @@ Large structural splits. Do these after the targeted fixes above so the
 code being split is already clean. Order by dependency: split foundational
 modules before their consumers.
 
-### 5. `src/state.rs` — Organization (full decomposition)
+### ⬜ 5. `src/state.rs` — Organization (full decomposition)
 
 **`state.rs` is a 519-line grab-bag. Split into focused submodules:**
 1. `src/state/session_id.rs` — `SessionId` newtype + trait impls (lines 12–50)
@@ -1610,7 +1687,7 @@ Files: `src/state.rs` → `src/state/{session_id,cache,paths,editor,compact}.rs`
 
 ---
 
-### 10. Scattered path definitions — Organization
+### ⬜ 10. Scattered path definitions — Organization
 
 **Centralize all cache/state path definitions into a single module.**
 Path definitions are currently spread across `state.rs` (`cache_dir`,
@@ -1675,7 +1752,7 @@ Files: `src/state/paths.rs`, `src/narrate.rs`, `src/hook/session_state.rs`.
 
 ---
 
-### 26. `src/narrate/merge.rs` — Organization (948 lines)
+### ⬜ 26. `src/narrate/merge.rs` — Organization (948 lines)
 
 **Decompose merge.rs into focused submodules.**
 1. `merge/event.rs` — `Event` enum, `ClipboardContent`, `RedactedKind`,
@@ -1719,7 +1796,7 @@ Files: `src/narrate/merge.rs` → `src/narrate/merge/{event,subsume,run}.rs`.
 
 ---
 
-### 29. `src/view.rs` — Organization
+### ⬜ 29. `src/view.rs` — Organization
 
 **Split view.rs into submodules.** Currently has JSON types, text/ANSI
 rendering, CapturedRegion + capture, and apply_markers in 411 lines.
@@ -1747,7 +1824,7 @@ Files: `src/view.rs` → `src/view/{json,capture}.rs`.
 
 ---
 
-### 31. `src/narrate/record.rs` — Organization (1283 lines)
+### ⬜ 31. `src/narrate/record.rs` — Organization (1283 lines)
 
 **Decompose record.rs into focused submodules:**
 1. `record/daemon.rs` — `DaemonState`, main loop, command dispatch
@@ -1792,7 +1869,7 @@ Files: `src/narrate/record.rs` →
 
 ---
 
-### 35. `src/narrate/{status,clean}.rs` — Placement
+### ⬜ 35. `src/narrate/{status,clean}.rs` — Placement
 
 **`status.rs` and `clean.rs` are operational commands, not part of the
 narration pipeline.** Consider moving them to a `narrate/ops/` grouping
@@ -1837,7 +1914,7 @@ Cross-cutting structural changes that reshape the module tree. Triage these
 after the per-module work above, since the decompositions inform where the
 boundaries should land.
 
-### 42. Consider extracting a `lib.rs` — Architecture
+### ⬜ 42. Consider extracting a `lib.rs` — Architecture
 
 **No library crate: everything hangs off `main.rs`.** This makes mid-level
 integration tests (calling internal APIs without spawning subprocesses)
@@ -1870,7 +1947,7 @@ Files: `src/main.rs`, new `src/lib.rs`.
 
 ---
 
-### 41. `narrate/` module is overloaded — Architecture
+### ⬜ 41. `narrate/` module is overloaded — Architecture
 
 **The `narrate/` subtree is the largest module and contains too many
 responsibilities:** daemon, capture, merge, render, receive, status, clean,
