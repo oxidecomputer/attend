@@ -44,7 +44,10 @@ impl GlanceArgs {
                     Format::Human => println!("{state}"),
                     Format::Json => {
                         let payload = crate::state::CompactPayload::from_state(&state);
-                        let wrapped = crate::util::Timestamped::at(chrono::Utc::now(), payload);
+                        let wrapped = crate::util::Timestamped::at(
+                            crate::clock::process_clock().now(),
+                            payload,
+                        );
                         println!(
                             "{}",
                             serde_json::to_string_pretty(&wrapped)

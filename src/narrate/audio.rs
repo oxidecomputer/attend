@@ -127,6 +127,9 @@ pub fn start_capture() -> anyhow::Result<CaptureHandle> {
                 .collect();
 
             let chunk = AudioChunk {
+                // Uses wall clock: cpal callback runs on a real-time audio
+                // thread with no access to the injectable Clock. Acceptable
+                // because audio capture is elided in test mode.
                 timestamp: Utc::now(),
                 samples: mono,
             };

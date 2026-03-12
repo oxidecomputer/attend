@@ -89,7 +89,8 @@ impl LookArgs {
                 }
                 Format::Json => {
                     let payload = crate::view::render_json(&entries, self.dir.as_deref(), extent)?;
-                    let wrapped = crate::util::Timestamped::at(chrono::Utc::now(), payload);
+                    let wrapped =
+                        crate::util::Timestamped::at(crate::clock::process_clock().now(), payload);
                     println!(
                         "{}",
                         serde_json::to_string_pretty(&wrapped)
