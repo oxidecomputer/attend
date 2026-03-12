@@ -185,6 +185,7 @@ impl CaptureControl {
 /// Handle for the background editor/diff/ext/clipboard polling threads.
 pub(crate) struct CaptureHandle {
     control: Arc<CaptureControl>,
+    clock: Arc<dyn Clock>,
     editor_events: Arc<Mutex<Vec<Event>>>,
     diff_events: Arc<Mutex<Vec<Event>>>,
     ext_events: Arc<Mutex<Vec<Event>>>,
@@ -222,20 +223,28 @@ impl CaptureHandle {
     }
 
     /// Signal stop and collect remaining results.
+    ///
+    /// Each thread join is bracketed by `clock.park()` so the MockClock
+    /// settlement protocol can advance time while we block. Without this,
+    /// joining a thread that's sleeping on `clock.sleep()` would deadlock:
+    /// the join blocks the caller, the sleeper waits for time to advance,
+    /// and the harness can't advance because the caller hasn't settled.
     pub fn collect(mut self) -> (Vec<Event>, Vec<Event>, Vec<Event>, Vec<Event>) {
         self.control.stop();
 
+        let clock = self.clock.for_thread();
+
         // Intentionally ignored: thread panics are non-recoverable here.
-        if let Some(h) = self.editor_thread.take() {
-            let _ = h.join();
-        }
-        if let Some(h) = self.diff_thread.take() {
-            let _ = h.join();
-        }
-        if let Some(h) = self.ext_thread.take() {
-            let _ = h.join();
-        }
-        if let Some(h) = self.clipboard_thread.take() {
+        for h in [
+            self.editor_thread.take(),
+            self.diff_thread.take(),
+            self.ext_thread.take(),
+            self.clipboard_thread.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _guard = clock.park();
             let _ = h.join();
         }
 
@@ -314,6 +323,7 @@ pub(crate) fn start(
 
     Ok(CaptureHandle {
         control,
+        clock: config.clock,
         editor_events,
         diff_events,
         ext_events,
