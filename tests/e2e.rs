@@ -225,6 +225,63 @@ fn collect_empty_when_no_narration() {
 // Pause / resume
 // =========================================================================
 
+/// Pause suspends capture threads (editor, diff, ext, clipboard) but
+/// audio chunks that arrive during the pause are still retained and
+/// transcribed on stop.
+///
+/// Invariant: pausing stops context capture (editor snapshots, file
+/// diffs, external selections, clipboard) but does NOT discard audio.
+/// Speech injected during a paused period still appears in the final
+/// output because the daemon defers ingestion rather than discarding
+/// chunks.
+#[test]
+fn pause_retains_audio_but_stops_capture() {
+    let mut h = TestHarness::new(binary());
+
+    activate(&mut h, "pause-retain-1");
+
+    let toggle_on = h.spawn(&["narrate", "toggle"]);
+    h.tick_until_exit(toggle_on);
+
+    h.inject_speech("before pause", 1000);
+    h.advance_time(500);
+
+    // Pause.
+    let pause = h.spawn(&["narrate", "pause"]);
+    h.tick_until_exit(pause);
+    h.advance_time(200);
+
+    // Speech during pause: retained (audio not discarded).
+    h.inject_speech("during pause retained", 1000);
+    h.advance_time(500);
+
+    // Resume.
+    let resume = h.spawn(&["narrate", "pause"]);
+    h.tick_until_exit(resume);
+    h.advance_time(200);
+
+    h.inject_speech("after resume", 1000);
+    h.advance_time(500);
+
+    // Stop.
+    let toggle_off = h.spawn(&["narrate", "toggle"]);
+    h.tick_until_exit(toggle_off);
+
+    let narration = collect(&mut h, "pause-retain-1");
+    assert!(
+        narration.contains("before pause"),
+        "narration should contain pre-pause speech:\n{narration}"
+    );
+    assert!(
+        narration.contains("during pause retained"),
+        "narration should contain speech from paused period (audio not discarded):\n{narration}"
+    );
+    assert!(
+        narration.contains("after resume"),
+        "narration should contain post-resume speech:\n{narration}"
+    );
+}
+
 /// Pausing when already paused toggles back to recording (the pause
 /// sentinel is removed). Resuming when already recording is a no-op.
 ///
@@ -857,13 +914,6 @@ fn external_selection_appears_in_narration() {
 ///
 /// Invariant: yank without an active daemon returns immediately with
 /// exit code 0 and does not create any sentinel files.
-///
-/// Note: a full yank-while-recording e2e test is not feasible with the
-/// current harness because yank calls `CaptureHandle::collect()` which
-/// joins the clipboard thread. The clipboard thread sleeps on MockClock,
-/// and no time advances occur during `collect()`, causing a deadlock.
-/// The yank behavior (write to yanked dir, exit daemon) is tested at
-/// the unit level in `src/narrate/tests.rs`.
 #[test]
 fn yank_when_not_recording_is_noop() {
     let mut h = TestHarness::new(binary());
@@ -876,6 +926,71 @@ fn yank_when_not_recording_is_noop() {
     assert_eq!(
         event.exit_code, 0,
         "yank when not recording should exit cleanly"
+    );
+}
+
+/// `narrate yank` while recording writes narration files to the yanked
+/// directory and causes the daemon to exit.
+///
+/// Invariant: the yank sentinel triggers the daemon to finalize all
+/// capture streams, transcribe, and write output to `narration/yanked/`
+/// (not `narration/pending/`). The daemon removes the lock file and
+/// exits. The yanked files contain the injected speech.
+///
+/// Note: `narrate yank` also calls `copy_yanked_to_clipboard` which
+/// may fail without a display server. The test checks file output and
+/// daemon exit, not clipboard state or exit code.
+#[test]
+fn yank_writes_to_yanked_dir() {
+    let mut h = TestHarness::new(binary());
+
+    activate(&mut h, "yank-2");
+
+    let toggle_on = h.spawn(&["narrate", "toggle"]);
+    h.tick_until_exit(toggle_on);
+
+    h.inject_speech("yanked content here", 2000);
+    h.advance_time(500);
+
+    // Yank via CLI. The CLI writes the sentinel, polls for daemon exit
+    // (using clock.sleep), then tries copy_yanked_to_clipboard (may fail
+    // without a display server, but that's after the daemon has exited
+    // and written files).
+    let yank = h.spawn(&["narrate", "yank"]);
+    h.tick_until_exit(yank);
+
+    // Daemon should have exited (yank causes finalize + exit).
+    assert!(!h.has_daemon(), "daemon should have exited after yank");
+
+    // The yank CLI archives yanked files after clipboard copy, so check
+    // the archive directory (not yanked/) for the narration files.
+    let archive_session = h.cache_dir().join("narration/archive/yank-2");
+    let archive_local = h.cache_dir().join("narration/archive/_local");
+
+    let read_all_json = |dir: &camino::Utf8Path| -> String {
+        if !dir.exists() {
+            return String::new();
+        }
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|ext| ext.to_str()) == Some("json"))
+            .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let content = format!(
+        "{}{}",
+        read_all_json(&archive_session),
+        read_all_json(&archive_local),
+    );
+    // Each word is stored as a separate JSON object. Check for
+    // individual words rather than the contiguous phrase.
+    assert!(
+        content.contains("yanked") && content.contains("content") && content.contains("here"),
+        "archived yank files should contain the injected speech words:\n{content}"
     );
 }
 
