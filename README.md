@@ -16,17 +16,14 @@ chronologically:
 
 - **Voice**: your speech, transcribed to text via a local model.
 - **Editor snapshots**: the code around your cursor or selection, with file
-  path and language (requires editor integration, installable from the CLI).
-- **File diffs**: the net change to files you edited while speaking (requires
-  editor integration, installable from the CLI).
-- **External selections**: text you highlighted in any application, captured
-  via the accessibility API (macOS only; requires granting the accessibility
-  permission).
+  path and language.
+- **File diffs**: the net change to files you edited while speaking.
+- **External selections**: text you highlighted in almost any other application
+  (macOS only; requires granting the accessibility permission).
 - **Browser selections**: rich text you selected on a web page, with the page
-  URL and title (requires a browser extension, installable from the CLI).
+  URL and title.
 - **Clipboard**: text *or images* you copied during recording.
-- **Shell commands**: commands you ran, with exit status and duration. Requires
-  shell hook integration (installable from the CLI).
+- **Shell commands**: commands you ran, with exit status and duration.
 
 Editor snapshots, file diffs, and shell commands are scoped to the agent's
 working directory; those from outside it are marked as redacted to prevent
@@ -59,8 +56,8 @@ To install `attend`, you'll need
 [Rust](https://rust-lang.org/learn/get-started/); then, you should:
 
 ```bash
-cargo install --git https://github.com/oxidecomputer/attend
-attend install --agent claude --editor zed    # for example
+cargo install --git --locked https://github.com/oxidecomputer/attend
+attend install --agent claude --editor zed   # for example
 ```
 
 This installs the hooks that provide editor context to Claude Code, plus
@@ -75,7 +72,8 @@ attend install --browser firefox   # or: --browser chrome
 attend install --shell fish        # or: --shell zsh
 ```
 
-See the [setup guide](docs/setup.md) for details on each integration.
+See the [setup guide](docs/setup.md) for details on each integration, and
+guidance on setting up global hotkeys for `attend` (recommended).
 
 ## Next steps
 
