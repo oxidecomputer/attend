@@ -113,7 +113,7 @@ struct ControlState {
 
 impl CaptureControl {
     /// Create a new control in the running (not paused, not stopped) state.
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             state: Mutex::new(ControlState {
                 paused: false,
@@ -174,7 +174,7 @@ impl CaptureControl {
     /// Stop all capture threads.
     ///
     /// Notifies the condvar so paused threads wake and exit.
-    fn stop(&self) {
+    pub(crate) fn stop(&self) {
         let mut state = self.state.lock().unwrap();
         state.stopped = true;
         drop(state);
