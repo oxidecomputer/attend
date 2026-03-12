@@ -52,7 +52,7 @@ pub(super) fn clean_session_markers() {
     let Some(sessions) = sessions_dir() else {
         return;
     };
-    for subdir in ["displaced", "moved", "activated"] {
+    for subdir in ["displaced", "activated"] {
         let dir = sessions.join(subdir);
         let Ok(entries) = fs::read_dir(&dir) else {
             continue;
@@ -76,32 +76,6 @@ pub(super) fn clean_session_markers() {
             if stale {
                 let _ = fs::remove_file(entry.path());
             }
-        }
-    }
-
-    // Clean up legacy flat files from the old layout.
-    clean_legacy_session_files();
-}
-
-/// Remove legacy `cache-*`, `moved-*`, `displaced-*`, and `activated-*` files from the cache root.
-///
-/// These were written by versions prior to the `sessions/` subdirectory layout.
-/// Runs once per session start; harmless when no legacy files remain.
-fn clean_legacy_session_files() {
-    let Some(cache) = state::cache_dir() else {
-        return;
-    };
-    let Ok(entries) = fs::read_dir(&cache) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        if let Some(name) = entry.file_name().to_str()
-            && (name.starts_with("cache-")
-                || name.starts_with("displaced-")
-                || name.starts_with("moved-")
-                || name.starts_with("activated-"))
-        {
-            let _ = fs::remove_file(entry.path());
         }
     }
 }
