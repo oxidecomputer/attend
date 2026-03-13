@@ -172,19 +172,15 @@ pub(super) fn spawn(
             let now = clock.now();
 
             // Flush a dwelled cursor-only snapshot if enough time has passed.
+            // Tick before update: a pending cursor that has dwelled long enough
+            // is emitted using a fresh timestamp, then the new poll proceeds.
             if let Some(files) = tracker.tick(now) {
-                let timestamp = clock.now();
-                let regions = capture_snapshot_regions(&files, None, &mut lang_cache);
+                let snapshot = make_editor_snapshot(files, clock.now(), &mut lang_cache);
                 let Ok(mut guard) = events.lock() else {
                     tracing::error!("event mutex poisoned: editor capture thread exiting");
                     break;
                 };
-                guard.push(Event::EditorSnapshot {
-                    timestamp,
-                    last_seen: timestamp,
-                    files,
-                    regions,
-                });
+                guard.push(snapshot);
             }
 
             let state = match source.current(cwd.as_deref(), &[]) {
@@ -203,18 +199,12 @@ pub(super) fn spawn(
 
             match tracker.update(state.files, now) {
                 EditorUpdate::Emit(files) => {
-                    let timestamp = clock.now();
-                    let regions = capture_snapshot_regions(&files, None, &mut lang_cache);
+                    let snapshot = make_editor_snapshot(files, clock.now(), &mut lang_cache);
                     let Ok(mut guard) = events.lock() else {
                         tracing::error!("event mutex poisoned: editor capture thread exiting");
                         break;
                     };
-                    guard.push(Event::EditorSnapshot {
-                        timestamp,
-                        last_seen: timestamp,
-                        files,
-                        regions,
-                    });
+                    guard.push(snapshot);
                 }
                 EditorUpdate::Extend => {
                     let now_utc = clock.now();
@@ -230,6 +220,25 @@ pub(super) fn spawn(
             }
         }
     })
+}
+
+/// Build an `EditorSnapshot` event from a set of file entries.
+///
+/// The caller must obtain the `timestamp` via `clock.now()` *after* calling
+/// `tick()` / `update()` so that the snapshot timestamp reflects the moment
+/// we decided to emit, not the moment we polled.
+fn make_editor_snapshot(
+    files: Vec<state::FileEntry>,
+    timestamp: DateTime<Utc>,
+    lang_cache: &mut view::LanguageCache,
+) -> Event {
+    let regions = capture_snapshot_regions(&files, None, lang_cache);
+    Event::EditorSnapshot {
+        timestamp,
+        last_seen: timestamp,
+        files,
+        regions,
+    }
 }
 
 /// Capture file regions for an editor snapshot.

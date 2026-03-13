@@ -23,3 +23,5 @@ cc d3a554ab063a672d37c4af20c38687d57241aec399555f9b3371b3591b9edebc # shrinks to
 cc d65891d494d8e9cd38e0e92dda5da2358b8ffe40a62cf928db95f7ded3a30ed0 # shrinks to ops = [StartReceiver, Activate(2), FireHook { session: 2, hook_type: Stop, listen_kind: None }]
 cc e23ec5f174ebf9c008cd4d966ed73c0d52b1375f42dde39c77f234f81a2675a0 # shrinks to ops = [StartReceiver, Activate(0), FireHook { session: 0, hook_type: Stop, listen_kind: None }]
 cc e3ad9ced923414419674bea66bfec016befe1de0783dac6e7dcf95daf5958fb4 # shrinks to ops = [StartReceiver, FireHook { session: 1, hook_type: PreToolUse, listen_kind: Listen }, FireHook { session: 1, hook_type: Stop, listen_kind: None }]
+cc c7bb51e9d531aad2cbd84e4bdc6aec3771e4d5148b9478d1a0b1814299959d36 # shrinks to ops = [StartReceiver, Activate(2), FireHook { session: 2, hook_type: Stop, listen_kind: None }]
+cc bff8962abe500f93b2129419ca46bec797daabf1f9c86a51376a92bffed3c3af # shrinks to ops = [StartReceiver, Activate(1), FireHook { session: 1, hook_type: Stop, listen_kind: None }]
