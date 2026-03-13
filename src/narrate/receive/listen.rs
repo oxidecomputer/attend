@@ -1,8 +1,76 @@
 //! CLI entry points for the receive subcommand and session deactivation.
 //!
-//! `run` dispatches between one-shot (`attend receive`) and polling
-//! (`attend listen`) modes. The polling path holds an exclusive lock to
-//! prevent duplicate listeners.
+//! # Pipeline position
+//!
+//! ```text
+//! daemon (record.rs)          listen.rs              hook (PreToolUse)
+//!       |                        |                        |
+//!       | writes pending/        | polls for files        | reads + delivers
+//!       | <session>/*.json       | and exits when found   | content to agent
+//!       v                        v                        v
+//!   pending_dir/ ──────> run_wait() detects ──────> read_pending()
+//!                        files, returns                   |
+//!                        (the "poke")                     v
+//!                                                  filter.rs scopes
+//!                                                  to project, then
+//!                                                  renders markdown
+//! ```
+//!
+//! The listener is poke-only: it does not read or deliver content itself.
+//! When it detects pending files, it exits, which causes the background
+//! `attend listen` tool call to complete. The agent's PreToolUse hook
+//! for the next `attend listen` invocation reads the actual content via
+//! [`super::read_pending`] and delivers it inline.
+//!
+//! # One-shot vs polling
+//!
+//! [`run`] dispatches between two modes:
+//!
+//! - **One-shot** (`wait=false`, i.e. `attend receive`): check once for
+//!   pending narration, print if found, archive the files, and exit.
+//! - **Polling** (`wait=true`, i.e. `attend listen`): acquire an exclusive
+//!   lock, then poll every 500ms until pending files appear or the session
+//!   is displaced. Returns without printing: delivery happens in the hook.
+//!
+//! # Lock semantics
+//!
+//! Only one listener may be active per machine. The polling path acquires
+//! `hooks/receive.lock` via the `lockfile` crate before entering the poll
+//! loop. If the lock is already held:
+//!
+//! - **Same session**: the caller retries for up to 2 seconds, expecting
+//!   the previous listener to detect a session change and exit (handoff
+//!   after `/clear` + `/attend`).
+//! - **Different session or unknown**: prints guidance telling the agent
+//!   not to restart the receiver, and returns `Ok(())`.
+//!
+//! Stale locks (held by dead processes) are detected via PID+timestamp
+//! checking and cleaned up automatically.
+//!
+//! # Session handoff
+//!
+//! Each poll iteration checks [`crate::state::listening_session()`] against
+//! the listener's own session ID. When a new session activates (user runs
+//! `/attend` in a different conversation), it writes its ID to the
+//! listening file. The old listener sees the mismatch on its next poll
+//! and exits silently: any message from the old listener would arrive in
+//! the new session's context where it would be confusing.
+//!
+//! # Model pre-download
+//!
+//! On the first `attend listen` invocation, [`run_wait`] checks whether the
+//! transcription model is cached. If not, it spawns a background thread to
+//! download it so the model is likely ready before the user presses record.
+//! This avoids blocking the first narration on a potentially slow download.
+//! Skipped in test mode to avoid network access.
+//!
+//! # Deactivation
+//!
+//! [`stop`] deactivates narration by marking the session as displaced (so
+//! the agent's auto-claim path does not re-activate) and removing the
+//! listening file. The running listener detects the missing file (via
+//! `listening_session()` returning `None` or a mismatched ID) on its next
+//! poll iteration and exits naturally.
 
 use std::fs;
 use std::sync::Arc;
