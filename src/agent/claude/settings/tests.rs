@@ -269,6 +269,12 @@ fn is_our_hook_legacy_fallback() {
     });
     assert!(is_our_hook(&bare));
 
+    // Dev install with absolute path.
+    let dev = serde_json::json!({
+        "hooks": [{"type": "command", "command": "/Users/me/src/attend/target/debug/attend hook session-start --agent claude"}]
+    });
+    assert!(is_our_hook(&dev));
+
     // Non-attend command should not match.
     let other = serde_json::json!({
         "hooks": [{"type": "command", "command": "some-other-tool hook"}]

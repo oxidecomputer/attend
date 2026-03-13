@@ -29,7 +29,10 @@ fn is_our_hook(entry: &serde_json::Value) -> bool {
     if entry.get(HOOK_MARKER_KEY).and_then(|v| v.as_str()) == Some(HOOK_MARKER_VALUE) {
         return true;
     }
-    // Legacy fallback: check if any hook command starts with "attend hook".
+    // Fallback: match by command pattern. Claude Code strips the
+    // _installed_by marker on session start, so this is the primary
+    // detection path in practice. Matches both bare "attend" and
+    // absolute-path "/path/to/attend" (dev installs).
     entry
         .get("hooks")
         .and_then(|h| h.as_array())
@@ -37,12 +40,22 @@ fn is_our_hook(entry: &serde_json::Value) -> bool {
             hooks.iter().any(|h| {
                 h.get("command")
                     .and_then(|c| c.as_str())
-                    .is_some_and(|cmd| {
-                        let trimmed = cmd.trim();
-                        trimmed == "attend" || trimmed.starts_with("attend ")
-                    })
+                    .is_some_and(is_attend_command)
             })
         })
+}
+
+/// Check whether a command string invokes `attend`.
+///
+/// Matches both `"attend hook ..."` (PATH install) and
+/// `"/path/to/attend hook ..."` (dev install with absolute path).
+fn is_attend_command(cmd: &str) -> bool {
+    let first_word = cmd.split_whitespace().next().unwrap_or("");
+    first_word == "attend"
+        || first_word
+            .rsplit('/')
+            .next()
+            .is_some_and(|basename| basename == "attend")
 }
 
 /// Resolve the Claude Code settings file path.
