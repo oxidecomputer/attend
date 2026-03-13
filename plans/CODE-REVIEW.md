@@ -952,7 +952,7 @@ Files: `src/cli/install.rs`.
 
 ---
 
-### ⬜ 39. `src/cli/install.rs` — Auto-detect install mode
+### ✅ 39. `src/cli/install.rs` — Auto-detect install mode
 
 **Add an `attend install --all` (or make it the default) that attempts every
 known integration and reports results.** Instead of requiring the user to

@@ -32,14 +32,23 @@ pub struct InstallArgs {
 
 impl InstallArgs {
     pub fn run(self) -> anyhow::Result<()> {
-        install(
-            self.agent,
-            self.editor,
-            self.browser,
-            self.shell,
-            self.project,
-            self.dev,
-        )
+        let has_explicit = !self.agent.is_empty()
+            || !self.editor.is_empty()
+            || !self.browser.is_empty()
+            || !self.shell.is_empty();
+
+        if has_explicit {
+            install_targeted(
+                self.agent,
+                self.editor,
+                self.browser,
+                self.shell,
+                self.project,
+                self.dev,
+            )
+        } else {
+            install_auto(self.project, self.dev)
+        }
     }
 }
 
@@ -79,8 +88,210 @@ impl UninstallArgs {
     }
 }
 
-/// Run the install subcommand.
-fn install(
+// ---------------------------------------------------------------------------
+// Outcome tracking for auto-detect mode
+// ---------------------------------------------------------------------------
+
+/// Category label for display.
+#[derive(Clone, Copy)]
+enum Category {
+    Agent,
+    Editor,
+    Browser,
+    Shell,
+}
+
+impl Category {
+    fn label(self) -> &'static str {
+        match self {
+            Category::Agent => "agent",
+            Category::Editor => "editor",
+            Category::Browser => "browser",
+            Category::Shell => "shell",
+        }
+    }
+}
+
+/// Result of attempting to install a single integration.
+enum Outcome {
+    /// Successfully installed.
+    Installed { category: Category, name: String },
+    /// Skipped with a reason (not an error).
+    Skipped {
+        category: Category,
+        name: String,
+        reason: String,
+    },
+}
+
+impl Outcome {
+    fn is_installed(&self) -> bool {
+        matches!(self, Outcome::Installed { .. })
+    }
+}
+
+impl std::fmt::Display for Outcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Outcome::Installed { category, name } => {
+                write!(f, "  + {}: {name}", category.label())
+            }
+            Outcome::Skipped {
+                category,
+                name,
+                reason,
+            } => {
+                write!(f, "  - {}: {name} ({reason})", category.label())
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Auto-detect install: try every known integration, report results
+// ---------------------------------------------------------------------------
+
+/// Install all known integrations, catching errors as skips.
+///
+/// Prints a summary and succeeds if at least one integration was installed.
+fn install_auto(project: Option<Utf8PathBuf>, dev: bool) -> anyhow::Result<()> {
+    let bin_cmd = crate::agent::resolve_bin_cmd(dev)?;
+    let mut outcomes: Vec<Outcome> = Vec::new();
+
+    // Agents
+    for agent in crate::agent::AGENTS {
+        let name = agent.name().to_string();
+        match agent.install(&bin_cmd, project.clone()) {
+            Ok(()) => outcomes.push(Outcome::Installed {
+                category: Category::Agent,
+                name,
+            }),
+            Err(e) => outcomes.push(Outcome::Skipped {
+                category: Category::Agent,
+                name,
+                reason: concise_reason(&e),
+            }),
+        }
+    }
+
+    // Editors
+    for editor in crate::editor::EDITORS {
+        let name = editor.name().to_string();
+        match editor.install_narration(&bin_cmd) {
+            Ok(()) => outcomes.push(Outcome::Installed {
+                category: Category::Editor,
+                name,
+            }),
+            Err(e) => outcomes.push(Outcome::Skipped {
+                category: Category::Editor,
+                name,
+                reason: concise_reason(&e),
+            }),
+        }
+    }
+
+    // Browsers
+    let wrapper_path = install_browser_wrapper(&bin_cmd);
+    for browser in crate::browser::BROWSERS {
+        let name = browser.name().to_string();
+        match &wrapper_path {
+            Ok(wp) => match browser.install(wp) {
+                Ok(()) => outcomes.push(Outcome::Installed {
+                    category: Category::Browser,
+                    name,
+                }),
+                Err(e) => outcomes.push(Outcome::Skipped {
+                    category: Category::Browser,
+                    name,
+                    reason: concise_reason(&e),
+                }),
+            },
+            Err(e) => outcomes.push(Outcome::Skipped {
+                category: Category::Browser,
+                name,
+                reason: concise_reason(e),
+            }),
+        }
+    }
+
+    // Shells
+    for shell in crate::shell::SHELLS {
+        let name = shell.name().to_string();
+        match shell.install_hooks(&bin_cmd) {
+            Ok(()) => {
+                // Hooks installed; also try completions (best-effort).
+                if let Err(e) = shell.install_completions(&bin_cmd) {
+                    tracing::warn!("shell {name}: completions failed: {e}");
+                }
+                outcomes.push(Outcome::Installed {
+                    category: Category::Shell,
+                    name,
+                })
+            }
+            Err(e) => outcomes.push(Outcome::Skipped {
+                category: Category::Shell,
+                name,
+                reason: concise_reason(&e),
+            }),
+        }
+    }
+
+    // Print summary
+    let installed_count = outcomes.iter().filter(|o| o.is_installed()).count();
+    println!();
+    for outcome in &outcomes {
+        println!("{outcome}");
+    }
+    println!();
+
+    if installed_count == 0 {
+        anyhow::bail!("no integrations were installed");
+    }
+
+    println!(
+        "{installed_count} integration{} installed.",
+        if installed_count == 1 { "" } else { "s" }
+    );
+
+    // Save metadata for successfully installed integrations only.
+    let mut meta = crate::state::installed_meta().unwrap_or_default();
+    meta.version = env!("CARGO_PKG_VERSION").to_string();
+    meta.dev = dev;
+    for outcome in &outcomes {
+        if let Outcome::Installed { category, name } = outcome {
+            let list = match category {
+                Category::Agent => &mut meta.agents,
+                Category::Editor => &mut meta.editors,
+                Category::Browser => &mut meta.browsers,
+                Category::Shell => &mut meta.shells,
+            };
+            if !list.contains(name) {
+                list.push(name.clone());
+            }
+        }
+    }
+    if let Some(ref p) = project
+        && !meta.project_paths.contains(p)
+    {
+        meta.project_paths.push(p.clone());
+    }
+    crate::state::save_install_meta(&meta);
+
+    Ok(())
+}
+
+/// Extract a concise one-line reason from an error chain.
+fn concise_reason(err: &anyhow::Error) -> String {
+    // Use the root cause (innermost error) for brevity.
+    format!("{}", err.root_cause())
+}
+
+// ---------------------------------------------------------------------------
+// Targeted install: explicit flags, errors are fatal
+// ---------------------------------------------------------------------------
+
+/// Install specific integrations named by the user. Errors are fatal.
+fn install_targeted(
     agent: Vec<String>,
     editor: Vec<String>,
     browser: Vec<String>,
@@ -88,35 +299,6 @@ fn install(
     project: Option<Utf8PathBuf>,
     dev: bool,
 ) -> anyhow::Result<()> {
-    if agent.is_empty() && editor.is_empty() && browser.is_empty() && shell.is_empty() {
-        anyhow::bail!(
-            "specify at least one --agent, --editor, --browser, or --shell.\n  \
-             Available agents: {}\n  \
-             Available editors: {}\n  \
-             Available browsers: {}\n  \
-             Available shells: {}",
-            crate::agent::AGENTS
-                .iter()
-                .map(|a| a.name())
-                .collect::<Vec<_>>()
-                .join(", "),
-            crate::editor::EDITORS
-                .iter()
-                .map(|e| e.name())
-                .collect::<Vec<_>>()
-                .join(", "),
-            crate::browser::BROWSERS
-                .iter()
-                .map(|b| b.name())
-                .collect::<Vec<_>>()
-                .join(", "),
-            crate::shell::SHELLS
-                .iter()
-                .map(|s| s.name())
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
-    }
     let bin_cmd = crate::agent::resolve_bin_cmd(dev)?;
     for name in &agent {
         crate::agent::install(name, project.clone(), dev)?;
@@ -290,3 +472,6 @@ fn remove_browser_wrapper() {
         let _ = std::fs::remove_file(wrapper);
     }
 }
+
+#[cfg(test)]
+mod tests;
