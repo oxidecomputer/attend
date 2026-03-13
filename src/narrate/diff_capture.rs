@@ -38,7 +38,10 @@ pub(super) fn spawn(
 
         // Snapshot initial state of whatever files are already open.
         {
-            let paths = open_paths.lock().unwrap();
+            let Ok(paths) = open_paths.lock() else {
+                tracing::error!("open_paths mutex poisoned: diff capture thread exiting");
+                return;
+            };
             for path in paths.iter() {
                 if let Ok(content) = fs::read_to_string(path) {
                     if let Ok(meta) = fs::metadata(path)
@@ -51,7 +54,7 @@ pub(super) fn spawn(
             }
         }
 
-        loop {
+        'outer: loop {
             if control.wait_while_paused(&*clock) {
                 break;
             }
@@ -59,7 +62,13 @@ pub(super) fn spawn(
             clock.sleep(Duration::from_secs(FILE_DIFF_POLL_SECS));
 
             // Read the current file list from the editor capture thread.
-            let paths = open_paths.lock().unwrap().clone();
+            let paths = {
+                let Ok(guard) = open_paths.lock() else {
+                    tracing::error!("open_paths mutex poisoned: diff capture thread exiting");
+                    break;
+                };
+                guard.clone()
+            };
 
             for path in &paths {
                 let Ok(meta) = fs::metadata(path) else {
@@ -90,7 +99,11 @@ pub(super) fn spawn(
                     let timestamp = clock.now();
                     // Keep absolute path — filtering deferred to receive.
                     let display_path = path.as_str().to_string();
-                    events.lock().unwrap().push(Event::FileDiff {
+                    let Ok(mut guard) = events.lock() else {
+                        tracing::error!("event mutex poisoned: diff capture thread exiting");
+                        break 'outer;
+                    };
+                    guard.push(Event::FileDiff {
                         timestamp,
                         path: display_path,
                         old: old_content.clone(),

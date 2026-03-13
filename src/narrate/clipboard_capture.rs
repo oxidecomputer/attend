@@ -221,7 +221,13 @@ pub(super) fn spawn(
                 match tracker.check(text.as_deref(), image_data.as_ref()) {
                     ClipboardUpdate::Changed(ClipboardContent::Text { text }) => {
                         let timestamp = clock.now();
-                        events.lock().unwrap().push(Event::ClipboardSelection {
+                        let Ok(mut guard) = events.lock() else {
+                            tracing::error!(
+                                "event mutex poisoned: clipboard capture thread exiting"
+                            );
+                            break;
+                        };
+                        guard.push(Event::ClipboardSelection {
                             timestamp,
                             content: ClipboardContent::Text { text },
                         });
@@ -235,7 +241,13 @@ pub(super) fn spawn(
                             continue;
                         };
                         let timestamp = clock.now();
-                        events.lock().unwrap().push(Event::ClipboardSelection {
+                        let Ok(mut guard) = events.lock() else {
+                            tracing::error!(
+                                "event mutex poisoned: clipboard capture thread exiting"
+                            );
+                            break;
+                        };
+                        guard.push(Event::ClipboardSelection {
                             timestamp,
                             content: ClipboardContent::Image { path },
                         });

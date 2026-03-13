@@ -175,7 +175,11 @@ pub(super) fn spawn(
             if let Some(files) = tracker.tick(now) {
                 let timestamp = clock.now();
                 let regions = capture_snapshot_regions(&files, None, &mut lang_cache);
-                events.lock().unwrap().push(Event::EditorSnapshot {
+                let Ok(mut guard) = events.lock() else {
+                    tracing::error!("event mutex poisoned: editor capture thread exiting");
+                    break;
+                };
+                guard.push(Event::EditorSnapshot {
                     timestamp,
                     last_seen: timestamp,
                     files,
@@ -189,13 +193,23 @@ pub(super) fn spawn(
             };
 
             // Publish open file paths for the diff capture thread.
-            *open_paths.lock().unwrap() = state.files.iter().map(|f| f.path.clone()).collect();
+            {
+                let Ok(mut guard) = open_paths.lock() else {
+                    tracing::error!("open_paths mutex poisoned: editor capture thread exiting");
+                    break;
+                };
+                *guard = state.files.iter().map(|f| f.path.clone()).collect();
+            }
 
             match tracker.update(state.files, now) {
                 EditorUpdate::Emit(files) => {
                     let timestamp = clock.now();
                     let regions = capture_snapshot_regions(&files, None, &mut lang_cache);
-                    events.lock().unwrap().push(Event::EditorSnapshot {
+                    let Ok(mut guard) = events.lock() else {
+                        tracing::error!("event mutex poisoned: editor capture thread exiting");
+                        break;
+                    };
+                    guard.push(Event::EditorSnapshot {
                         timestamp,
                         last_seen: timestamp,
                         files,
@@ -204,7 +218,10 @@ pub(super) fn spawn(
                 }
                 EditorUpdate::Extend => {
                     let now_utc = clock.now();
-                    let mut guard = events.lock().unwrap();
+                    let Ok(mut guard) = events.lock() else {
+                        tracing::error!("event mutex poisoned: editor capture thread exiting");
+                        break;
+                    };
                     if let Some(Event::EditorSnapshot { last_seen, .. }) = guard.last_mut() {
                         *last_seen = now_utc;
                     }

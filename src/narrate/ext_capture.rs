@@ -161,7 +161,11 @@ pub(super) fn spawn(
                 match tracker.update(snapshot, now) {
                     ExtUpdate::New(snapshot) => {
                         let timestamp = clock.now();
-                        events.lock().unwrap().push(Event::ExternalSelection {
+                        let Ok(mut guard) = events.lock() else {
+                            tracing::error!("event mutex poisoned: ext capture thread exiting");
+                            break;
+                        };
+                        guard.push(Event::ExternalSelection {
                             timestamp,
                             last_seen: timestamp,
                             app: snapshot.app,
@@ -171,7 +175,10 @@ pub(super) fn spawn(
                     }
                     ExtUpdate::Extend => {
                         let now_utc = clock.now();
-                        let mut guard = events.lock().unwrap();
+                        let Ok(mut guard) = events.lock() else {
+                            tracing::error!("event mutex poisoned: ext capture thread exiting");
+                            break;
+                        };
                         if let Some(Event::ExternalSelection { last_seen, .. }) = guard.last_mut() {
                             *last_seen = now_utc;
                         }
