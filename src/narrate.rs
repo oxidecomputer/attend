@@ -42,17 +42,16 @@
 pub(crate) mod audio;
 pub(crate) mod capture;
 mod chime;
-mod clean;
 pub(crate) mod clipboard_capture;
 mod diff_capture;
 pub(crate) mod editor_capture;
 pub(crate) mod ext_capture;
 pub(crate) mod merge;
+pub(crate) mod ops;
 pub(crate) mod receive;
 pub(crate) mod record;
 pub(crate) mod render;
 mod silence;
-mod status;
 pub(crate) mod transcribe;
 
 use camino::{Utf8Path, Utf8PathBuf};
@@ -66,10 +65,10 @@ use crate::state::SessionId;
 /// events are staged when the daemon is running but no agent session exists.
 const LOCAL_DIR_NAME: &str = "_local";
 
-pub(crate) use clean::clean;
+pub(crate) use ops::clean::clean;
 #[cfg(test)]
-pub(crate) use clean::clean_archive_dir;
-pub(crate) use status::status;
+pub(crate) use ops::clean::clean_archive_dir;
+pub(crate) use ops::status::status;
 
 /// Check whether a process with the given PID is alive.
 ///

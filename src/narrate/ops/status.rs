@@ -14,10 +14,12 @@ use std::fs;
 use camino::{Utf8Path, Utf8PathBuf};
 use native_messaging::install::{manifest, paths::Scope};
 
-use super::record::DaemonStatus;
-use super::transcribe::Engine;
-use super::{lock_owner_alive, pending_dir, receive_lock_path, record_lock_path, status_path};
 use crate::config::Config;
+use crate::narrate::record::DaemonStatus;
+use crate::narrate::transcribe::Engine;
+use crate::narrate::{
+    lock_owner_alive, pending_dir, receive_lock_path, record_lock_path, status_path,
+};
 
 /// Column width for label alignment (accommodates "Accessibility:").
 const COL: usize = 16;
@@ -195,7 +197,7 @@ pub(crate) fn query_status() -> anyhow::Result<StatusInfo> {
     }
 
     // Accessibility
-    let accessibility = if let Some(source) = super::ext_capture::platform_source() {
+    let accessibility = if let Some(source) = crate::narrate::ext_capture::platform_source() {
         if source.is_available() {
             AccessibilityState::Ok
         } else {
@@ -227,12 +229,12 @@ pub(crate) fn query_status() -> anyhow::Result<StatusInfo> {
     let pending_count = session_count + local_count;
 
     // Archive size
-    let archive_root = super::narration_root().join("archive");
+    let archive_root = crate::narrate::narration_root().join("archive");
     let archive_size = dir_size_bytes(archive_root.as_std_path());
 
     // Paths
     let paths = StatusPaths {
-        cache: super::cache_dir(),
+        cache: crate::narrate::cache_dir(),
         archive: archive_root,
         lock: lock_path,
         config: crate::util::xdg_config_home().map(|dir| dir.join("attend").join("config.toml")),
@@ -305,7 +307,7 @@ fn query_recording_state(lock_path: &Utf8Path) -> RecordingState {
                     Some(DaemonStatus::Idle) => RecordingState::Idle,
                     None => RecordingState::Recording, // no status file: assume recording
                 }
-            } else if super::parse_lock_content(content.trim()).is_some() {
+            } else if crate::narrate::parse_lock_content(content.trim()).is_some() {
                 RecordingState::StaleLock
             } else {
                 RecordingState::Unknown
@@ -324,7 +326,7 @@ fn query_listener_state(recv_lock: &Utf8Path) -> ListenerState {
         Ok(content) => {
             if lock_owner_alive(&content) {
                 ListenerState::Active
-            } else if super::parse_lock_content(content.trim()).is_some() {
+            } else if crate::narrate::parse_lock_content(content.trim()).is_some() {
                 ListenerState::StaleLock
             } else {
                 ListenerState::Unknown

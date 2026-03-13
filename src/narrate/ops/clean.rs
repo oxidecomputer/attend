@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime};
 /// Pending narrations for sessions that are no longer active will never be
 /// picked up by an agent, so they get the same retention treatment as archives.
 pub(crate) fn clean(older_than: Duration) -> anyhow::Result<()> {
-    let narration = super::narration_root();
+    let narration = crate::narrate::narration_root();
     let archive_root = narration.join("archive");
     let pending_root = narration.join("pending");
 
@@ -18,7 +18,10 @@ pub(crate) fn clean(older_than: Duration) -> anyhow::Result<()> {
     // Also clean up old clipboard staging images (referenced by path in
     // narration output, so they must outlive the narration write but not forever).
     // Now session-scoped: walk session subdirectories and prune empty ones.
-    let clip_removed = clean_archive_dir(super::clipboard_staging_root().as_std_path(), older_than);
+    let clip_removed = clean_archive_dir(
+        crate::narrate::clipboard_staging_root().as_std_path(),
+        older_than,
+    );
 
     let age = humantime::format_duration(older_than);
     println!(

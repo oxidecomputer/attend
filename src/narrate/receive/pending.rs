@@ -70,7 +70,7 @@ pub(crate) fn auto_prune(config: &Config) {
         for dir in ["archive", "pending"] {
             let root = narration.join(dir);
             if root.exists() {
-                crate::narrate::clean::clean_archive_dir(root.as_std_path(), retention);
+                crate::narrate::ops::clean::clean_archive_dir(root.as_std_path(), retention);
             }
         }
     }
