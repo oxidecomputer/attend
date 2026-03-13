@@ -70,40 +70,22 @@ impl Config {
     /// `"forever"` (cleanup disabled). Defaults to 7 days when unset or
     /// when the value cannot be parsed (with a warning).
     pub fn retention_duration(&self) -> Option<std::time::Duration> {
-        match self.archive_retention.as_deref() {
-            Some("forever") => None,
-            Some(s) => match humantime::parse_duration(s) {
-                Ok(d) => Some(d),
-                Err(e) => {
-                    tracing::warn!(
-                        value = s,
-                        "Invalid archive_retention, falling back to 7 days: {e}"
-                    );
-                    Some(std::time::Duration::from_secs(7 * 24 * 60 * 60))
-                }
-            },
-            None => Some(std::time::Duration::from_secs(7 * 24 * 60 * 60)),
-        }
+        parse_optional_duration(
+            self.archive_retention.as_deref(),
+            "archive_retention",
+            std::time::Duration::from_secs(7 * 24 * 60 * 60),
+        )
     }
 
     /// Parse `daemon_idle_timeout` to a [`Duration`], returning `None` for
     /// `"forever"` (never auto-exit). Defaults to 5 minutes when unset or
     /// when the value cannot be parsed (with a warning).
     pub fn idle_timeout(&self) -> Option<std::time::Duration> {
-        match self.daemon_idle_timeout.as_deref() {
-            Some("forever") => None,
-            Some(s) => match humantime::parse_duration(s) {
-                Ok(d) => Some(d),
-                Err(e) => {
-                    tracing::warn!(
-                        value = s,
-                        "Invalid daemon_idle_timeout, falling back to 5m: {e}"
-                    );
-                    Some(std::time::Duration::from_secs(5 * 60))
-                }
-            },
-            None => Some(std::time::Duration::from_secs(5 * 60)),
-        }
+        parse_optional_duration(
+            self.daemon_idle_timeout.as_deref(),
+            "daemon_idle_timeout",
+            std::time::Duration::from_secs(5 * 60),
+        )
     }
 
     /// Merge another config layer into this one.
@@ -130,6 +112,26 @@ impl Config {
         if self.daemon_idle_timeout.is_none() {
             self.daemon_idle_timeout = other.daemon_idle_timeout;
         }
+    }
+}
+
+/// Parse a human-readable duration string, returning `None` for `"forever"`.
+/// Falls back to `default` (with a warning) when the value is unparseable.
+fn parse_optional_duration(
+    value: Option<&str>,
+    field_name: &str,
+    default: std::time::Duration,
+) -> Option<std::time::Duration> {
+    match value {
+        Some("forever") => None,
+        Some(s) => match humantime::parse_duration(s) {
+            Ok(d) => Some(d),
+            Err(e) => {
+                tracing::warn!(value = s, "invalid {field_name}, using default: {e}");
+                Some(default)
+            }
+        },
+        None => Some(default),
     }
 }
 
