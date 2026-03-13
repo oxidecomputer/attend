@@ -426,6 +426,22 @@ fn is_cursor_only(event: &Event) -> bool {
         .all(|f| f.selections.iter().all(|s| s.is_cursor_like()))
 }
 
+/// Pre-extracted match key for an event, built once per event in O(n) total.
+/// The inner loop reads from `keys[j]` instead of borrowing from `events[j]`,
+/// eliminating the borrow conflict that previously required O(n²) cloning.
+enum SubsumeKey {
+    /// ExternalSelection: (app, window_title, text).
+    External(String, String, String),
+    /// BrowserSelection: (url, text, plain_text).
+    Browser(String, String, String),
+    /// EditorSnapshot: Vec<(path, content)> from regions.
+    Editor(Vec<(String, String)>),
+    /// ClipboardSelection with text content.
+    Clipboard(String),
+    /// Event types that don't participate in subsumption.
+    Inert,
+}
+
 /// Drop earlier, narrower selections when a later, wider selection from the
 /// same source arrives within [`SUBSUME_WINDOW_MS`].
 ///
@@ -446,34 +462,51 @@ fn subsume_progressive_selections(events: &mut Vec<Event>) {
     let len = events.len();
     let mut remove = vec![false; len];
 
+    // O(n) key extraction: one clone per event field, total.
+    let keys: Vec<SubsumeKey> = events
+        .iter()
+        .map(|e| match e {
+            Event::ExternalSelection {
+                app,
+                window_title,
+                text,
+                ..
+            } => SubsumeKey::External(app.clone(), window_title.clone(), text.clone()),
+            Event::BrowserSelection {
+                url,
+                text,
+                plain_text,
+                ..
+            } => SubsumeKey::Browser(url.clone(), text.clone(), plain_text.clone()),
+            Event::EditorSnapshot { regions, .. } => SubsumeKey::Editor(
+                regions
+                    .iter()
+                    .map(|r| (r.path.clone(), r.content.clone()))
+                    .collect(),
+            ),
+            Event::ClipboardSelection {
+                content: ClipboardContent::Text { text },
+                ..
+            } => SubsumeKey::Clipboard(text.clone()),
+            _ => SubsumeKey::Inert,
+        })
+        .collect();
+
     for i in 0..len {
         if remove[i] {
             continue;
         }
         let ls_i = events[i].last_seen();
 
-        match &events[i] {
-            Event::ExternalSelection {
-                app,
-                window_title,
-                text,
-                ..
-            } => {
-                let app = app.clone();
-                let wt = window_title.clone();
-                let text = text.clone();
-                for later in &events[i + 1..] {
-                    if (later.timestamp() - ls_i) > tolerance {
+        match &keys[i] {
+            SubsumeKey::External(app, wt, text) => {
+                for j in (i + 1)..len {
+                    if (events[j].timestamp() - ls_i) > tolerance {
                         break;
                     }
-                    if let Event::ExternalSelection {
-                        app: a,
-                        window_title: w,
-                        text: t,
-                        ..
-                    } = later
-                        && *a == app
-                        && *w == wt
+                    if let SubsumeKey::External(a, w, t) = &keys[j]
+                        && a == app
+                        && w == wt
                         && t.contains(text.as_str())
                     {
                         remove[i] = true;
@@ -481,17 +514,13 @@ fn subsume_progressive_selections(events: &mut Vec<Event>) {
                     }
                 }
             }
-            Event::BrowserSelection { url, text, .. } => {
-                let url = url.clone();
-                let text = text.clone();
-                for later in &events[i + 1..] {
-                    if (later.timestamp() - ls_i) > tolerance {
+            SubsumeKey::Browser(url, text, _) => {
+                for j in (i + 1)..len {
+                    if (events[j].timestamp() - ls_i) > tolerance {
                         break;
                     }
-                    if let Event::BrowserSelection {
-                        url: u, text: t, ..
-                    } = later
-                        && *u == url
+                    if let SubsumeKey::Browser(u, t, _) = &keys[j]
+                        && u == url
                         && t.contains(text.as_str())
                     {
                         remove[i] = true;
@@ -499,28 +528,21 @@ fn subsume_progressive_selections(events: &mut Vec<Event>) {
                     }
                 }
             }
-            Event::EditorSnapshot { regions, .. } => {
-                let regions_i: Vec<(&str, &str)> = regions
-                    .iter()
-                    .map(|r| (r.path.as_str(), r.content.as_str()))
-                    .collect();
+            SubsumeKey::Editor(regions_i) => {
                 if regions_i.is_empty() {
                     continue;
                 }
-                for later in &events[i + 1..] {
-                    if (later.timestamp() - ls_i) > tolerance {
+                for j in (i + 1)..len {
+                    if (events[j].timestamp() - ls_i) > tolerance {
                         break;
                     }
-                    if let Event::EditorSnapshot {
-                        regions: regions_j, ..
-                    } = later
-                    {
+                    if let SubsumeKey::Editor(regions_j) = &keys[j] {
                         // Every region in i must have a matching region in j
                         // (same path, content contains).
                         let covered = regions_i.iter().all(|(path_i, content_i)| {
                             regions_j
                                 .iter()
-                                .any(|rj| rj.path == *path_i && rj.content.contains(content_i))
+                                .any(|(pj, cj)| pj == path_i && cj.contains(content_i.as_str()))
                         });
                         if covered {
                             remove[i] = true;
@@ -529,34 +551,27 @@ fn subsume_progressive_selections(events: &mut Vec<Event>) {
                     }
                 }
             }
-            Event::ClipboardSelection {
-                content: ClipboardContent::Text { text },
-                ..
-            } => {
-                let text = text.clone();
-                for later in &events[i + 1..] {
-                    if (later.timestamp() - ls_i) > tolerance {
+            SubsumeKey::Clipboard(text) => {
+                for j in (i + 1)..len {
+                    if (events[j].timestamp() - ls_i) > tolerance {
                         break;
                     }
                     // Clipboard can be subsumed by ExternalSelection.
-                    if let Event::ExternalSelection { text: t, .. } = later
+                    if let SubsumeKey::External(_, _, t) = &keys[j]
                         && t.contains(text.as_str())
                     {
                         remove[i] = true;
                         break;
                     }
                     // Clipboard can be subsumed by BrowserSelection (via plain_text).
-                    if let Event::BrowserSelection { plain_text, .. } = later
+                    if let SubsumeKey::Browser(_, _, plain_text) = &keys[j]
                         && plain_text.contains(text.as_str())
                     {
                         remove[i] = true;
                         break;
                     }
                     // Clipboard can be subsumed by another ClipboardSelection.
-                    if let Event::ClipboardSelection {
-                        content: ClipboardContent::Text { text: t },
-                        ..
-                    } = later
+                    if let SubsumeKey::Clipboard(t) = &keys[j]
                         && t.contains(text.as_str())
                     {
                         remove[i] = true;
@@ -564,7 +579,7 @@ fn subsume_progressive_selections(events: &mut Vec<Event>) {
                     }
                 }
             }
-            _ => {}
+            SubsumeKey::Inert => {}
         }
     }
 

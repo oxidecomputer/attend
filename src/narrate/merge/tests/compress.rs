@@ -1819,3 +1819,115 @@ fn clipboard_does_not_subsume_browser() {
         "browser should NOT be subsumed by clipboard"
     );
 }
+
+// ── subsume_progressive_selections unit tests ───────────────────────────────
+
+/// Progressive ExternalSelection events from the same source (same app +
+/// window_title) within the subsumption window are correctly subsumed:
+/// earlier, narrower text that is a substring of a later, wider text is
+/// dropped, leaving only the widest selection.
+#[test]
+fn subsume_dedup_correctness() {
+    let mut events = vec![
+        ext_sel(1.0, "iTerm2", "err"),
+        ext_sel(1.5, "iTerm2", "error"),
+        ext_sel(2.0, "iTerm2", "error[E0308]"),
+    ];
+    subsume_progressive_selections(&mut events);
+    // Chain subsumption: "err" ⊂ "error" ⊂ "error[E0308]", all within 2s.
+    // Only the widest should survive.
+    assert_eq!(events.len(), 1, "chain should collapse to widest selection");
+    if let Event::ExternalSelection { text, .. } = &events[0] {
+        assert_eq!(text, "error[E0308]");
+    } else {
+        panic!("expected ExternalSelection");
+    }
+}
+
+/// ExternalSelection events with different app, window_title, or text must
+/// NOT be subsumed into each other, even when they fall within the temporal
+/// window.
+#[test]
+fn subsume_no_false_positives() {
+    let mut events = vec![
+        // Different app, same text
+        ext_sel(1.0, "Firefox", "hello world"),
+        ext_sel(1.5, "Safari", "hello world and more"),
+        // Same app, different window (ext_sel uses "window" for all, so
+        // construct manually)
+        Event::ExternalSelection {
+            timestamp: ts(2.0),
+            last_seen: ts(2.0),
+            app: "iTerm2".to_string(),
+            window_title: "tab1".to_string(),
+            text: "partial".to_string(),
+        },
+        Event::ExternalSelection {
+            timestamp: ts(2.5),
+            last_seen: ts(2.5),
+            app: "iTerm2".to_string(),
+            window_title: "tab2".to_string(),
+            text: "partial match".to_string(),
+        },
+        // Same source, non-overlapping text
+        ext_sel(3.0, "Code", "alpha"),
+        ext_sel(3.5, "Code", "beta"),
+    ];
+    let original_len = events.len();
+    subsume_progressive_selections(&mut events);
+    assert_eq!(
+        events.len(),
+        original_len,
+        "no events should be subsumed when sources or texts differ"
+    );
+}
+
+/// Subsumption on an empty vec and a single-element vec are no-ops.
+#[test]
+fn subsume_empty_and_single_element() {
+    // Empty
+    let mut empty: Vec<Event> = vec![];
+    subsume_progressive_selections(&mut empty);
+    assert!(empty.is_empty(), "empty vec stays empty");
+
+    // Single element
+    let mut single = vec![ext_sel(1.0, "App", "text")];
+    subsume_progressive_selections(&mut single);
+    assert_eq!(single.len(), 1, "single element is a no-op");
+    if let Event::ExternalSelection { text, .. } = &single[0] {
+        assert_eq!(text, "text");
+    } else {
+        panic!("expected ExternalSelection");
+    }
+}
+
+/// A ClipboardSelection with the same text as a later BrowserSelection
+/// (matched via plain_text) within the subsumption window is dropped by
+/// `subsume_progressive_selections`. The browser event provides richer
+/// context (URL, HTML-to-markdown), so the clipboard duplicate is redundant.
+#[test]
+fn subsume_clipboard_by_browser_cross_type() {
+    let mut events = vec![
+        clipboard_text(1.0, "error handling"),
+        Event::BrowserSelection {
+            timestamp: ts(1.5),
+            last_seen: ts(1.5),
+            url: "https://doc.rust-lang.org/book".to_string(),
+            title: "The Rust Book".to_string(),
+            text: "**error handling** in Rust".to_string(),
+            plain_text: "error handling in Rust".to_string(),
+        },
+    ];
+    subsume_progressive_selections(&mut events);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::ClipboardSelection { .. })),
+        "clipboard should be subsumed by browser with containing plain_text"
+    );
+    assert_eq!(events.len(), 1, "only the browser event should survive");
+    assert!(
+        matches!(&events[0], Event::BrowserSelection { .. }),
+        "surviving event should be BrowserSelection"
+    );
+}
