@@ -21,7 +21,7 @@ Items marked with status:
 commit changes. This is very important because it allows future agents to pick up where
 you leave off.
 
-## Topological Dependency Chart
+## Topological Dependency Chart (delete from this as you complete items)
 
 Parallelism tiers for remaining work. Items within a tier have no file
 conflicts and can run as concurrent worktree agents. Tiers must be
@@ -31,11 +31,8 @@ Tier 4 — Remaining pipeline fixes:
   #51  Stronger Event field types                [src/narrate/merge.rs + consumers]
 
 Tier 5 — Module decompositions (sequential, heavy dependencies):
-  ✅ #5   state.rs decomposition          → then #10 (path centralization)
   #26  merge.rs decomposition          (independent of #5)
-  ✅ #29  view.rs decomposition           (independent)
   #31  record.rs decomposition         → requires #30 first
-  ✅ #35  status/clean placement          (independent)
 
 Tier 6 — Architecture (sequential, depends on everything above):
   #42  Extract lib.rs
