@@ -99,7 +99,7 @@ fn check_command_no_file_returns_none() {
 
     let result = check_command(&cmd_path);
     assert!(
-        matches!(result, CommandResult::None),
+        matches!(result, CommandResult::NoCommand),
         "expected None when no command file exists"
     );
 }
@@ -114,7 +114,7 @@ fn check_command_unknown_string_returns_none() {
 
     let result = check_command(&cmd_path);
     assert!(
-        matches!(result, CommandResult::None),
+        matches!(result, CommandResult::NoCommand),
         "expected None for unknown command"
     );
     // Command file should be removed even on parse error.

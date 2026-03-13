@@ -482,28 +482,6 @@ fn pause_multiple_cycles() {
     }
 }
 
-/// `record::stop()` while paused delivers content: the daemon has
-/// buffered narration and stop should flush it, not silently discard.
-#[test]
-fn stop_while_paused_delivers_content() {
-    let _g = CacheDirGuard::new();
-
-    // Use a dead PID so stop() doesn't wait for a real daemon.
-    write_fake_lock(i32::MAX);
-    let status_p = status_path();
-    fs::create_dir_all(status_p.parent().unwrap()).unwrap();
-    crate::util::atomic_write_str(&status_p, "paused").unwrap();
-
-    // Stop while paused: should write the stop command.
-    record::stop(&RealClock).unwrap();
-    assert!(
-        command_path().exists(),
-        "stop command should be written when paused"
-    );
-    let cmd = fs::read_to_string(command_path()).unwrap();
-    assert_eq!(cmd.trim(), "stop");
-}
-
 /// The command file path lives under the overridden cache directory.
 #[test]
 fn command_path_under_cache_dir() {
@@ -537,34 +515,6 @@ fn yank_not_recording_is_noop() {
     record::yank(&RealClock).unwrap();
     // No command file should exist: yank exits early when not recording.
     assert!(!command_path().exists());
-}
-
-/// `record::yank()` writes the "yank" command when recording.
-#[test]
-fn yank_writes_command() {
-    let _g = CacheDirGuard::new();
-
-    // Use a dead PID so yank() doesn't wait 5 seconds for a daemon.
-    write_fake_lock(i32::MAX);
-
-    record::yank(&RealClock).unwrap();
-    // The command file may or may not remain (the daemon would consume it),
-    // but the key assertion is: yank didn't panic and ran to completion.
-}
-
-/// `record::yank()` while paused still works (writes yank command).
-#[test]
-fn yank_while_paused_is_accepted() {
-    let _g = CacheDirGuard::new();
-
-    // Use a dead PID so yank() doesn't wait 5 seconds for a daemon.
-    write_fake_lock(i32::MAX);
-    let status_p = status_path();
-    fs::create_dir_all(status_p.parent().unwrap()).unwrap();
-    crate::util::atomic_write_str(&status_p, "paused").unwrap();
-
-    // Yank while paused should succeed.
-    record::yank(&RealClock).unwrap();
 }
 
 /// The command and status file paths live under the overridden cache directory.

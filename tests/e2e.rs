@@ -1351,3 +1351,103 @@ fn collect_is_idempotent() {
         "second collect should not re-deliver content:\n{narration_2}"
     );
 }
+
+// =========================================================================
+// Yank while paused delivers content
+// =========================================================================
+
+/// `narrate yank` while paused delivers buffered content to the yanked dir.
+///
+/// Invariant: "paused" means "not capturing new events," not "discard
+/// the buffer." Yank while paused flushes whatever was buffered before
+/// the pause and writes it to the yanked directory, just like stop does.
+#[test]
+fn yank_while_paused_delivers_content() {
+    let mut h = TestHarness::new(binary());
+
+    activate(&mut h, "yank-pause-1");
+
+    let toggle_on = h.spawn(&["narrate", "toggle"]);
+    h.tick_until_exit(toggle_on);
+
+    h.inject_speech("buffered before yank pause", 1000);
+    h.advance_time(500);
+
+    // Pause.
+    let pause = h.spawn(&["narrate", "pause"]);
+    h.tick_until_exit(pause);
+    h.advance_time(200);
+
+    // Yank while paused.
+    let yank = h.spawn(&["narrate", "yank"]);
+    h.tick_until_exit(yank);
+
+    // Daemon should have exited (yank causes finalize + exit).
+    assert!(!h.has_daemon(), "daemon should have exited after yank");
+
+    // Check the archive directory for yanked content (yank archives after
+    // clipboard copy).
+    let archive_session = h.cache_dir().join("narration/archive/yank-pause-1");
+    let archive_local = h.cache_dir().join("narration/archive/_local");
+
+    let read_all_json = |dir: &camino::Utf8Path| -> String {
+        if !dir.exists() {
+            return String::new();
+        }
+        std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|ext| ext.to_str()) == Some("json"))
+            .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let content = format!(
+        "{}{}",
+        read_all_json(&archive_session),
+        read_all_json(&archive_local),
+    );
+    assert!(
+        content.contains("buffered")
+            && content.contains("before")
+            && content.contains("yank")
+            && content.contains("pause"),
+        "archived yank files should contain the speech injected before pause:\n{content}"
+    );
+}
+
+// =========================================================================
+// Status shows "paused" when paused
+// =========================================================================
+
+/// `narrate status` reports "paused" when the daemon is paused.
+///
+/// Invariant: the status output reflects the daemon's current state
+/// accurately. After a pause command, the status file is updated to
+/// "paused" and the CLI reads it correctly.
+#[test]
+fn status_shows_paused_when_paused() {
+    let mut h = TestHarness::new(binary());
+
+    activate(&mut h, "status-pause-1");
+
+    let toggle_on = h.spawn(&["narrate", "toggle"]);
+    h.tick_until_exit(toggle_on);
+    h.advance_time(500);
+
+    // Pause.
+    let pause = h.spawn(&["narrate", "pause"]);
+    h.tick_until_exit(pause);
+    h.advance_time(200);
+
+    // Check status.
+    let status = h.spawn(&["narrate", "status"]);
+    let event = h.tick_until_exit(status);
+    let output = String::from_utf8(event.stdout).expect("non-UTF-8 output");
+    assert!(
+        output.contains("paused"),
+        "status should indicate paused:\n{output}"
+    );
+}

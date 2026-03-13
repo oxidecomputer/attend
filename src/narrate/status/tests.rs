@@ -109,6 +109,7 @@ fn display_recording_states() {
         (RecordingState::Stopped, "stopped"),
         (RecordingState::Idle, "idle (daemon resident)"),
         (RecordingState::Recording, "recording"),
+        (RecordingState::Paused, "paused"),
         (
             RecordingState::StaleLock,
             "stale lock (daemon not running): run `attend narrate toggle` to clean up",

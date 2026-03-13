@@ -135,7 +135,7 @@ impl FromStr for DaemonStatus {
 #[derive(Debug)]
 pub(crate) enum CommandResult {
     /// No command file present.
-    None,
+    NoCommand,
     /// Daemon should exit (stop or yank).
     Exit(DaemonCommand),
     /// Daemon should continue running (flush, pause, resume).
@@ -144,13 +144,13 @@ pub(crate) enum CommandResult {
 
 /// Read and remove the command file, returning what the daemon should do.
 ///
-/// If no file exists, returns [`CommandResult::None`]. If the file contains
+/// If no file exists, returns [`CommandResult::NoCommand`]. If the file contains
 /// an unrecognized command, logs a warning, removes the file, and returns
-/// [`CommandResult::None`].
+/// [`CommandResult::NoCommand`].
 pub(crate) fn check_command(cmd_path: &Utf8Path) -> CommandResult {
     let content = match fs::read_to_string(cmd_path) {
         Ok(c) => c,
-        Err(_) => return CommandResult::None,
+        Err(_) => return CommandResult::NoCommand,
     };
 
     // Remove the file unconditionally (even on parse failure).
@@ -161,7 +161,7 @@ pub(crate) fn check_command(cmd_path: &Utf8Path) -> CommandResult {
         Ok(cmd) => CommandResult::Continue(cmd),
         Err(e) => {
             tracing::warn!("Ignoring unrecognized command: {e}");
-            CommandResult::None
+            CommandResult::NoCommand
         }
     }
 }
@@ -401,7 +401,8 @@ impl DaemonState {
         self.last_drain = now;
         self.period_start = now;
         self.pre_transcribed.clear();
-        self.buffered_chunks.clear();
+        // buffered_chunks is already empty: transcribe_and_write_to()
+        // consumed it via mem::take.
 
         if let Some(ref mut detector) = self.silence_detector {
             detector.reset();
@@ -1376,7 +1377,7 @@ pub fn daemon(clock: Arc<dyn Clock>) -> anyhow::Result<()> {
                 state.handle_resume()?;
             }
             CommandResult::Continue(_) => {}
-            CommandResult::None => {}
+            CommandResult::NoCommand => {}
         }
 
         if state.check_idle_timeout() {
