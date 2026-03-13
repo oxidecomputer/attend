@@ -124,7 +124,7 @@ fn merge_semantics() {
         include_dirs: vec![Utf8PathBuf::from("/b")],
         engine: Some(Engine::Parakeet),
         model: Some(Utf8PathBuf::from("/model")),
-        silence_duration: Some(3.0),
+        silence_duration: Some("3s".to_string()),
         archive_retention: Some("30d".to_string()),
         clipboard_capture: Some(false),
         daemon_idle_timeout: Some("10m".to_string()),
@@ -138,7 +138,7 @@ fn merge_semantics() {
     assert_eq!(base.engine, Some(Engine::Whisper));
     // None is filled from other
     assert_eq!(base.model, Some(Utf8PathBuf::from("/model")));
-    assert_eq!(base.silence_duration, Some(3.0));
+    assert_eq!(base.silence_duration, Some("3s".to_string()));
     assert_eq!(base.archive_retention, Some("30d".to_string()));
     // None is filled from other
     assert_eq!(base.daemon_idle_timeout, Some("10m".to_string()));
@@ -235,7 +235,7 @@ fn fully_populated() -> Config {
         include_dirs: vec![Utf8PathBuf::from("/populated/dir")],
         engine: Some(Engine::Whisper),
         model: Some(Utf8PathBuf::from("/populated/model")),
-        silence_duration: Some(2.5),
+        silence_duration: Some("2500ms".to_string()),
         archive_retention: Some("14d".to_string()),
         clipboard_capture: Some(true),
         daemon_idle_timeout: Some("8m".to_string()),
@@ -249,7 +249,7 @@ fn merge_scalar_first_wins() {
     let mut a = Config {
         engine: Some(Engine::Whisper),
         model: Some(Utf8PathBuf::from("/a/model")),
-        silence_duration: Some(5.0),
+        silence_duration: Some("5s".to_string()),
         archive_retention: Some("7d".to_string()),
         clipboard_capture: Some(true),
         daemon_idle_timeout: Some("5m".to_string()),
@@ -258,7 +258,7 @@ fn merge_scalar_first_wins() {
     let b = Config {
         engine: Some(Engine::Parakeet),
         model: Some(Utf8PathBuf::from("/b/model")),
-        silence_duration: Some(10.0),
+        silence_duration: Some("10s".to_string()),
         archive_retention: Some("30d".to_string()),
         clipboard_capture: Some(false),
         daemon_idle_timeout: Some("15m".to_string()),
@@ -267,7 +267,7 @@ fn merge_scalar_first_wins() {
     a.merge(b);
     assert_eq!(a.engine, Some(Engine::Whisper));
     assert_eq!(a.model, Some(Utf8PathBuf::from("/a/model")));
-    assert_eq!(a.silence_duration, Some(5.0));
+    assert_eq!(a.silence_duration, Some("5s".to_string()));
     assert_eq!(a.archive_retention, Some("7d".to_string()));
     assert_eq!(a.clipboard_capture, Some(true));
     assert_eq!(a.daemon_idle_timeout, Some("5m".to_string()));
@@ -288,7 +288,7 @@ fn merge_scalar_fills_none() {
     let b = Config {
         engine: Some(Engine::Parakeet),
         model: Some(Utf8PathBuf::from("/b/model")),
-        silence_duration: Some(3.0),
+        silence_duration: Some("3s".to_string()),
         archive_retention: Some("30d".to_string()),
         clipboard_capture: Some(false),
         daemon_idle_timeout: Some("10m".to_string()),
@@ -297,7 +297,7 @@ fn merge_scalar_fills_none() {
     a.merge(b);
     assert_eq!(a.engine, Some(Engine::Parakeet));
     assert_eq!(a.model, Some(Utf8PathBuf::from("/b/model")));
-    assert_eq!(a.silence_duration, Some(3.0));
+    assert_eq!(a.silence_duration, Some("3s".to_string()));
     assert_eq!(a.archive_retention, Some("30d".to_string()));
     assert_eq!(a.clipboard_capture, Some(false));
     assert_eq!(a.daemon_idle_timeout, Some("10m".to_string()));
@@ -338,7 +338,7 @@ fn merge_three_layers() {
         include_dirs: vec![Utf8PathBuf::from("/b")],
         engine: Some(Engine::Parakeet),
         model: Some(Utf8PathBuf::from("/b/model")),
-        silence_duration: Some(3.0),
+        silence_duration: Some("3s".to_string()),
         archive_retention: None,
         clipboard_capture: None,
         daemon_idle_timeout: Some("8m".to_string()),
@@ -347,7 +347,7 @@ fn merge_three_layers() {
         include_dirs: vec![Utf8PathBuf::from("/c")],
         engine: Some(Engine::Parakeet),
         model: Some(Utf8PathBuf::from("/c/model")),
-        silence_duration: Some(10.0),
+        silence_duration: Some("10s".to_string()),
         archive_retention: Some("90d".to_string()),
         clipboard_capture: Some(false),
         daemon_idle_timeout: Some("20m".to_string()),
@@ -365,7 +365,11 @@ fn merge_three_layers() {
         Some(Utf8PathBuf::from("/b/model")),
         "model: B wins (A was None)"
     );
-    assert_eq!(a.silence_duration, Some(3.0), "silence_duration: B wins");
+    assert_eq!(
+        a.silence_duration,
+        Some("3s".to_string()),
+        "silence_duration: B wins"
+    );
     assert_eq!(
         a.archive_retention,
         Some("90d".to_string()),
@@ -411,7 +415,7 @@ fn merge_empty_into_populated() {
     // Scalars unchanged
     assert_eq!(populated.engine, Some(Engine::Whisper));
     assert_eq!(populated.model, Some(Utf8PathBuf::from("/populated/model")));
-    assert_eq!(populated.silence_duration, Some(2.5));
+    assert_eq!(populated.silence_duration, Some("2500ms".to_string()));
     assert_eq!(populated.archive_retention, Some("14d".to_string()));
     assert_eq!(populated.clipboard_capture, Some(true));
     assert_eq!(populated.daemon_idle_timeout, Some("8m".to_string()));
@@ -440,7 +444,7 @@ fn merge_populated_into_empty() {
     // All scalars filled from other
     assert_eq!(empty.engine, Some(Engine::Whisper));
     assert_eq!(empty.model, Some(Utf8PathBuf::from("/populated/model")));
-    assert_eq!(empty.silence_duration, Some(2.5));
+    assert_eq!(empty.silence_duration, Some("2500ms".to_string()));
     assert_eq!(empty.archive_retention, Some("14d".to_string()));
     assert_eq!(empty.clipboard_capture, Some(true));
     assert_eq!(empty.daemon_idle_timeout, Some("8m".to_string()));
@@ -449,6 +453,110 @@ fn merge_populated_into_empty() {
         empty.include_dirs,
         vec![Utf8PathBuf::from("/populated/dir")]
     );
+}
+
+// ── silence_duration deserialization + method ───────────────────────────────
+
+/// silence_duration as a humantime string is stored verbatim.
+#[test]
+fn silence_duration_string_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "silence_duration = \"5s\"\n").unwrap();
+    let config = load_file(&path).unwrap();
+    assert_eq!(config.silence_duration, Some("5s".to_string()));
+}
+
+/// silence_duration as a legacy float is converted via milliseconds.
+/// 2.5 seconds becomes "2500ms", preserving fractional precision.
+#[test]
+fn silence_duration_float_via_milliseconds() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "silence_duration = 2.5\n").unwrap();
+    let config = load_file(&path).unwrap();
+    assert_eq!(config.silence_duration, Some("2500ms".to_string()));
+}
+
+/// silence_duration as an integer is converted to seconds string.
+#[test]
+fn silence_duration_integer() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "silence_duration = 3\n").unwrap();
+    let config = load_file(&path).unwrap();
+    assert_eq!(config.silence_duration, Some("3s".to_string()));
+}
+
+/// Negative float values for silence_duration are rejected during parsing.
+#[test]
+fn silence_duration_rejects_negative_float() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "silence_duration = -1.0\n").unwrap();
+    assert!(load_file(&path).is_none());
+}
+
+/// Negative integer values for silence_duration are rejected during parsing.
+#[test]
+fn silence_duration_rejects_negative_integer() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "silence_duration = -5\n").unwrap();
+    assert!(load_file(&path).is_none());
+}
+
+/// Absent silence_duration defaults to None (field level), and the method
+/// returns Some(5s).
+#[test]
+fn silence_duration_method_default() {
+    use std::time::Duration;
+    let config = Config::default();
+    assert_eq!(config.silence_duration, None);
+    assert_eq!(config.silence_duration(), Some(Duration::from_secs(5)));
+}
+
+/// silence_duration method parses a humantime string correctly.
+#[test]
+fn silence_duration_method_parses_string() {
+    use std::time::Duration;
+    let config = Config {
+        silence_duration: Some("3s".to_string()),
+        ..Config::default()
+    };
+    assert_eq!(config.silence_duration(), Some(Duration::from_secs(3)));
+}
+
+/// silence_duration of "0s" disables silence splitting (returns None).
+#[test]
+fn silence_duration_method_zero_disables() {
+    let config = Config {
+        silence_duration: Some("0s".to_string()),
+        ..Config::default()
+    };
+    assert_eq!(config.silence_duration(), None);
+}
+
+/// silence_duration of "0ms" also disables silence splitting (returns None).
+#[test]
+fn silence_duration_method_zero_ms_disables() {
+    let config = Config {
+        silence_duration: Some("0ms".to_string()),
+        ..Config::default()
+    };
+    assert_eq!(config.silence_duration(), None);
+}
+
+/// A legacy float of 2.5 round-trips through deserialization and the method
+/// to produce the correct Duration (2.5 seconds = 2500ms).
+#[test]
+fn silence_duration_float_roundtrip() {
+    use std::time::Duration;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "silence_duration = 2.5\n").unwrap();
+    let config = load_file(&path).unwrap();
+    assert_eq!(config.silence_duration(), Some(Duration::from_millis(2500)));
 }
 
 /// Merging a default config is an identity operation: for any config `a`,
@@ -473,8 +581,11 @@ mod prop {
         ]
     }
 
-    fn arb_opt_f64() -> impl Strategy<Value = Option<f64>> {
-        prop_oneof![Just(None), (0.1..30.0f64).prop_map(Some),]
+    fn arb_opt_duration() -> impl Strategy<Value = Option<String>> {
+        prop_oneof![
+            Just(None),
+            prop_oneof!["1s", "5s", "10s", "500ms", "2500ms"].prop_map(|s| Some(s.to_string())),
+        ]
     }
 
     fn arb_opt_string() -> impl Strategy<Value = Option<String>> {
@@ -497,7 +608,7 @@ mod prop {
             arb_paths(),
             arb_engine(),
             arb_opt_path(),
-            arb_opt_f64(),
+            arb_opt_duration(),
             arb_opt_string(),
             arb_opt_bool(),
             arb_opt_string(),
@@ -546,7 +657,7 @@ mod prop {
             let dirs_before = a.include_dirs.clone();
             let engine_before = a.engine;
             let model_before = a.model.clone();
-            let silence_before = a.silence_duration;
+            let silence_before = a.silence_duration.clone();
             let retention_before = a.archive_retention.clone();
             let clipboard_before = a.clipboard_capture;
             let idle_before = a.daemon_idle_timeout.clone();
@@ -557,7 +668,7 @@ mod prop {
             prop_assert_eq!(&a.include_dirs, &dirs_before, "include_dirs changed");
             prop_assert_eq!(a.engine, engine_before, "engine changed");
             prop_assert_eq!(&a.model, &model_before, "model changed");
-            prop_assert_eq!(a.silence_duration, silence_before, "silence_duration changed");
+            prop_assert_eq!(&a.silence_duration, &silence_before, "silence_duration changed");
             prop_assert_eq!(&a.archive_retention, &retention_before, "archive_retention changed");
             prop_assert_eq!(a.clipboard_capture, clipboard_before, "clipboard_capture changed");
             prop_assert_eq!(&a.daemon_idle_timeout, &idle_before, "daemon_idle_timeout changed");

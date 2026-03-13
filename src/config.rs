@@ -5,10 +5,12 @@
 //! - **Hierarchical**: walk from `cwd` upward, collecting `.attend/config.toml`
 //!   at each directory level (closer files take precedence; arrays are concatenated).
 
+use std::fmt;
 use std::path::Path;
 
 use camino::{Utf8Path, Utf8PathBuf};
-use serde::Deserialize;
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer};
 
 use crate::narrate::transcribe::Engine;
 
@@ -23,8 +25,10 @@ pub struct Config {
     pub engine: Option<Engine>,
     /// Custom model path for the transcription engine.
     pub model: Option<Utf8PathBuf>,
-    /// Seconds of silence before splitting a recording segment (default 5.0; 0 to disable).
-    pub silence_duration: Option<f64>,
+    /// Duration of silence before splitting a recording segment (e.g. `"5s"`, `"500ms"`).
+    /// Defaults to `"5s"`. Set to `"0s"` to disable.
+    #[serde(default, deserialize_with = "deserialize_silence_duration")]
+    pub silence_duration: Option<String>,
     /// How long to keep archived narrations (e.g. `"7d"`, `"24h"`).
     /// Set to `"forever"` to disable automatic cleanup. Defaults to `"7d"`.
     pub archive_retention: Option<String>,
@@ -88,6 +92,20 @@ impl Config {
         )
     }
 
+    /// Parse `silence_duration` to a [`Duration`]. Returns `None` when the
+    /// value is `"0s"` (silence splitting disabled). Defaults to 5 seconds
+    /// when unset or when the value cannot be parsed (with a warning).
+    pub fn silence_duration(&self) -> Option<std::time::Duration> {
+        match self.silence_duration.as_deref() {
+            Some("0s") | Some("0ms") => None,
+            value => parse_optional_duration(
+                value,
+                "silence_duration",
+                std::time::Duration::from_secs(5),
+            ),
+        }
+    }
+
     /// Merge another config layer into this one.
     ///
     /// Arrays are concatenated. Scalar fields use "first wins" semantics:
@@ -145,6 +163,53 @@ fn load_file(path: &Path) -> Option<Config> {
             None
         }
     }
+}
+
+/// Deserialize `silence_duration` from either a humantime string (`"5s"`) or a
+/// legacy float (seconds, e.g. `2.5`). Floats are converted via milliseconds
+/// to avoid precision issues with fractional seconds.
+fn deserialize_silence_duration<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct SilenceDurationVisitor;
+
+    impl<'de> Visitor<'de> for SilenceDurationVisitor {
+        type Value = Option<String>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a duration string (e.g. \"5s\") or a number of seconds")
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(Some(v.to_string()))
+        }
+
+        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
+            Ok(Some(v))
+        }
+
+        fn visit_f64<E: de::Error>(self, v: f64) -> Result<Self::Value, E> {
+            if v < 0.0 {
+                return Err(E::custom("silence_duration must not be negative"));
+            }
+            let millis = (v * 1000.0) as u64;
+            Ok(Some(format!("{millis}ms")))
+        }
+
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
+            if v < 0 {
+                return Err(E::custom("silence_duration must not be negative"));
+            }
+            Ok(Some(format!("{v}s")))
+        }
+
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
+            Ok(Some(format!("{v}s")))
+        }
+    }
+
+    deserializer.deserialize_any(SilenceDurationVisitor)
 }
 
 #[cfg(test)]

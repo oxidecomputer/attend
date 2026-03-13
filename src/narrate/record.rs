@@ -1107,6 +1107,7 @@ pub fn daemon(clock: Arc<dyn Clock>) -> anyhow::Result<()> {
     let config = Config::load(&cwd);
     let engine = config.engine.unwrap_or(Engine::Parakeet);
     let idle_timeout = config.idle_timeout();
+    let silence_dur = config.silence_duration();
     let model_path = config.model.unwrap_or_else(|| engine.default_model_path());
     let session_id = resolve_session(None);
 
@@ -1175,16 +1176,9 @@ pub fn daemon(clock: Arc<dyn Clock>) -> anyhow::Result<()> {
     // Intentionally ignored: chime failure should not abort recording.
     let _ = Chime::Start.play();
 
-    // Silence-based segmentation (0 disables).
-    let silence_secs = config.silence_duration.unwrap_or(5.0);
-    let silence_detector = if silence_secs > 0.0 {
-        Some(SilenceDetector::new(
-            sample_rate,
-            Duration::from_secs_f64(silence_secs),
-        ))
-    } else {
-        None
-    };
+    // Silence-based segmentation (None = disabled).
+    let silence_detector =
+        silence_dur.map(|silence_dur| SilenceDetector::new(sample_rate, silence_dur));
 
     let now = clock.now();
     let mut state = DaemonState {
