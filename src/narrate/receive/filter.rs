@@ -114,59 +114,46 @@ pub(super) fn filter_events(events: &mut Vec<Event>, cwd: &Utf8Path, include_dir
 fn collapse_redacted(events: &mut Vec<Event>) {
     use std::collections::BTreeMap;
 
-    let mut result = Vec::with_capacity(events.len());
-    let mut i = 0;
+    let input: Vec<Event> = std::mem::take(events);
+    let mut result = Vec::with_capacity(input.len());
+    let mut by_kind: BTreeMap<RedactedKind, (chrono::DateTime<chrono::Utc>, Vec<String>)> =
+        BTreeMap::new();
 
-    while i < events.len() {
-        if !matches!(&events[i], Event::Redacted { .. }) {
-            result.push(std::mem::replace(
-                &mut events[i],
-                // Placeholder; will be discarded when we replace `*events`.
-                Event::Words {
-                    timestamp: chrono::DateTime::UNIX_EPOCH,
-                    text: String::new(),
-                },
-            ));
-            i += 1;
-            continue;
-        }
-
-        // Collect the entire run of consecutive Redacted events.
-        let mut by_kind: BTreeMap<RedactedKind, (chrono::DateTime<chrono::Utc>, Vec<String>)> =
-            BTreeMap::new();
-        while i < events.len() {
-            if let Event::Redacted {
-                timestamp,
-                kind,
-                keys,
-            } = std::mem::replace(
-                &mut events[i],
-                Event::Words {
-                    timestamp: chrono::DateTime::UNIX_EPOCH,
-                    text: String::new(),
-                },
-            ) {
-                let entry = by_kind
-                    .entry(kind)
-                    .or_insert_with(|| (timestamp, Vec::new()));
-                entry.1.extend(keys);
-                i += 1;
-            } else {
-                // Not Redacted — end of run.
-                break;
+    for event in input {
+        if let Event::Redacted {
+            timestamp,
+            kind,
+            keys,
+        } = event
+        {
+            let entry = by_kind
+                .entry(kind)
+                .or_insert_with(|| (timestamp, Vec::new()));
+            entry.1.extend(keys);
+        } else {
+            // Flush any accumulated redacted run before the non-redacted event.
+            for (kind, (timestamp, mut keys)) in std::mem::take(&mut by_kind) {
+                keys.sort();
+                keys.dedup();
+                result.push(Event::Redacted {
+                    timestamp,
+                    kind,
+                    keys,
+                });
             }
+            result.push(event);
         }
+    }
 
-        // Emit one Redacted per kind, with deduplicated keys.
-        for (kind, (timestamp, mut keys)) in by_kind {
-            keys.sort();
-            keys.dedup();
-            result.push(Event::Redacted {
-                timestamp,
-                kind,
-                keys,
-            });
-        }
+    // Flush any trailing redacted run.
+    for (kind, (timestamp, mut keys)) in by_kind {
+        keys.sort();
+        keys.dedup();
+        result.push(Event::Redacted {
+            timestamp,
+            kind,
+            keys,
+        });
     }
 
     *events = result;
