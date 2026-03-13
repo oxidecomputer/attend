@@ -558,22 +558,10 @@ fn idle_timeout_stops_daemon() {
     h.tick_until_exit(toggle_off);
 
     // Daemon is now idle. Default idle timeout is 5 minutes (300s).
-    // Advance past the timeout. The daemon polls at 100ms intervals,
-    // so we advance in a chunk large enough to exceed 5 minutes,
-    // then give the daemon one more tick to process the exit.
+    // Advance past the timeout, then tick until the daemon processes
+    // the idle check and exits.
     h.advance_time(310_000);
-
-    // Give the daemon additional ticks to process the idle timeout
-    // check and exit. The advance above jumped the clock, but the
-    // daemon needs one more loop iteration to call check_idle_timeout().
-    for _ in 0..10 {
-        h.advance_time(100);
-    }
-
-    assert!(
-        !h.has_daemon(),
-        "daemon should have exited after idle timeout"
-    );
+    h.tick_until_daemon_exits();
 }
 
 // =========================================================================

@@ -461,6 +461,23 @@ impl TestHarness {
         }
     }
 
+    /// Advance time in [`TICK_MS`] increments until the daemon exits.
+    ///
+    /// Panics if the daemon doesn't exit within [`COMMAND_TIMEOUT`]
+    /// wall-clock seconds.
+    pub fn tick_until_daemon_exits(&mut self) {
+        let start = std::time::Instant::now();
+        while self.has_daemon() {
+            self.advance_time(TICK_MS);
+            if start.elapsed() > COMMAND_TIMEOUT {
+                panic!(
+                    "timed out waiting for daemon to exit after {:.1?} wall-clock",
+                    start.elapsed()
+                );
+            }
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Shared state access
     // -----------------------------------------------------------------------
