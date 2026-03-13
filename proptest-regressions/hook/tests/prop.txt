@@ -4,6 +4,7 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
+cc 0654d67df7f9a2bfe079dba15ba1da65738692cf05d5bb7fb2f54a63854c4ebd # shrinks to ops = [FireHook { session: 0, hook_type: PreToolUse, listen_kind: Listen }, StartReceiver, FireHook { session: 0, hook_type: Stop, listen_kind: None }]
 cc 1c9e7f5e35873e09ba60b235531bef75fe94cfe0cdd3045128d4b1f691e747c6 # shrinks to ops = [FireHook { session: 2, hook_type: PreToolUse, listen_kind: Listen }, StartReceiver, FireHook { session: 2, hook_type: Stop, listen_kind: None }]
 cc 25d523725778544f35186c34647bf4bbcfba2046730d69468130ebfd9d2b437c # shrinks to ops = [StartReceiver, Activate(2), FireHook { session: 2, hook_type: Stop, listen_kind: None }]
 cc 47c5ae5a4e46ad7c474da64dcd8cdf33a1fb07113f761ed627dd7d4bb08c81d6 # shrinks to has_deliverable = false, has_undeliverable = true, receiver_alive = false
