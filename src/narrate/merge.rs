@@ -80,10 +80,11 @@
 //!
 //! The actual markdown rendering lives in [`super::render`].
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::state::FileEntry;
@@ -675,18 +676,22 @@ fn union_snapshots(snapshots: Vec<SnapshotTuple>) -> Option<SnapshotTuple> {
 fn net_change_diffs(
     diffs: Vec<(DateTime<Utc>, String, String, String)>,
 ) -> Vec<(DateTime<Utc>, String, String, String)> {
-    let mut by_path: Vec<(DateTime<Utc>, String, String, String)> = Vec::new();
+    let mut by_path: IndexMap<String, (DateTime<Utc>, String, String)> = IndexMap::new();
 
     for (ts, path, old, new) in diffs {
-        if let Some(entry) = by_path.iter_mut().find(|(_, p, ..)| p == &path) {
-            entry.0 = ts; // latest timestamp
-            entry.3 = new; // latest new
-        } else {
-            by_path.push((ts, path, old, new));
-        }
+        by_path
+            .entry(path)
+            .and_modify(|(prev_ts, _old, prev_new)| {
+                *prev_ts = ts; // latest timestamp
+                *prev_new = new.clone(); // latest new
+            })
+            .or_insert((ts, old, new));
     }
 
     by_path
+        .into_iter()
+        .map(|(path, (ts, old, new))| (ts, path, old, new))
+        .collect()
 }
 
 /// Collapse duplicate external and browser selection events within a run.
@@ -707,6 +712,9 @@ fn net_change_diffs(
 /// text within 500ms, the ExternalSelection is dropped.
 fn collapse_ext_selections(selections: Vec<Event>) -> Vec<Event> {
     let mut result: Vec<Event> = Vec::new();
+    // Track the index of the last ExternalSelection per (app, window_title)
+    // for O(1) merge-candidate lookup instead of scanning the entire result vec.
+    let mut last_ext_by_source: HashMap<(String, String), usize> = HashMap::new();
 
     for event in selections {
         match &event {
@@ -718,25 +726,29 @@ fn collapse_ext_selections(selections: Vec<Event>) -> Vec<Event> {
             } => {
                 // Forward-merge: check if an earlier selection from the same
                 // source is a substring of this one (progressive selection).
-                let merged = result.iter().rposition(|e| {
-                    matches!(
-                        e,
-                        Event::ExternalSelection {
-                            app: a,
-                            window_title: wt,
-                            text: t,
-                            ..
-                        } if a == app && wt == window_title && text.contains(t.as_str())
-                    )
+                let key = (app.clone(), window_title.clone());
+                let merged = last_ext_by_source.get(&key).and_then(|&idx| {
+                    if let Event::ExternalSelection { text: t, .. } = &result[idx]
+                        && text.contains(t.as_str())
+                    {
+                        Some(idx)
+                    } else {
+                        None
+                    }
                 });
                 if let Some(idx) = merged {
                     // Replace the earlier, narrower selection with this wider one.
                     result[idx] = event;
+                    // Index stays the same — still the last for this source.
                 } else {
+                    let idx = result.len();
                     result.push(event);
+                    last_ext_by_source.insert(key, idx);
                 }
             }
             Event::BrowserSelection { url, text, .. } => {
+                // TODO: this is O(n²) — could use a HashMap<(url, text), usize>
+                // like ExternalSelection to get O(1) lookups.
                 // Replace a previous entry with the same url + text.
                 if let Some(existing) = result.iter_mut().find(|e| {
                     matches!(e, Event::BrowserSelection { url: u, text: t, .. } if u == url && t == text)
@@ -770,6 +782,26 @@ fn collapse_ext_selections(selections: Vec<Event>) -> Vec<Event> {
                         } if *c == cmd => Some(cwd.clone()),
                         _ => None,
                     });
+                    // Track which indices are removed so we can adjust the
+                    // HashMap afterwards.
+                    let removed: Vec<usize> = result
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, e)| {
+                            if matches!(
+                                e,
+                                Event::ShellCommand {
+                                    command: c,
+                                    exit_status: None,
+                                    ..
+                                } if *c == cmd
+                            ) {
+                                Some(i)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
                     result.retain(|e| {
                         !matches!(
                             e,
@@ -780,6 +812,15 @@ fn collapse_ext_selections(selections: Vec<Event>) -> Vec<Event> {
                             } if *c == cmd
                         )
                     });
+                    // Adjust HashMap indices: for each removed index, decrement
+                    // every tracked index that was beyond it.
+                    for &removed_idx in &removed {
+                        for idx in last_ext_by_source.values_mut() {
+                            if *idx > removed_idx {
+                                *idx -= 1;
+                            }
+                        }
+                    }
                     // If we found a preexec, use its cwd on the merged event.
                     let mut event = event;
                     if let Some(cwd) = preexec_cwd

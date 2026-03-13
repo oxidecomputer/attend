@@ -1,3 +1,4 @@
+mod collapse;
 mod compress;
 mod display;
 mod prop;

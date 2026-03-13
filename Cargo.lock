@@ -230,6 +230,7 @@ dependencies = [
  "humantime",
  "hyperpolyglot",
  "image",
+ "indexmap 2.13.0",
  "insta",
  "jsonc-parser",
  "lockfile",
