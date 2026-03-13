@@ -98,6 +98,27 @@ pub enum Extent {
     Full,
 }
 
+/// Resolve a `FileEntry` path to an absolute path.
+///
+/// If the path is already absolute it is returned as-is. Otherwise it is
+/// joined to `cwd` (or the process working directory when `cwd` is `None`).
+fn resolve_abs_path(path: &Utf8Path, cwd: Option<&Utf8Path>) -> anyhow::Result<Utf8PathBuf> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        let base = match cwd {
+            Some(c) => c.to_path_buf(),
+            None => Utf8PathBuf::try_from(std::env::current_dir()?).map_err(|e| {
+                anyhow::anyhow!(
+                    "non-UTF-8 working directory: {}",
+                    e.into_path_buf().display()
+                )
+            })?,
+        };
+        Ok(base.join(path))
+    }
+}
+
 /// Render file entries with inline content markers or ANSI colors.
 ///
 /// Detects TTY/`NO_COLOR` automatically. Hierarchical output:
@@ -132,20 +153,7 @@ fn render_with_mode(
         }
 
         // Resolve path
-        let abs_path = if entry.path.is_absolute() {
-            entry.path.clone()
-        } else {
-            let base = match cwd {
-                Some(c) => c.to_path_buf(),
-                None => Utf8PathBuf::try_from(std::env::current_dir()?).map_err(|e| {
-                    anyhow::anyhow!(
-                        "non-UTF-8 working directory: {}",
-                        e.into_path_buf().display()
-                    )
-                })?,
-            };
-            base.join(&entry.path)
-        };
+        let abs_path = resolve_abs_path(&entry.path, cwd)?;
 
         let display_path = relativize(&abs_path, cwd);
 
@@ -207,20 +215,7 @@ pub fn render_json(
     let mut files = Vec::new();
 
     for entry in entries {
-        let abs_path = if entry.path.is_absolute() {
-            entry.path.clone()
-        } else {
-            let base = match cwd {
-                Some(c) => c.to_path_buf(),
-                None => Utf8PathBuf::try_from(std::env::current_dir()?).map_err(|e| {
-                    anyhow::anyhow!(
-                        "non-UTF-8 working directory: {}",
-                        e.into_path_buf().display()
-                    )
-                })?,
-            };
-            base.join(&entry.path)
-        };
+        let abs_path = resolve_abs_path(&entry.path, cwd)?;
 
         let display_path = relativize(&abs_path, cwd).to_string();
 
@@ -317,20 +312,7 @@ pub fn capture_regions(
     let mut regions = Vec::new();
 
     for entry in entries {
-        let abs_path = if entry.path.is_absolute() {
-            entry.path.clone()
-        } else {
-            let base = match cwd {
-                Some(c) => c.to_path_buf(),
-                None => Utf8PathBuf::try_from(std::env::current_dir()?).map_err(|e| {
-                    anyhow::anyhow!(
-                        "non-UTF-8 working directory: {}",
-                        e.into_path_buf().display()
-                    )
-                })?,
-            };
-            base.join(&entry.path)
-        };
+        let abs_path = resolve_abs_path(&entry.path, cwd)?;
 
         let display_path = relativize(&abs_path, cwd).to_string();
 
