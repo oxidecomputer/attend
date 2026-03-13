@@ -15,10 +15,16 @@ pub(super) const MODEL_NAMES: &[&str] = &[
 
 /// Known SHA-256 checksums for well-known Whisper models (from HuggingFace LFS).
 /// Models with custom paths or unknown filenames skip verification.
-fn expected_checksum(filename: &str) -> Option<&'static str> {
+pub(super) fn expected_checksum(filename: &str) -> Option<&'static str> {
     match filename {
+        "ggml-base.en.bin" => {
+            Some("a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002")
+        }
         "ggml-small.en.bin" => {
             Some("c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d")
+        }
+        "ggml-medium.en.bin" => {
+            Some("cc37e93478338ec7700281a7ac30a10128929eb8f427dda2e865faa8f6da4356")
         }
         _ => None,
     }

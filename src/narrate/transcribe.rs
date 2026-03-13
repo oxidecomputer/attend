@@ -5,6 +5,8 @@
 
 mod parakeet;
 pub(crate) mod stub;
+#[cfg(test)]
+mod tests;
 mod whisper;
 
 use std::path::Path;

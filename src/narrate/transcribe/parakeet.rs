@@ -30,7 +30,7 @@ const MAX_CHUNK_SAMPLES: usize = MAX_CHUNK_SECS * SAMPLE_RATE as usize;
 const REPO: &str = "istupakov/parakeet-tdt-0.6b-v3-onnx";
 
 /// Required model files (all at repo root).
-const MODEL_FILES: &[&str] = &[
+pub(super) const MODEL_FILES: &[&str] = &[
     "encoder-model.onnx",
     "encoder-model.onnx.data",
     "decoder_joint-model.onnx",
@@ -39,7 +39,7 @@ const MODEL_FILES: &[&str] = &[
 
 /// Known SHA-256 checksums for well-known Parakeet model files (from HuggingFace LFS).
 /// Only LFS-tracked files have known checksums; small files (vocab.txt) skip verification.
-fn expected_checksum(filename: &str) -> Option<&'static str> {
+pub(super) fn expected_checksum(filename: &str) -> Option<&'static str> {
     match filename {
         "encoder-model.onnx" => {
             Some("98a74b21b4cc0017c1e7030319a4a96f4a9506e50f0708f3a516d02a77c96bb1")
