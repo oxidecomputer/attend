@@ -27,16 +27,18 @@ pub struct Config {
     pub model: Option<Utf8PathBuf>,
     /// Duration of silence before splitting a recording segment (e.g. `"5s"`, `"500ms"`).
     /// Defaults to `"5s"`. Set to `"0s"` to disable.
-    #[serde(default, deserialize_with = "deserialize_silence_duration")]
+    #[serde(default, deserialize_with = "deserialize_duration")]
     pub silence_duration: Option<String>,
     /// How long to keep archived narrations (e.g. `"7d"`, `"24h"`).
     /// Set to `"forever"` to disable automatic cleanup. Defaults to `"7d"`.
+    #[serde(default, deserialize_with = "deserialize_duration")]
     pub archive_retention: Option<String>,
     /// Whether to capture clipboard changes (text and images). Defaults to true.
     #[serde(default)]
     pub clipboard_capture: Option<bool>,
     /// How long the persistent daemon idles before auto-exiting (e.g. `"5m"`, `"10m"`).
     /// Set to `"forever"` to never auto-exit. Defaults to `"5m"`.
+    #[serde(default, deserialize_with = "deserialize_duration")]
     pub daemon_idle_timeout: Option<String>,
 }
 
@@ -165,16 +167,16 @@ fn load_file(path: &Path) -> Option<Config> {
     }
 }
 
-/// Deserialize `silence_duration` from either a humantime string (`"5s"`) or a
-/// legacy float (seconds, e.g. `2.5`). Floats are converted via milliseconds
-/// to avoid precision issues with fractional seconds.
-fn deserialize_silence_duration<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+/// Deserialize a duration field from either a humantime string (`"5s"`) or a
+/// numeric value (seconds, e.g. `2.5`). Floats are converted via milliseconds
+/// to avoid precision issues with fractional values.
+fn deserialize_duration<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    struct SilenceDurationVisitor;
+    struct DurationVisitor;
 
-    impl<'de> Visitor<'de> for SilenceDurationVisitor {
+    impl<'de> Visitor<'de> for DurationVisitor {
         type Value = Option<String>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -191,7 +193,7 @@ where
 
         fn visit_f64<E: de::Error>(self, v: f64) -> Result<Self::Value, E> {
             if v < 0.0 {
-                return Err(E::custom("silence_duration must not be negative"));
+                return Err(E::custom("duration must not be negative"));
             }
             let millis = (v * 1000.0) as u64;
             Ok(Some(format!("{millis}ms")))
@@ -199,7 +201,7 @@ where
 
         fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
             if v < 0 {
-                return Err(E::custom("silence_duration must not be negative"));
+                return Err(E::custom("duration must not be negative"));
             }
             Ok(Some(format!("{v}s")))
         }
@@ -209,7 +211,7 @@ where
         }
     }
 
-    deserializer.deserialize_any(SilenceDurationVisitor)
+    deserializer.deserialize_any(DurationVisitor)
 }
 
 #[cfg(test)]

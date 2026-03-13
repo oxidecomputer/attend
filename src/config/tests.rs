@@ -559,6 +559,66 @@ fn silence_duration_float_roundtrip() {
     assert_eq!(config.silence_duration(), Some(Duration::from_millis(2500)));
 }
 
+// ── archive_retention / daemon_idle_timeout numeric deserialization ──────────
+
+/// archive_retention as an integer is converted to seconds string.
+#[test]
+fn archive_retention_integer() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "archive_retention = 86400\n").unwrap();
+    let config = load_file(&path).unwrap();
+    assert_eq!(config.archive_retention, Some("86400s".to_string()));
+}
+
+/// archive_retention as a float is converted via milliseconds.
+#[test]
+fn archive_retention_float() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "archive_retention = 1.5\n").unwrap();
+    let config = load_file(&path).unwrap();
+    assert_eq!(config.archive_retention, Some("1500ms".to_string()));
+}
+
+/// Negative archive_retention is rejected during parsing.
+#[test]
+fn archive_retention_rejects_negative() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "archive_retention = -1\n").unwrap();
+    assert!(load_file(&path).is_none());
+}
+
+/// daemon_idle_timeout as an integer is converted to seconds string.
+#[test]
+fn daemon_idle_timeout_integer() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "daemon_idle_timeout = 300\n").unwrap();
+    let config = load_file(&path).unwrap();
+    assert_eq!(config.daemon_idle_timeout, Some("300s".to_string()));
+}
+
+/// daemon_idle_timeout as a float is converted via milliseconds.
+#[test]
+fn daemon_idle_timeout_float() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "daemon_idle_timeout = 2.5\n").unwrap();
+    let config = load_file(&path).unwrap();
+    assert_eq!(config.daemon_idle_timeout, Some("2500ms".to_string()));
+}
+
+/// Negative daemon_idle_timeout is rejected during parsing.
+#[test]
+fn daemon_idle_timeout_rejects_negative() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "daemon_idle_timeout = -5\n").unwrap();
+    assert!(load_file(&path).is_none());
+}
+
 /// Merging a default config is an identity operation: for any config `a`,
 /// `a.merge(default_empty)` leaves `a` unchanged (scalars are first-wins
 /// so None never overwrites, and extending with an empty vec is a no-op).
