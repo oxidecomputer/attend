@@ -11,11 +11,15 @@ use super::*;
 /// Write a fake daemon lock file for tests that simulate a running daemon.
 ///
 /// Creates the `daemon/` directory (which now holds the lock) and writes
-/// the given PID so `record_lock_path().exists()` returns true.
+/// the PID with a current timestamp in the new `PID:TIMESTAMP` format.
 fn write_fake_lock(pid: impl std::fmt::Display) {
     let lock = record_lock_path();
     std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
-    std::fs::write(&lock, pid.to_string()).unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    std::fs::write(&lock, format!("{pid}:{now}")).unwrap();
 }
 
 // -- process_alive tests --
@@ -37,23 +41,120 @@ fn process_alive_dead_pid() {
     assert!(!process_alive(i32::MAX));
 }
 
+// -- parse_lock_content tests --
+
+/// New format `PID:TIMESTAMP` is parsed correctly.
+#[test]
+fn parse_lock_content_new_format() {
+    let (pid, ts) = super::parse_lock_content("12345:1700000000").unwrap();
+    assert_eq!(pid, 12345);
+    assert_eq!(ts, Some(1700000000));
+}
+
+/// Legacy format (PID only) is parsed correctly.
+#[test]
+fn parse_lock_content_legacy_format() {
+    let (pid, ts) = super::parse_lock_content("12345").unwrap();
+    assert_eq!(pid, 12345);
+    assert_eq!(ts, None);
+}
+
+/// Whitespace around the content is tolerated.
+#[test]
+fn parse_lock_content_whitespace_trimmed() {
+    let (pid, ts) = super::parse_lock_content("  42:999  ").unwrap();
+    assert_eq!(pid, 42);
+    assert_eq!(ts, Some(999));
+}
+
+/// Non-numeric content returns None.
+#[test]
+fn parse_lock_content_garbage_returns_none() {
+    assert!(super::parse_lock_content("not-a-number").is_none());
+}
+
+/// Content with a colon but non-numeric timestamp returns None.
+#[test]
+fn parse_lock_content_bad_timestamp_returns_none() {
+    assert!(super::parse_lock_content("123:abc").is_none());
+}
+
+// -- lock_file_content tests --
+
+/// lock_file_content produces the `PID:TIMESTAMP` format.
+#[test]
+fn lock_file_content_format() {
+    let content = super::lock_file_content();
+    let (pid, ts) = super::parse_lock_content(&content).unwrap();
+    assert_eq!(pid, std::process::id() as i32);
+    assert!(ts.is_some(), "should include a timestamp");
+    // Timestamp should be within a few seconds of now.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    assert!((ts.unwrap() - now).abs() < 5);
+}
+
+// -- lock_owner_alive tests --
+
+/// The current process is reported alive via lock_owner_alive (new format).
+#[test]
+fn lock_owner_alive_current_process() {
+    let content = super::lock_file_content();
+    assert!(super::lock_owner_alive(&content));
+}
+
+/// A dead PID is reported not alive via lock_owner_alive (new format).
+#[test]
+fn lock_owner_alive_dead_pid_new_format() {
+    let content = format!("{}:1700000000", i32::MAX);
+    assert!(!super::lock_owner_alive(&content));
+}
+
+/// Legacy format (PID only) falls back to process_alive.
+#[test]
+fn lock_owner_alive_legacy_format() {
+    let pid = std::process::id();
+    assert!(super::lock_owner_alive(&pid.to_string()));
+    assert!(!super::lock_owner_alive(&i32::MAX.to_string()));
+}
+
+/// Unparseable content returns false.
+#[test]
+fn lock_owner_alive_garbage_returns_false() {
+    assert!(!super::lock_owner_alive("not-a-number"));
+}
+
 // -- is_lock_stale tests (via record module) --
 
-/// A lock file containing the current process PID is not stale.
+/// A lock file containing the current process PID (new format) is not stale.
 #[test]
 fn is_lock_stale_with_live_pid() {
     let dir = tempfile::tempdir().unwrap();
     let lock = Utf8PathBuf::try_from(dir.path().join("test.lock")).unwrap();
-    let pid = std::process::id();
-    std::fs::write(&lock, pid.to_string()).unwrap();
+    std::fs::write(&lock, super::lock_file_content()).unwrap();
     assert!(!record::is_lock_stale(&lock));
 }
 
-/// A lock file containing a dead PID (i32::MAX) is stale.
+/// A lock file containing a dead PID (new format) is stale.
 #[test]
 fn is_lock_stale_with_dead_pid() {
     let dir = tempfile::tempdir().unwrap();
     let lock = Utf8PathBuf::try_from(dir.path().join("test.lock")).unwrap();
+    std::fs::write(&lock, format!("{}:1700000000", i32::MAX)).unwrap();
+    assert!(record::is_lock_stale(&lock));
+}
+
+/// A lock file with a legacy PID-only format still works.
+#[test]
+fn is_lock_stale_legacy_format() {
+    let dir = tempfile::tempdir().unwrap();
+    let lock = Utf8PathBuf::try_from(dir.path().join("test.lock")).unwrap();
+    // Live PID in legacy format.
+    std::fs::write(&lock, std::process::id().to_string()).unwrap();
+    assert!(!record::is_lock_stale(&lock));
+    // Dead PID in legacy format.
     std::fs::write(&lock, i32::MAX.to_string()).unwrap();
     assert!(record::is_lock_stale(&lock));
 }

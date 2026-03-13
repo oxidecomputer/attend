@@ -263,8 +263,8 @@ pub(super) fn try_lock(lock_path: &Utf8Path) -> Option<lockfile::Lockfile> {
 
     match lockfile::Lockfile::create(lock_path) {
         Ok(lock) => {
-            // Best-effort PID write for stale lock detection.
-            let _ = fs::write(lock_path, std::process::id().to_string());
+            // Best-effort PID+timestamp write for stale lock detection.
+            let _ = fs::write(lock_path, crate::narrate::lock_file_content());
             Some(lock)
         }
         Err(_) => {
@@ -273,7 +273,7 @@ pub(super) fn try_lock(lock_path: &Utf8Path) -> Option<lockfile::Lockfile> {
                 let _ = fs::remove_file(lock_path); // Best-effort stale lock cleanup
                 // Retry once.
                 if let Ok(lock) = lockfile::Lockfile::create(lock_path) {
-                    let _ = fs::write(lock_path, std::process::id().to_string());
+                    let _ = fs::write(lock_path, crate::narrate::lock_file_content());
                     return Some(lock);
                 }
             }

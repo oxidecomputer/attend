@@ -60,6 +60,7 @@ arboard = "3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 uuid = { version = "1.21.0", features = ["v4"] }
 base64 = "0.22.1"
+sysinfo = "0.38"
 tempfile = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]

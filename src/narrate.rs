@@ -83,6 +83,86 @@ pub(crate) fn process_alive(pid: i32) -> bool {
     signal::kill(Pid::from_raw(pid), None).is_ok()
 }
 
+/// Check whether the process at `pid` is the same one that was created at
+/// `created_at` (Unix epoch seconds).
+///
+/// Guards against PID reuse: after `kill(pid, 0)` confirms the process
+/// exists, we compare its start time (via `sysinfo`) against the timestamp
+/// stored in the lock file. If the start time differs by more than 2 seconds,
+/// the PID was recycled and the lock is stale.
+///
+/// Falls back to plain `process_alive()` if sysinfo cannot retrieve the
+/// process start time (e.g., on platforms where `/proc` is unavailable).
+pub(crate) fn process_alive_since(pid: i32, created_at: i64) -> bool {
+    if !process_alive(pid) {
+        return false;
+    }
+
+    use sysinfo::{ProcessRefreshKind, System};
+
+    let proc_refresh = ProcessRefreshKind::nothing();
+    let mut sys = System::new();
+    let sysinfo_pid = sysinfo::Pid::from_u32(pid as u32);
+    sys.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&[sysinfo_pid]),
+        true,
+        proc_refresh,
+    );
+
+    let Some(proc_info) = sys.process(sysinfo_pid) else {
+        // sysinfo couldn't find the process; fall back to kill(2) result.
+        return true;
+    };
+
+    let start_time = proc_info.start_time() as i64; // Unix epoch seconds
+    (start_time - created_at).abs() <= 2
+}
+
+/// Build the lock file content string: `"PID:TIMESTAMP\n"`.
+///
+/// `TIMESTAMP` is the current Unix epoch in seconds. Callers write this
+/// to the lock file so that later readers can detect PID reuse.
+pub(crate) fn lock_file_content() -> String {
+    let pid = std::process::id();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before Unix epoch")
+        .as_secs();
+    format!("{pid}:{now}")
+}
+
+/// Parse a lock file's content into `(pid, optional_timestamp)`.
+///
+/// Supports two formats:
+/// - New: `"PID:TIMESTAMP"` where TIMESTAMP is Unix epoch seconds.
+/// - Legacy: `"PID"` (no timestamp).
+///
+/// Returns `None` if the content cannot be parsed at all.
+pub(crate) fn parse_lock_content(content: &str) -> Option<(i32, Option<i64>)> {
+    let trimmed = content.trim();
+    if let Some((pid_str, ts_str)) = trimmed.split_once(':') {
+        let pid = pid_str.parse::<i32>().ok()?;
+        let ts = ts_str.parse::<i64>().ok()?;
+        Some((pid, Some(ts)))
+    } else {
+        let pid = trimmed.parse::<i32>().ok()?;
+        Some((pid, None))
+    }
+}
+
+/// Check whether the process described by a lock file is still alive.
+///
+/// Uses `process_alive_since()` when a creation timestamp is available
+/// (new format), falling back to plain `process_alive()` for legacy
+/// lock files that contain only a PID.
+pub(crate) fn lock_owner_alive(content: &str) -> bool {
+    match parse_lock_content(content) {
+        Some((pid, Some(ts))) => process_alive_since(pid, ts),
+        Some((pid, None)) => process_alive(pid),
+        None => false,
+    }
+}
+
 /// Base directory for all narration state files.
 pub(crate) fn cache_dir() -> Utf8PathBuf {
     crate::state::cache_dir().expect("cannot determine cache directory")

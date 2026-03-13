@@ -213,7 +213,7 @@ impl TestHarness {
     pub(super) fn fake_receiver(&self) -> ReceiverGuard {
         let lock_path = crate::narrate::receive_lock_path();
         std::fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
-        std::fs::write(&lock_path, std::process::id().to_string()).unwrap();
+        std::fs::write(&lock_path, crate::narrate::lock_file_content()).unwrap();
         ReceiverGuard { lock_path }
     }
 

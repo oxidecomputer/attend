@@ -6,7 +6,9 @@ use camino::Utf8PathBuf;
 use native_messaging::install::{manifest, paths::Scope};
 
 use super::transcribe::Engine;
-use super::{pause_sentinel_path, pending_dir, process_alive, receive_lock_path, record_lock_path};
+use super::{
+    lock_owner_alive, pause_sentinel_path, pending_dir, receive_lock_path, record_lock_path,
+};
 use crate::config::Config;
 
 /// Column width for label alignment (accommodates "Accessibility:").
@@ -24,17 +26,19 @@ pub(crate) fn status() -> anyhow::Result<()> {
     // Recording state
     let lock_path = record_lock_path();
     let recording = if lock_path.exists() {
-        if let Ok(content) = fs::read_to_string(&lock_path)
-            && let Ok(pid) = content.trim().parse::<i32>()
-        {
-            if process_alive(pid) {
+        if let Ok(content) = fs::read_to_string(&lock_path) {
+            if lock_owner_alive(&content) {
                 if pause_sentinel_path().exists() {
                     "idle (daemon resident)"
                 } else {
                     "recording"
                 }
-            } else {
+            } else if super::parse_lock_content(content.trim()).is_some() {
                 "stale lock (daemon not running): run `attend narrate toggle` to clean up"
+            } else if pause_sentinel_path().exists() {
+                "idle (daemon resident)"
+            } else {
+                "recording"
             }
         } else if pause_sentinel_path().exists() {
             "idle (daemon resident)"
@@ -83,12 +87,10 @@ pub(crate) fn status() -> anyhow::Result<()> {
     let recv_lock = receive_lock_path();
     let listener = if recv_lock.exists() {
         if let Ok(content) = fs::read_to_string(&recv_lock) {
-            if let Ok(pid) = content.trim().parse::<i32>() {
-                if process_alive(pid) {
-                    "active"
-                } else {
-                    "stale lock"
-                }
+            if lock_owner_alive(&content) {
+                "active"
+            } else if super::parse_lock_content(content.trim()).is_some() {
+                "stale lock"
             } else {
                 "active"
             }

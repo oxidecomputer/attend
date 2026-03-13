@@ -799,15 +799,19 @@ fn resume() -> anyhow::Result<()> {
 }
 
 /// Check whether a lock file is stale (the owning process is no longer alive).
+///
+/// Supports both the new `PID:TIMESTAMP` format (which guards against PID
+/// reuse via `process_alive_since`) and the legacy `PID`-only format (which
+/// falls back to plain `process_alive`).
 pub(crate) fn is_lock_stale(lock_path: &Utf8Path) -> bool {
     let Ok(content) = fs::read_to_string(lock_path) else {
         return false;
     };
-    let Ok(pid) = content.trim().parse::<i32>() else {
-        // No PID in the file — can't determine, assume not stale.
+    if super::parse_lock_content(content.trim()).is_none() {
+        // Unparseable content: can't determine, assume not stale.
         return false;
-    };
-    !super::process_alive(pid)
+    }
+    !super::lock_owner_alive(&content)
 }
 
 /// Start recording, or flush current narration and keep recording.
@@ -1145,8 +1149,8 @@ pub fn daemon(clock: Arc<dyn Clock>) -> anyhow::Result<()> {
     let _lock = lockfile::Lockfile::create(record_lock_path())
         .map_err(|e| anyhow::anyhow!("record lock already held: {e:?}"))?;
 
-    // Best-effort PID write for stale lock detection. This is not atomic
-    // with the lock creation above: if the process is SIGKILL'd between
+    // Best-effort PID+timestamp write for stale lock detection. This is not
+    // atomic with the lock creation above: if the process is SIGKILL'd between
     // Lockfile::create and this write, the lock file will exist without a
     // PID, making is_lock_stale() return false (permanently stuck lock).
     // This is acceptable because:
@@ -1154,7 +1158,7 @@ pub fn daemon(clock: Arc<dyn Clock>) -> anyhow::Result<()> {
     //   (Lockfile::Drop removes the file).
     // - Only SIGKILL can cause the stuck state, and that's unrecoverable
     //   by design.
-    let _ = fs::write(record_lock_path(), std::process::id().to_string());
+    let _ = fs::write(record_lock_path(), super::lock_file_content());
 
     // Best-effort cleanup: sentinels may not exist.
     let _ = fs::remove_file(stop_sentinel_path());

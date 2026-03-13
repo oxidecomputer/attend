@@ -75,8 +75,5 @@ pub(super) fn receiver_alive() -> bool {
     let Ok(content) = fs::read_to_string(&lock_path) else {
         return false;
     };
-    let Ok(pid) = content.trim().parse::<i32>() else {
-        return false;
-    };
-    crate::narrate::process_alive(pid)
+    crate::narrate::lock_owner_alive(&content)
 }
