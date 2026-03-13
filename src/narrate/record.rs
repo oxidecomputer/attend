@@ -252,7 +252,7 @@ impl DaemonState {
             .editor_capture
             .as_ref()
             .expect("editor capture already stopped");
-        let (editor_snapshots, file_diffs, ext_selections, clipboard_selections) = editor.drain();
+        let capture_events = editor.drain();
         let browser_staging = self.collect_browser_staging();
         let shell_staging = self.collect_shell_staging();
 
@@ -261,15 +261,8 @@ impl DaemonState {
         } else {
             pending_dir(self.session_id.as_ref())
         };
-        let had_content = self.transcribe_and_write_to(
-            dest,
-            editor_snapshots,
-            file_diffs,
-            ext_selections,
-            clipboard_selections,
-            browser_staging,
-            shell_staging,
-        )?;
+        let had_content =
+            self.transcribe_and_write_to(dest, capture_events, browser_staging, shell_staging)?;
         if !had_content {
             // Intentionally ignored: chime failure non-fatal.
             let _ = Chime::Empty.play();
@@ -358,18 +351,11 @@ impl DaemonState {
             .editor_capture
             .take()
             .expect("editor capture already stopped");
-        let (editor_snapshots, file_diffs, ext_selections, clipboard_selections) = editor.collect();
+        let capture_events = editor.collect();
         let browser_staging = self.collect_browser_staging();
         let shell_staging = self.collect_shell_staging();
-        let had_content = self.transcribe_and_write_to(
-            dest_dir,
-            editor_snapshots,
-            file_diffs,
-            ext_selections,
-            clipboard_selections,
-            browser_staging,
-            shell_staging,
-        )?;
+        let had_content =
+            self.transcribe_and_write_to(dest_dir, capture_events, browser_staging, shell_staging)?;
         if !had_content {
             // Intentionally ignored: chime failure non-fatal.
             let _ = Chime::Empty.play();
@@ -413,7 +399,7 @@ impl DaemonState {
             .editor_capture
             .as_ref()
             .expect("editor capture already stopped");
-        let (editor_snapshots, file_diffs, ext_selections, clipboard_selections) = editor.drain();
+        let capture_events = editor.drain();
         let browser_staging = self.collect_browser_staging();
         let shell_staging = self.collect_shell_staging();
 
@@ -422,15 +408,8 @@ impl DaemonState {
         } else {
             pending_dir(self.session_id.as_ref())
         };
-        let had_content = self.transcribe_and_write_to(
-            dest,
-            editor_snapshots,
-            file_diffs,
-            ext_selections,
-            clipboard_selections,
-            browser_staging,
-            shell_staging,
-        )?;
+        let had_content =
+            self.transcribe_and_write_to(dest, capture_events, browser_staging, shell_staging)?;
         if !had_content {
             // Intentionally ignored: chime failure non-fatal.
             let _ = Chime::Empty.play();
@@ -643,17 +622,13 @@ impl DaemonState {
     }
 
     /// Transcribe remaining audio, combine with pre-transcribed words, merge
-    /// with editor events, and write to the specified output directory.
+    /// with capture events, and write to the specified output directory.
     ///
     /// Returns `true` if content was produced, `false` if nothing was captured.
-    #[allow(clippy::too_many_arguments)]
     fn transcribe_and_write_to(
         &mut self,
         dest_dir: camino::Utf8PathBuf,
-        editor_snapshots: Vec<Event>,
-        file_diffs: Vec<Event>,
-        ext_selections: Vec<Event>,
-        clipboard_selections: Vec<Event>,
+        capture_events: Vec<Event>,
         browser_staging: super::StagingResult,
         shell_staging: super::StagingResult,
     ) -> anyhow::Result<bool> {
@@ -693,10 +668,7 @@ impl DaemonState {
         }
 
         if all_words.is_empty()
-            && editor_snapshots.is_empty()
-            && file_diffs.is_empty()
-            && ext_selections.is_empty()
-            && clipboard_selections.is_empty()
+            && capture_events.is_empty()
             && browser_staging.events.is_empty()
             && shell_staging.events.is_empty()
         {
@@ -716,10 +688,7 @@ impl DaemonState {
             });
         }
 
-        events.extend(editor_snapshots);
-        events.extend(file_diffs);
-        events.extend(ext_selections);
-        events.extend(clipboard_selections);
+        events.extend(capture_events);
         let (browser_events, browser_cleanup) = browser_staging.take();
         events.extend(browser_events);
         let (shell_events, shell_cleanup) = shell_staging.take();

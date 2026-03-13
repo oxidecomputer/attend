@@ -207,12 +207,12 @@ impl CaptureHandle {
     }
 
     /// Drain accumulated events without stopping threads.
-    pub fn drain(&self) -> (Vec<Event>, Vec<Event>, Vec<Event>, Vec<Event>) {
-        let editor = std::mem::take(&mut *self.editor_events.lock().unwrap());
-        let diff = std::mem::take(&mut *self.diff_events.lock().unwrap());
-        let ext = std::mem::take(&mut *self.ext_events.lock().unwrap());
-        let clipboard = std::mem::take(&mut *self.clipboard_events.lock().unwrap());
-        (editor, diff, ext, clipboard)
+    pub fn drain(&self) -> Vec<Event> {
+        let mut events = std::mem::take(&mut *self.editor_events.lock().unwrap());
+        events.append(&mut *self.diff_events.lock().unwrap());
+        events.append(&mut *self.ext_events.lock().unwrap());
+        events.append(&mut *self.clipboard_events.lock().unwrap());
+        events
     }
 
     /// Signal stop and collect remaining results.
@@ -222,7 +222,7 @@ impl CaptureHandle {
     /// joining a thread that's sleeping on `clock.sleep()` would deadlock:
     /// the join blocks the caller, the sleeper waits for time to advance,
     /// and the harness can't advance because the caller hasn't settled.
-    pub fn collect(mut self) -> (Vec<Event>, Vec<Event>, Vec<Event>, Vec<Event>) {
+    pub fn collect(mut self) -> Vec<Event> {
         self.control.stop();
 
         let clock = self.clock.for_thread();
