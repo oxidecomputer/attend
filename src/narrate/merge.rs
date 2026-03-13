@@ -81,6 +81,7 @@
 //! The actual markdown rendering lives in [`super::render`].
 
 use std::collections::HashSet;
+use std::fmt;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -282,6 +283,104 @@ impl Event {
                 }
             }
             _ => self.timestamp(),
+        }
+    }
+}
+
+impl fmt::Display for Event {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Event::Words { timestamp, text } => {
+                let ts = timestamp.format("%H:%M:%S");
+                let mut chars = text.chars();
+                let preview: String = (&mut chars).take(40).collect();
+                let truncated = chars.next().is_some();
+                write!(
+                    f,
+                    "Words[{ts}]: \"{preview}{}\"",
+                    if truncated { "..." } else { "" }
+                )
+            }
+            Event::EditorSnapshot {
+                timestamp, regions, ..
+            } => {
+                let ts = timestamp.format("%H:%M:%S");
+                let count = regions.len();
+                write!(f, "EditorSnapshot[{ts}]: {count} region(s)")
+            }
+            Event::FileDiff {
+                timestamp, path, ..
+            } => {
+                let ts = timestamp.format("%H:%M:%S");
+                write!(f, "FileDiff[{ts}]: {path}")
+            }
+            Event::ExternalSelection {
+                timestamp,
+                app,
+                window_title,
+                ..
+            } => {
+                let ts = timestamp.format("%H:%M:%S");
+                write!(f, "ExternalSelection[{ts}]: {app} - {window_title}")
+            }
+            Event::BrowserSelection {
+                timestamp,
+                url,
+                title,
+                ..
+            } => {
+                let ts = timestamp.format("%H:%M:%S");
+                write!(f, "BrowserSelection[{ts}]: {title} ({url})")
+            }
+            Event::ShellCommand {
+                timestamp,
+                command,
+                exit_status,
+                ..
+            } => {
+                let ts = timestamp.format("%H:%M:%S");
+                let mut chars = command.chars();
+                let preview: String = (&mut chars).take(40).collect();
+                let truncated = chars.next().is_some();
+                match exit_status {
+                    Some(code) => write!(
+                        f,
+                        "ShellCommand[{ts}]: \"{preview}{}\" (exit {code})",
+                        if truncated { "..." } else { "" }
+                    ),
+                    None => write!(
+                        f,
+                        "ShellCommand[{ts}]: \"{preview}{}\" (running)",
+                        if truncated { "..." } else { "" }
+                    ),
+                }
+            }
+            Event::ClipboardSelection {
+                timestamp, content, ..
+            } => {
+                let ts = timestamp.format("%H:%M:%S");
+                match content {
+                    ClipboardContent::Text { text } => {
+                        let mut chars = text.chars();
+                        let preview: String = (&mut chars).take(40).collect();
+                        let truncated = chars.next().is_some();
+                        write!(
+                            f,
+                            "ClipboardSelection[{ts}]: text \"{preview}{}\"",
+                            if truncated { "..." } else { "" }
+                        )
+                    }
+                    ClipboardContent::Image { path } => {
+                        write!(f, "ClipboardSelection[{ts}]: image {path}")
+                    }
+                }
+            }
+            Event::Redacted {
+                timestamp, kind, ..
+            } => {
+                let ts = timestamp.format("%H:%M:%S");
+                write!(f, "Redacted[{ts}]: {kind:?}")
+            }
         }
     }
 }
