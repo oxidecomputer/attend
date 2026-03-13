@@ -27,15 +27,8 @@ Parallelism tiers for remaining work. Items within a tier have no file
 conflicts and can run as concurrent worktree agents. Tiers must be
 executed sequentially (each tier depends on the prior tier being merged).
 
-```
 Tier 4 — Remaining pipeline fixes:
-  ├── ✅ #50  O(n²) subsume string cloning           [src/narrate/merge.rs]
-  ├── #52  O(n²) net_change_diffs + collapse_ext     [src/narrate/merge.rs]
-       ⚠ after #50 (merged), before #51
-  ├── #51  Stronger Event field types                [src/narrate/merge.rs + consumers]
-       ⚠ after #52 (avoid merge conflicts)
-  └── #30  Sentinel → command/status protocol        [src/narrate/record.rs, status.rs]
-       🔄 in progress (worktree agent)
+  #51  Stronger Event field types                [src/narrate/merge.rs + consumers]
 
 Tier 5 — Module decompositions (sequential, heavy dependencies):
   #5   state.rs decomposition          → then #10 (path centralization)
@@ -47,10 +40,6 @@ Tier 5 — Module decompositions (sequential, heavy dependencies):
 Tier 6 — Architecture (sequential, depends on everything above):
   #42  Extract lib.rs
   #41  narrate/ module reorganization  → after all Phase 7 decompositions
-```
-
-Conflict groups (must serialize or combine into one agent):
-- **merge.rs**: #50, #52, #51 (serialize in this order)
 
 ---
 
@@ -1241,7 +1230,7 @@ Files: `src/narrate/merge.rs`.
 
 ---
 
-### ⬜ 52. `src/narrate/merge.rs` — O(n²) in `net_change_diffs` and `collapse_ext_selections`
+### ✅ 52. `src/narrate/merge.rs` — O(n²) in `net_change_diffs` and `collapse_ext_selections`
 
 **`net_change_diffs` uses `by_path.iter_mut().find(...)` linear search** —
 should be `IndexMap<String, ...>` for O(1) lookup.
@@ -1472,7 +1461,7 @@ Files: `src/view.rs`.
 
 ---
 
-### ⬜ 30. `src/narrate/record.rs` — Sentinel file protocol redesign
+### ✅ 30. `src/narrate/record.rs` — Sentinel file protocol redesign
 
 **Replace four sentinel files with a command/status pair.**
 Currently stop, flush, pause, yank each have their own sentinel file path,
