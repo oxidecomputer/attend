@@ -8,6 +8,32 @@ use crate::agent::Agent;
 use crate::narrate::merge::Event;
 use crate::state::{self, EditorState, SessionId};
 
+/// Query sysinfo for the actual start time of a process (Unix epoch seconds).
+///
+/// Falls back to `SystemTime::now()` if sysinfo cannot retrieve the process.
+/// Using the real start time (instead of wall-clock time) avoids false "PID
+/// reuse" detection in `process_alive_since()` when the test binary has been
+/// running for more than 2 seconds.
+fn process_start_time(pid: u32) -> u64 {
+    use sysinfo::{ProcessRefreshKind, System};
+
+    let mut sys = System::new();
+    let sysinfo_pid = sysinfo::Pid::from_u32(pid);
+    sys.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&[sysinfo_pid]),
+        true,
+        ProcessRefreshKind::nothing(),
+    );
+    sys.process(sysinfo_pid)
+        .map(|p| p.start_time())
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        })
+}
+
 /// Convert seconds to a UTC timestamp (for test brevity).
 fn ts(secs: f64) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds((secs * 1000.0) as i64)
@@ -210,10 +236,17 @@ impl TestHarness {
     }
 
     /// Simulate a running receiver by writing a lock file with our PID.
+    ///
+    /// Writes the actual process start time (from sysinfo) instead of
+    /// `SystemTime::now()`. This matches what `process_alive_since()` will
+    /// query, avoiding false "PID reuse" detection when the test binary has
+    /// been running for more than 2 seconds.
     pub(super) fn fake_receiver(&self) -> ReceiverGuard {
         let lock_path = crate::narrate::receive_lock_path();
         std::fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
-        std::fs::write(&lock_path, crate::narrate::lock_file_content()).unwrap();
+        let pid = std::process::id();
+        let start_time = process_start_time(pid);
+        std::fs::write(&lock_path, format!("{pid}:{start_time}")).unwrap();
         ReceiverGuard { lock_path }
     }
 

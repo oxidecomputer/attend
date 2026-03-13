@@ -22,6 +22,37 @@ fn write_fake_lock(pid: impl std::fmt::Display) {
     std::fs::write(&lock, format!("{pid}:{now}")).unwrap();
 }
 
+/// Build a lock file content string using the actual process start time
+/// from sysinfo (instead of `SystemTime::now()`).
+///
+/// `lock_file_content()` writes `SystemTime::now()` as the creation
+/// timestamp, but `process_alive_since()` compares that against the
+/// process's real start time from sysinfo. If the test binary has been
+/// running for more than 2 seconds, the two diverge and the process
+/// appears "dead" (PID reuse false positive). This helper avoids that.
+fn lock_content_with_real_start_time() -> String {
+    use sysinfo::{ProcessRefreshKind, System};
+
+    let pid = std::process::id();
+    let sysinfo_pid = sysinfo::Pid::from_u32(pid);
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&[sysinfo_pid]),
+        true,
+        ProcessRefreshKind::nothing(),
+    );
+    let start_time = sys
+        .process(sysinfo_pid)
+        .map(|p| p.start_time())
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        });
+    format!("{pid}:{start_time}")
+}
+
 // -- process_alive tests --
 
 /// The current process is reported as alive.
@@ -101,7 +132,7 @@ fn lock_file_content_format() {
 /// The current process is reported alive via lock_owner_alive (new format).
 #[test]
 fn lock_owner_alive_current_process() {
-    let content = super::lock_file_content();
+    let content = lock_content_with_real_start_time();
     assert!(super::lock_owner_alive(&content));
 }
 
@@ -133,7 +164,7 @@ fn lock_owner_alive_garbage_returns_false() {
 fn is_lock_stale_with_live_pid() {
     let dir = tempfile::tempdir().unwrap();
     let lock = Utf8PathBuf::try_from(dir.path().join("test.lock")).unwrap();
-    std::fs::write(&lock, super::lock_file_content()).unwrap();
+    std::fs::write(&lock, lock_content_with_real_start_time()).unwrap();
     assert!(!record::is_lock_stale(&lock));
 }
 
