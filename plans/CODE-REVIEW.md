@@ -29,11 +29,12 @@ executed sequentially (each tier depends on the prior tier being merged).
 
 ```
 Tier 2 — Correctness fixes (parallel, independent files):
-  ├── #43  unwrap/expect in spawned threads    [editor_capture, clipboard_capture, diff_capture, ext_capture]
-  └── #37  Add HookKind::SessionEnd            [src/hook/types.rs, src/agent/claude/input.rs]
+  ├── #43  ✅ unwrap/expect in spawned threads  [worktree: agent-a1857379]
+  ├── #37  ✅ Add HookKind::SessionEnd          [worktree: agent-a7788e70]
+  └── #45  ✅ PID reuse mitigation              [worktree: agent-a2143eed]
 
 Tier 3 — Config & foundational fixes (parallel where noted):
-  ├── #8   DRY duration parsing                [src/config.rs]
+  ├── #8   ✅ DRY duration parsing              [worktree: agent-ac37b1ad]
   └── #47  Consistent duration representation  [src/config.rs]  ← after #8
 
 Tier 4 — Integrations & pipeline fixes (parallel, independent modules):
@@ -44,8 +45,8 @@ Tier 4 — Integrations & pipeline fixes (parallel, independent modules):
   ├── #24  blake3 for clipboard image hashing        [src/narrate/clipboard_capture.rs]
   ├── #39  Auto-detect install mode                  [src/cli/install.rs]
   ├── #33  listen.rs documentation                   [src/narrate/receive/listen.rs]
-  ├── #28  DRY path resolution in view.rs            [src/view.rs]
-  ├── #32  Rewrite collapse_redacted                 [src/narrate/receive/filter.rs]
+  ├── #28  ✅ DRY path resolution in view.rs         [worktree: agent-a0f4c9f6]
+  ├── #32  ✅ Rewrite collapse_redacted              [worktree: agent-a7245e64]
   ├── #46  Event Display impl                        [src/narrate/merge.rs]
   ├── #50  O(n²) subsume string cloning              [src/narrate/merge.rs]
   ├── #52  O(n²) net_change_diffs + collapse_ext     [src/narrate/merge.rs]
@@ -371,7 +372,7 @@ Files: `src/cli/glance.rs`, `src/cli/look.rs`, `src/narrate/audio.rs`,
 
 ---
 
-### ⬜ 43. Audit `unwrap()`/`expect()` inside spawned threads — Correctness
+### ✅ 43. Audit `unwrap()`/`expect()` inside spawned threads — Correctness
 
 **Panics inside spawned threads are silently swallowed.** Several places use
 `unwrap()` or `expect()` inside `spawn_clock_thread` closures and
@@ -418,7 +419,7 @@ Files: `src/narrate/editor_capture.rs`, `src/narrate/clipboard_capture.rs`,
 
 ---
 
-### ⬜ 45. `process_alive()` PID reuse — Correctness
+### ✅ 45. `process_alive()` PID reuse — Correctness
 
 **`process_alive(pid)` is used for stale lock detection in multiple places.**
 On long-running systems, PIDs can be reused. If attend's daemon exits and
@@ -497,7 +498,7 @@ in the installation section of the readme.
 
 ---
 
-### ⬜ 37. `src/hook/types.rs` + `src/agent/claude/input.rs:60` — Add HookKind::SessionEnd
+### ✅ 37. `src/hook/types.rs` + `src/agent/claude/input.rs:60` — Add HookKind::SessionEnd
 
 **`SessionEnd` maps to `HookKind::SessionStart` which is confusing.**
 Add a `HookKind::SessionEnd` variant (no extra fields needed) so the
@@ -672,7 +673,7 @@ Files: `Cargo.toml`, `src/terminal.rs`, `src/terminal/tests.rs`.
 
 ---
 
-### ⬜ 8. `src/config.rs:95-130` — DRY
+### ✅ 8. `src/config.rs:95-130` — DRY
 
 **`retention_duration()` and `idle_timeout()` are near-identical.**
 Both parse a humantime string, handle `"forever"` → `None`, and warn+default on
@@ -1401,7 +1402,7 @@ Files: `src/narrate/render.rs`.
 
 ---
 
-### ⬜ 32. `src/narrate/receive/filter.rs:114-173` — Rewrite collapse_redacted
+### ✅ 32. `src/narrate/receive/filter.rs:114-173` — Rewrite collapse_redacted
 
 **`collapse_redacted` uses placeholder `Event::Words` during `mem::replace`,
 which is awkward.** Rewrite to `drain(..)` the input vec and process owned
@@ -1445,7 +1446,7 @@ Files: `src/narrate/receive/filter.rs`.
 
 ---
 
-### ⬜ 28. `src/view.rs` — DRY path resolution
+### ✅ 28. `src/view.rs` — DRY path resolution
 
 **The abs_path resolution block (relative → absolute via cwd) is duplicated
 three times** in `render_with_mode`, `render_json`, and `capture_regions`.
