@@ -31,11 +31,11 @@ Tier 4 — Remaining pipeline fixes:
   #51  Stronger Event field types                [src/narrate/merge.rs + consumers]
 
 Tier 5 — Module decompositions (sequential, heavy dependencies):
-  #5   state.rs decomposition          → then #10 (path centralization)
+  ✅ #5   state.rs decomposition          → then #10 (path centralization)
   #26  merge.rs decomposition          (independent of #5)
-  #29  view.rs decomposition           (independent)
+  ✅ #29  view.rs decomposition           (independent)
   #31  record.rs decomposition         → requires #30 first
-  #35  status/clean placement          (independent)
+  ✅ #35  status/clean placement          (independent)
 
 Tier 6 — Architecture (sequential, depends on everything above):
   #42  Extract lib.rs
@@ -1602,7 +1602,7 @@ Large structural splits. Do these after the targeted fixes above so the
 code being split is already clean. Order by dependency: split foundational
 modules before their consumers.
 
-### ⬜ 5. `src/state.rs` — Organization (full decomposition)
+### ✅ 5. `src/state.rs` — Organization (full decomposition)
 
 **`state.rs` is a 519-line grab-bag. Split into focused submodules:**
 1. `src/state/session_id.rs` — `SessionId` newtype + trait impls (lines 12–50)
@@ -1751,7 +1751,7 @@ Files: `src/narrate/merge.rs` → `src/narrate/merge/{event,subsume,run}.rs`.
 
 ---
 
-### ⬜ 29. `src/view.rs` — Organization
+### ✅ 29. `src/view.rs` — Organization
 
 **Split view.rs into submodules.** Currently has JSON types, text/ANSI
 rendering, CapturedRegion + capture, and apply_markers in 411 lines.
@@ -1824,7 +1824,7 @@ Files: `src/narrate/record.rs` →
 
 ---
 
-### ⬜ 35. `src/narrate/{status,clean}.rs` — Placement
+### ✅ 35. `src/narrate/{status,clean}.rs` — Placement
 
 **`status.rs` and `clean.rs` are operational commands, not part of the
 narration pipeline.** Consider moving them to a `narrate/ops/` grouping
