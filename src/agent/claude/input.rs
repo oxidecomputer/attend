@@ -57,7 +57,7 @@ pub(super) fn parse(hook_type: HookType) -> HookInput {
             HookKind::ToolUse { bash_command }
         }
         // SessionEnd only needs the common fields (session_id, cwd).
-        HookType::SessionEnd => HookKind::SessionStart,
+        HookType::SessionEnd => HookKind::SessionEnd,
     };
     HookInput {
         session_id: raw.session_id.map(SessionId::from),

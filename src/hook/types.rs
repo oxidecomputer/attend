@@ -32,6 +32,7 @@ pub struct HookInput {
 pub enum HookKind {
     #[default]
     SessionStart,
+    SessionEnd,
     UserPrompt {
         prompt: Option<String>,
     },
