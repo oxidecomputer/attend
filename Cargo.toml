@@ -22,6 +22,7 @@ disallowed_methods = "warn"
 
 [dependencies]
 attend-mock-clock = { path = "crates/mock-clock" }
+blake3 = "1"
 anyhow = "1"
 clap = { version = "4", features = ["derive", "color"] }
 crossterm = "0.29"

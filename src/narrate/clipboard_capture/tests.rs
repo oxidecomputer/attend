@@ -136,3 +136,33 @@ fn both_unavailable_skips() {
         ClipboardUpdate::Unchanged
     ));
 }
+
+/// A zero-pixel image (0x0) is still valid image content and emits an event.
+///
+/// Edge case: the pixel buffer is empty, but blake3 handles empty input
+/// correctly (returns the hash of the empty string), so change detection
+/// still works.
+#[test]
+fn empty_image_emits_and_deduplicates() {
+    let empty = ImageData {
+        width: 0,
+        height: 0,
+        bytes: vec![],
+    };
+    let mut tracker = ClipboardTracker::new_seeded(None, None);
+    // First check: empty image is new content, should emit.
+    assert!(matches!(
+        tracker.check(None, Some(&empty)),
+        ClipboardUpdate::Changed(ClipboardContent::Image { .. })
+    ));
+    // Second check: same empty image should not repeat.
+    let empty2 = ImageData {
+        width: 0,
+        height: 0,
+        bytes: vec![],
+    };
+    assert!(matches!(
+        tracker.check(None, Some(&empty2)),
+        ClipboardUpdate::Unchanged
+    ));
+}

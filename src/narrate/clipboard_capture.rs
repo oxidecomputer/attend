@@ -6,12 +6,8 @@
 //! change between polls, no event is emitted.
 //!
 //! Change detection for text compares against previous content. For images,
-//! the byte length of the raw RGBA buffer is compared first (different
-//! dimensions = definite change), then a hash of the pixel data detects
-//! same-dimension content changes.
+//! a blake3 hash of the raw RGBA pixel data detects content changes.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -69,8 +65,8 @@ enum LastContent {
     Empty,
     /// Last content was text.
     Text(String),
-    /// Last content was an image (byte length + hash of pixel data).
-    Image { byte_len: usize, hash: u64 },
+    /// Last content was an image (blake3 hash of pixel data).
+    Image(blake3::Hash),
 }
 
 /// Pure state machine for clipboard change detection.
@@ -98,10 +94,7 @@ impl ClipboardTracker {
     pub fn new_seeded(text: Option<&str>, image: Option<&ImageData>) -> Self {
         let last = match (text, image) {
             (Some(t), _) if !t.trim().is_empty() => LastContent::Text(t.to_string()),
-            (_, Some(img)) => LastContent::Image {
-                byte_len: img.bytes.len(),
-                hash: hash_image_data(img),
-            },
+            (_, Some(img)) => LastContent::Image(hash_image_data(img)),
             _ => LastContent::Empty,
         };
         Self { last }
@@ -129,17 +122,11 @@ impl ClipboardTracker {
         }
 
         if let Some(img) = image {
-            let new_len = img.bytes.len();
             let new_hash = hash_image_data(img);
-            if matches!(&self.last, LastContent::Image { byte_len, hash }
-                if *byte_len == new_len && *hash == new_hash)
-            {
+            if matches!(&self.last, LastContent::Image(prev) if *prev == new_hash) {
                 return ClipboardUpdate::Unchanged;
             }
-            self.last = LastContent::Image {
-                byte_len: new_len,
-                hash: new_hash,
-            };
+            self.last = LastContent::Image(new_hash);
             // Image path is filled in by the caller (spawn thread) after PNG encoding.
             return ClipboardUpdate::Changed(ClipboardContent::Image {
                 path: String::new(),
@@ -163,12 +150,11 @@ pub(crate) struct ImageData {
 
 /// Hash image pixel data for change detection.
 ///
-/// Uses the standard library's `DefaultHasher` on the full byte slice.
-/// This is fast enough for 500ms polling intervals.
-fn hash_image_data(img: &ImageData) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    img.bytes.hash(&mut hasher);
-    hasher.finish()
+/// Uses blake3 on the full byte slice. blake3 is faster than SipHash
+/// for large buffers and produces a 256-bit hash, eliminating any
+/// realistic chance of collision.
+fn hash_image_data(img: &ImageData) -> blake3::Hash {
+    blake3::hash(&img.bytes)
 }
 
 /// How often to poll the clipboard for changes (ms).
