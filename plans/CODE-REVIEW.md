@@ -29,17 +29,12 @@ executed sequentially (each tier depends on the prior tier being merged).
 
 ```
 Tier 2 — Correctness fixes (parallel, independent files):
-  ├── #49  atomic_replace_dir crash window     [src/util.rs]
   ├── #43  unwrap/expect in spawned threads    [editor_capture, clipboard_capture, diff_capture, ext_capture]
-  ├── #37  Add HookKind::SessionEnd            [src/hook/types.rs, src/agent/claude/input.rs]
-  └── #44  Audit Utc::now() usage              [src/cli/glance.rs, look.rs, narrate/audio.rs]
-       ⚠ #43 and #44 may conflict on capture files — verify before parallelizing
+  └── #37  Add HookKind::SessionEnd            [src/hook/types.rs, src/agent/claude/input.rs]
 
 Tier 3 — Config & foundational fixes (parallel where noted):
-  ├── #7+#8  Remove ext_ignore_apps + DRY duration parsing  [src/config.rs]  ← group: same file
-  ├── #47    Consistent duration representation             [src/config.rs]  ← after #8
-  ├── #9     Replace hand-rolled truncation                 [src/terminal.rs, Cargo.toml]
-  └── #6     Document Position::from_offsets                [src/state/resolve.rs]
+  ├── #8   DRY duration parsing                [src/config.rs]
+  └── #47  Consistent duration representation  [src/config.rs]  ← after #8
 
 Tier 4 — Integrations & pipeline fixes (parallel, independent modules):
   ├── #16  Fill missing model checksums         [src/narrate/transcribe/whisper.rs, parakeet.rs]
@@ -47,10 +42,7 @@ Tier 4 — Integrations & pipeline fixes (parallel, independent modules):
        ⚠ #16 before #17 (checksums needed before refactoring download)
   ├── #56  Deduplicate editor snapshot construction  [src/narrate/editor_capture.rs]
   ├── #24  blake3 for clipboard image hashing        [src/narrate/clipboard_capture.rs]
-  ├── #36  Hook state machine documentation          [src/hook.rs]
-  ├── #38  DRY install/uninstall                     [src/cli/install.rs]
   ├── #39  Auto-detect install mode                  [src/cli/install.rs]
-       ⚠ #38 before #39 (refactor before new feature)
   ├── #33  listen.rs documentation                   [src/narrate/receive/listen.rs]
   ├── #28  DRY path resolution in view.rs            [src/view.rs]
   ├── #32  Rewrite collapse_redacted                 [src/narrate/receive/filter.rs]
@@ -79,10 +71,8 @@ Tier 6 — Architecture (sequential, depends on everything above):
 ```
 
 Conflict groups (must serialize or combine into one agent):
-- **config.rs**: #7, #8, #47
+- **config.rs**: #8, #47
 - **merge.rs**: #46, #50, #51, #52
-- **capture files**: #43, #44 (verify overlap)
-- **install.rs**: #38, #39
 - **transcribe**: #16, #17
 
 ---
@@ -1994,33 +1984,24 @@ Files: depends on earlier items.
 Items discovered after the initial review. Triage and slot into the
 appropriate phase/tier before implementation.
 
-### ⬜ 57. Hook installation not idempotent — duplicates in settings
+### ✅ 57. Hook installation not idempotent — duplicates in settings
 
-**User-reported: duplicate hook entries for `attend` in Claude Code
-settings.** The install code (`src/agent/claude/settings/install.rs`)
-uses an `_installed_by: "attend"` marker with `retain()` + `push()`
-to replace its own hooks. This should be idempotent. Possible causes:
+**User-reported: 13 duplicate hook entries per hook type in
+`~/.claude/settings.json`, all without `_installed_by` marker.**
 
-1. **Legacy hooks from before the marker was added.** Early installs
-   may not have the `_installed_by` field, so `is_our_hook()` returns
-   false and they're never cleaned up.
-2. **Global + project-local overlap.** Auto-upgrade (upgrade.rs:29)
-   always reinstalls with `project: None` (global), but the user may
-   also have `--project` installs. Claude Code merges both files, so
-   the effective settings have hooks from each.
-3. **`is_our_hook()` matching failure.** Some hook format variation
-   that causes the marker check to miss.
+**Root cause confirmed:** Claude Code strips unknown JSON fields from
+`settings.json` on session start. The `_installed_by: "attend"` marker
+is written by `attend install` but removed by Claude Code before the
+next `is_our_hook()` check runs. Every auto-upgrade therefore adds a
+new entry without cleaning up the (now marker-less) previous ones.
 
-**Investigation steps:**
-1. Ask the user which settings file(s) contain the duplicates
-   (`~/.claude/settings.json` vs project-local `settings.local.json`).
-2. Inspect the duplicate entries: do they have `_installed_by`?
-3. If legacy hooks without the marker exist, add a fallback match on
-   the command pattern (e.g. `command.contains("attend hook")`).
-4. If global+project overlap, consider deduplication or only installing
-   hooks in one location.
-5. Add an integration test: `install_then_reinstall_no_duplicates`
-   covering the exact scenario.
+**Fix applied:** Added a command-pattern fallback to `is_our_hook()`.
+If no `_installed_by` marker is found, check whether any hook command
+starts with `"attend "`. This correctly identifies both marked and
+stripped entries. The marker is retained as defense-in-depth for
+future Claude Code versions that might preserve extra fields.
 
-Files: `src/agent/claude/settings/install.rs`,
-`src/agent/claude/settings/tests.rs`, `src/hook/upgrade.rs`.
+After the fix, `attend install --agent claude` deduplicates: 13 → 1
+per hook type.
+
+Files: `src/agent/claude/settings.rs`, `src/agent/claude/settings/tests.rs`.
