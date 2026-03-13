@@ -1,6 +1,8 @@
 use super::*;
 use crate::state::{Line, Position};
 
+use camino::Utf8PathBuf;
+
 use proptest::prelude::*;
 
 const SAMPLE: &str = "\

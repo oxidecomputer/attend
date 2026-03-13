@@ -1,51 +1,26 @@
 mod annotate;
+mod capture;
 mod detect;
+mod json;
 mod parse;
 
 use std::io::IsTerminal;
 
-use camino::{Utf8Path, Utf8PathBuf};
-use serde::{Deserialize, Serialize};
+use camino::Utf8Path;
 
 use crate::state::FileEntry;
 use crate::state::resolve::relativize;
-use crate::state::{Line, Position, Selection};
+use crate::state::{Line, Selection};
 
 #[cfg(test)]
 use annotate::line_events;
 use annotate::{Group, render_line_range};
 
+use capture::resolve_abs_path;
+pub use capture::{CapturedRegion, capture_regions};
 pub use detect::LanguageCache;
+pub use json::{ViewFile, ViewGroup, ViewPayload};
 pub use parse::parse_compact;
-
-// ---------------------------------------------------------------------------
-// View JSON types (attend view --format json)
-// ---------------------------------------------------------------------------
-
-/// JSON representation of a group of selections with rendered content.
-#[derive(Serialize)]
-pub struct ViewGroup {
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub cursors: Vec<Position>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub selections: Vec<Selection>,
-    pub first_line: Line,
-    pub last_line: Line,
-    pub content: String,
-}
-
-/// JSON representation of a single file's view output.
-#[derive(Serialize)]
-pub struct ViewFile {
-    pub path: String,
-    pub groups: Vec<ViewGroup>,
-}
-
-/// Top-level JSON payload for `attend view --format json`.
-#[derive(Serialize)]
-pub struct ViewPayload {
-    pub files: Vec<ViewFile>,
-}
 
 // ---------------------------------------------------------------------------
 // Rendering
@@ -96,27 +71,6 @@ pub enum Extent {
     Lines { before: usize, after: usize },
     /// Entire file contents.
     Full,
-}
-
-/// Resolve a `FileEntry` path to an absolute path.
-///
-/// If the path is already absolute it is returned as-is. Otherwise it is
-/// joined to `cwd` (or the process working directory when `cwd` is `None`).
-fn resolve_abs_path(path: &Utf8Path, cwd: Option<&Utf8Path>) -> anyhow::Result<Utf8PathBuf> {
-    if path.is_absolute() {
-        Ok(path.to_path_buf())
-    } else {
-        let base = match cwd {
-            Some(c) => c.to_path_buf(),
-            None => Utf8PathBuf::try_from(std::env::current_dir()?).map_err(|e| {
-                anyhow::anyhow!(
-                    "non-UTF-8 working directory: {}",
-                    e.into_path_buf().display()
-                )
-            })?,
-        };
-        Ok(base.join(path))
-    }
 }
 
 /// Render file entries with inline content markers or ANSI colors.
@@ -271,76 +225,6 @@ fn strip_indent(s: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n")
         + if s.ends_with('\n') { "\n" } else { "" }
-}
-
-// ---------------------------------------------------------------------------
-// CapturedRegion: raw content + selections for deferred rendering
-// ---------------------------------------------------------------------------
-
-/// A region of a file captured from an editor snapshot.
-///
-/// Stores raw (untrimmed, un-annotated) file content plus the selection
-/// positions that were active at capture time. Marker annotation (⟦⟧❘) is
-/// deferred to [`apply_markers`] at render time.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct CapturedRegion {
-    /// Display path of the file (relative or absolute).
-    pub path: String,
-    /// Raw untrimmed lines for this region, joined with newlines.
-    pub content: String,
-    /// 1-based line number of the first line in `content`.
-    pub first_line: u32,
-    /// Absolute file positions of selections/cursors within this region.
-    pub selections: Vec<Selection>,
-    /// Programming language detected from the file path (e.g. "rust", "python").
-    /// Uses GFM-compatible identifiers. `None` when detection fails, the file
-    /// type is unknown, or the language lacks GFM syntax highlighting.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub language: Option<String>,
-}
-
-/// Capture raw file regions from editor entries, parallel to [`render_json`]
-/// but without baking in selection markers.
-///
-/// Returns one [`CapturedRegion`] per selection group (context-merged range).
-pub fn capture_regions(
-    entries: &[FileEntry],
-    cwd: Option<&Utf8Path>,
-    extent: Extent,
-    lang_cache: &mut LanguageCache,
-) -> anyhow::Result<Vec<CapturedRegion>> {
-    let mut regions = Vec::new();
-
-    for entry in entries {
-        let abs_path = resolve_abs_path(&entry.path, cwd)?;
-
-        let display_path = relativize(&abs_path, cwd).to_string();
-
-        let content = match std::fs::read_to_string(&abs_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let lines: Vec<&str> = content.lines().collect();
-
-        // Detect language once per file (cached across captures).
-        let language = lang_cache.detect(&abs_path);
-
-        let groups = Group::compute(&entry.selections, lines.len(), extent);
-
-        for group in &groups {
-            let raw = annotate::raw_line_range(&lines, group.first_line, group.last_line);
-            let sels = group.sels.iter().map(|s| **s).collect();
-            regions.push(CapturedRegion {
-                path: display_path.clone(),
-                content: raw,
-                first_line: group.first_line.get() as u32,
-                selections: sels,
-                language: language.clone(),
-            });
-        }
-    }
-
-    Ok(regions)
 }
 
 /// Annotate raw content with ⟦⟧❘ selection markers.
