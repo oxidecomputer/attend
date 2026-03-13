@@ -28,14 +28,8 @@ conflicts and can run as concurrent worktree agents. Tiers must be
 executed sequentially (each tier depends on the prior tier being merged).
 
 ```
-Tier 2 — Correctness fixes (parallel, independent files):
-  ├── #43  ✅ unwrap/expect in spawned threads  [worktree: agent-a1857379]
-  ├── #37  ✅ Add HookKind::SessionEnd          [worktree: agent-a7788e70]
-  └── #45  ✅ PID reuse mitigation              [worktree: agent-a2143eed]
-
-Tier 3 — Config & foundational fixes (parallel where noted):
-  ├── #8   ✅ DRY duration parsing              [worktree: agent-ac37b1ad]
-  └── #47  Consistent duration representation  [src/config.rs]  ← after #8
+Tier 3 — Config & foundational fixes:
+  └── #47  Consistent duration representation  [src/config.rs]
 
 Tier 4 — Integrations & pipeline fixes (parallel, independent modules):
   ├── #16  Fill missing model checksums         [src/narrate/transcribe/whisper.rs, parakeet.rs]
@@ -45,8 +39,6 @@ Tier 4 — Integrations & pipeline fixes (parallel, independent modules):
   ├── #24  blake3 for clipboard image hashing        [src/narrate/clipboard_capture.rs]
   ├── #39  Auto-detect install mode                  [src/cli/install.rs]
   ├── #33  listen.rs documentation                   [src/narrate/receive/listen.rs]
-  ├── #28  ✅ DRY path resolution in view.rs         [worktree: agent-a0f4c9f6]
-  ├── #32  ✅ Rewrite collapse_redacted              [worktree: agent-a7245e64]
   ├── #46  Event Display impl                        [src/narrate/merge.rs]
   ├── #50  O(n²) subsume string cloning              [src/narrate/merge.rs]
   ├── #52  O(n²) net_change_diffs + collapse_ext     [src/narrate/merge.rs]
@@ -72,7 +64,6 @@ Tier 6 — Architecture (sequential, depends on everything above):
 ```
 
 Conflict groups (must serialize or combine into one agent):
-- **config.rs**: #8, #47
 - **merge.rs**: #46, #50, #51, #52
 - **transcribe**: #16, #17
 
