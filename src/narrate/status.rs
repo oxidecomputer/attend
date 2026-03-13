@@ -35,15 +35,11 @@ pub(crate) fn status() -> anyhow::Result<()> {
                 }
             } else if super::parse_lock_content(content.trim()).is_some() {
                 "stale lock (daemon not running): run `attend narrate toggle` to clean up"
-            } else if pause_sentinel_path().exists() {
-                "idle (daemon resident)"
             } else {
-                "recording"
+                "unknown (lock file unreadable)"
             }
-        } else if pause_sentinel_path().exists() {
-            "idle (daemon resident)"
         } else {
-            "recording"
+            "unknown (lock file unreadable)"
         }
     } else {
         "stopped"
@@ -92,10 +88,10 @@ pub(crate) fn status() -> anyhow::Result<()> {
             } else if super::parse_lock_content(content.trim()).is_some() {
                 "stale lock"
             } else {
-                "active"
+                "unknown (lock file unreadable)"
             }
         } else {
-            "active"
+            "unknown (lock file unreadable)"
         }
     } else {
         "inactive"
