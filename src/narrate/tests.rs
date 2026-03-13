@@ -405,148 +405,177 @@ fn yanked_dir_falls_back_to_local() {
 // -- Pause tests --
 //
 // These use CacheDirGuard to redirect all filesystem state to a tempdir,
-// then exercise the real record::pause() function.
+// then exercise the real record::pause() function via the command/status
+// protocol.
 
 /// `record::pause()` when not recording prints an error and is a no-op.
 #[test]
 fn pause_not_recording_is_noop() {
     let _g = CacheDirGuard::new();
     record::pause().unwrap();
-    assert!(!pause_sentinel_path().exists());
+    // No command file should exist: pause exits early when not recording.
+    assert!(!command_path().exists());
 }
 
-/// `record::pause()` creates the sentinel when recording and none exists,
-/// and removes it on the second call (toggle behavior).
+/// `record::pause()` writes "pause" when status is "recording" and
+/// "resume" when status is "paused" (toggle behavior via status protocol).
 #[test]
 fn pause_toggle_round_trip() {
     let _g = CacheDirGuard::new();
 
-    // Simulate a running daemon by writing a record lock.
+    // Simulate a running daemon by writing a record lock and status.
     write_fake_lock(std::process::id());
+    let status_p = status_path();
+    fs::create_dir_all(status_p.parent().unwrap()).unwrap();
+    crate::util::atomic_write_str(&status_p, "recording").unwrap();
 
-    // First call: creates the sentinel (pause).
+    // First call: status is recording, should write "pause" command.
     record::pause().unwrap();
-    assert!(
-        pause_sentinel_path().exists(),
-        "sentinel should exist after first pause"
+    let cmd = fs::read_to_string(command_path()).unwrap();
+    assert_eq!(
+        cmd.trim(),
+        "pause",
+        "pause command should be written when recording"
     );
 
-    // Second call: removes the sentinel (resume).
+    // Clean up command file (as the daemon would) and update status.
+    let _ = fs::remove_file(command_path());
+    crate::util::atomic_write_str(&status_p, "paused").unwrap();
+
+    // Second call: status is paused, should write "resume" command.
     record::pause().unwrap();
-    assert!(
-        !pause_sentinel_path().exists(),
-        "sentinel should not exist after second pause (resume)"
+    let cmd = fs::read_to_string(command_path()).unwrap();
+    assert_eq!(
+        cmd.trim(),
+        "resume",
+        "resume command should be written when paused"
     );
 }
 
 /// Multiple pause/resume cycles through `record::pause()` always
-/// converge to the expected state.
+/// converge to the expected command.
 #[test]
 fn pause_multiple_cycles() {
     let _g = CacheDirGuard::new();
     write_fake_lock(std::process::id());
+    let status_p = status_path();
+    fs::create_dir_all(status_p.parent().unwrap()).unwrap();
 
     for i in 0..5 {
+        // Status: recording -> pause
+        crate::util::atomic_write_str(&status_p, "recording").unwrap();
         record::pause().unwrap();
-        assert!(
-            pause_sentinel_path().exists(),
-            "cycle {i}: sentinel should exist after pause"
-        );
+        let cmd = fs::read_to_string(command_path()).unwrap();
+        assert_eq!(cmd.trim(), "pause", "cycle {i}: should write pause command");
+        let _ = fs::remove_file(command_path());
+
+        // Status: paused -> resume
+        crate::util::atomic_write_str(&status_p, "paused").unwrap();
         record::pause().unwrap();
-        assert!(
-            !pause_sentinel_path().exists(),
-            "cycle {i}: sentinel should not exist after resume"
+        let cmd = fs::read_to_string(command_path()).unwrap();
+        assert_eq!(
+            cmd.trim(),
+            "resume",
+            "cycle {i}: should write resume command"
         );
+        let _ = fs::remove_file(command_path());
     }
 }
 
-/// `record::stop()` while paused still works (writes stop sentinel).
+/// `record::stop()` while paused delivers content: the daemon has
+/// buffered narration and stop should flush it, not silently discard.
 #[test]
-fn stop_while_paused_is_accepted() {
+fn stop_while_paused_delivers_content() {
     let _g = CacheDirGuard::new();
 
-    // Use a dead PID so stop() doesn't wait 5 seconds for a daemon.
+    // Use a dead PID so stop() doesn't wait for a real daemon.
     write_fake_lock(i32::MAX);
+    let status_p = status_path();
+    fs::create_dir_all(status_p.parent().unwrap()).unwrap();
+    crate::util::atomic_write_str(&status_p, "paused").unwrap();
 
-    record::pause().unwrap();
-    assert!(pause_sentinel_path().exists());
-
-    // Stop writes the stop sentinel even while paused.
+    // Stop while paused: should write the stop command.
     record::stop(&RealClock).unwrap();
+    assert!(
+        command_path().exists(),
+        "stop command should be written when paused"
+    );
+    let cmd = fs::read_to_string(command_path()).unwrap();
+    assert_eq!(cmd.trim(), "stop");
 }
 
-/// The pause sentinel path lives under the overridden cache directory,
-/// and its presence/absence tracks pause state.
+/// The command file path lives under the overridden cache directory.
 #[test]
-fn pause_sentinel_under_cache_dir() {
+fn command_path_under_cache_dir() {
     let g = CacheDirGuard::new();
-    let sentinel = pause_sentinel_path();
+    let cmd = command_path();
 
-    // Sentinel path is under the overridden cache dir.
-    assert!(sentinel.starts_with(g.cache.as_str()));
+    // Command file path is under the overridden cache dir.
+    assert!(cmd.starts_with(g.cache.as_str()));
+}
 
-    // Write record lock with our PID (alive process).
-    write_fake_lock(std::process::id());
+/// The status file path lives under the overridden cache directory.
+#[test]
+fn status_path_under_cache_dir() {
+    let g = CacheDirGuard::new();
+    let status_p = status_path();
 
-    // Without pause sentinel: not paused.
-    assert!(!sentinel.exists());
-
-    // With pause sentinel: paused.
-    std::fs::write(&sentinel, "").unwrap();
-    assert!(sentinel.exists());
+    // Status file path is under the overridden cache dir.
+    assert!(status_p.starts_with(g.cache.as_str()));
 }
 
 // -- Yank tests --
 //
 // These use CacheDirGuard to redirect all filesystem state to a tempdir,
-// then exercise the real record::yank() function.
+// then exercise the real record::yank() function via the command/status
+// protocol.
 
 /// `record::yank()` when not recording prints an error and is a no-op.
 #[test]
 fn yank_not_recording_is_noop() {
     let _g = CacheDirGuard::new();
     record::yank(&RealClock).unwrap();
-    // No sentinel should exist — yank exits early when not recording.
-    assert!(!super::yank_sentinel_path().exists());
+    // No command file should exist: yank exits early when not recording.
+    assert!(!command_path().exists());
 }
 
-/// `record::yank()` writes the yank sentinel when recording.
+/// `record::yank()` writes the "yank" command when recording.
 #[test]
-fn yank_writes_sentinel() {
+fn yank_writes_command() {
     let _g = CacheDirGuard::new();
 
     // Use a dead PID so yank() doesn't wait 5 seconds for a daemon.
     write_fake_lock(i32::MAX);
 
     record::yank(&RealClock).unwrap();
-    // Sentinel is cleaned up by the CLI after it detects daemon exit,
-    // but the daemon (dead PID) never ran, so the sentinel may or may not
-    // remain. The key assertion: yank didn't panic and ran to completion.
+    // The command file may or may not remain (the daemon would consume it),
+    // but the key assertion is: yank didn't panic and ran to completion.
 }
 
-/// `record::yank()` while paused still works (writes yank sentinel).
+/// `record::yank()` while paused still works (writes yank command).
 #[test]
 fn yank_while_paused_is_accepted() {
     let _g = CacheDirGuard::new();
 
     // Use a dead PID so yank() doesn't wait 5 seconds for a daemon.
     write_fake_lock(i32::MAX);
-
-    record::pause().unwrap();
-    assert!(pause_sentinel_path().exists());
+    let status_p = status_path();
+    fs::create_dir_all(status_p.parent().unwrap()).unwrap();
+    crate::util::atomic_write_str(&status_p, "paused").unwrap();
 
     // Yank while paused should succeed.
     record::yank(&RealClock).unwrap();
 }
 
-/// The yank sentinel path lives under the overridden cache directory.
+/// The command and status file paths live under the overridden cache directory.
 #[test]
-fn yank_sentinel_under_cache_dir() {
+fn ipc_paths_under_cache_dir() {
     let g = CacheDirGuard::new();
-    let sentinel = super::yank_sentinel_path();
+    let cmd = command_path();
+    let status_p = status_path();
 
-    // Sentinel path is under the overridden cache dir.
-    assert!(sentinel.starts_with(g.cache.as_str()));
+    assert!(cmd.starts_with(g.cache.as_str()));
+    assert!(status_p.starts_with(g.cache.as_str()));
 }
 
 // -- Yank property tests --

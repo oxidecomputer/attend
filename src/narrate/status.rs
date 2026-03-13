@@ -14,10 +14,9 @@ use std::fs;
 use camino::{Utf8Path, Utf8PathBuf};
 use native_messaging::install::{manifest, paths::Scope};
 
+use super::record::DaemonStatus;
 use super::transcribe::Engine;
-use super::{
-    lock_owner_alive, pause_sentinel_path, pending_dir, receive_lock_path, record_lock_path,
-};
+use super::{lock_owner_alive, pending_dir, receive_lock_path, record_lock_path, status_path};
 use crate::config::Config;
 
 /// Column width for label alignment (accommodates "Accessibility:").
@@ -33,10 +32,12 @@ const PATH_COL: usize = 12;
 pub(crate) enum RecordingState {
     /// Lock file absent: daemon is not running.
     Stopped,
-    /// Lock file present and owner alive, but pause sentinel exists.
+    /// Daemon alive, status file says "idle".
     Idle,
-    /// Lock file present and owner alive, no pause sentinel.
+    /// Daemon alive, status file says "recording" (or status file missing).
     Recording,
+    /// Daemon alive, status file says "paused".
+    Paused,
     /// Lock file present, parseable, but owner process is dead.
     StaleLock,
     /// Lock file present but content is unparseable or unreadable.
@@ -286,7 +287,7 @@ pub(crate) fn query_status() -> anyhow::Result<StatusInfo> {
     })
 }
 
-/// Determine recording state from the lock file.
+/// Determine recording state from the lock file and daemon status file.
 fn query_recording_state(lock_path: &Utf8Path) -> RecordingState {
     if !lock_path.exists() {
         return RecordingState::Stopped;
@@ -294,10 +295,15 @@ fn query_recording_state(lock_path: &Utf8Path) -> RecordingState {
     match fs::read_to_string(lock_path) {
         Ok(content) => {
             if lock_owner_alive(&content) {
-                if pause_sentinel_path().exists() {
-                    RecordingState::Idle
-                } else {
-                    RecordingState::Recording
+                // Read the daemon's status file for current state.
+                match fs::read_to_string(status_path())
+                    .ok()
+                    .and_then(|s| s.trim().parse::<DaemonStatus>().ok())
+                {
+                    Some(DaemonStatus::Recording) => RecordingState::Recording,
+                    Some(DaemonStatus::Paused) => RecordingState::Paused,
+                    Some(DaemonStatus::Idle) => RecordingState::Idle,
+                    None => RecordingState::Recording, // no status file: assume recording
                 }
             } else if super::parse_lock_content(content.trim()).is_some() {
                 RecordingState::StaleLock
@@ -337,6 +343,7 @@ impl fmt::Display for StatusInfo {
             RecordingState::Stopped => "stopped",
             RecordingState::Idle => "idle (daemon resident)",
             RecordingState::Recording => "recording",
+            RecordingState::Paused => "paused",
             RecordingState::StaleLock => {
                 "stale lock (daemon not running): run `attend narrate toggle` to clean up"
             }

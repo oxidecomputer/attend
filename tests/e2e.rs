@@ -282,12 +282,13 @@ fn pause_retains_audio_but_stops_capture() {
     );
 }
 
-/// Pausing when already paused toggles back to recording (the pause
-/// sentinel is removed). Resuming when already recording is a no-op.
+/// Pausing when already paused toggles back to recording (the CLI reads
+/// the status file and sends "resume"). Resuming when already recording
+/// is a no-op.
 ///
-/// Invariant: `narrate pause` is a toggle: it creates the pause sentinel
-/// if absent, removes it if present. Double-pause creates then removes
-/// the sentinel, returning the daemon to recording state.
+/// Invariant: `narrate pause` is a toggle: it reads the daemon status
+/// and sends "pause" if recording, "resume" if paused. Double-pause
+/// sends pause then resume, returning the daemon to recording state.
 #[test]
 fn double_pause_toggles_back_to_recording() {
     let mut h = TestHarness::new(binary());
@@ -300,7 +301,7 @@ fn double_pause_toggles_back_to_recording() {
     h.inject_speech("before double pause", 1000);
     h.advance_time(500);
 
-    // Pause twice (second removes the sentinel, resuming recording).
+    // Pause twice (second sends "resume" command, resuming recording).
     let p1 = h.spawn(&["narrate", "pause"]);
     h.tick_until_exit(p1);
     h.advance_time(200);
@@ -354,7 +355,7 @@ fn flush_delivers_mid_recording() {
     // Flush: `narrate start` while already recording triggers flush.
     let flush = h.spawn(&["narrate", "start"]);
     h.tick_until_exit(flush);
-    // Let daemon process the flush sentinel.
+    // Let daemon process the flush command.
     h.advance_time(200);
 
     // Collect: should have the first segment.
@@ -837,7 +838,7 @@ fn resume_from_idle_starts_fresh_period() {
 /// Stopping when not recording is a no-op that does not error.
 ///
 /// Invariant: `narrate stop` with no lock file exits cleanly without
-/// creating any sentinel files.
+/// creating any command files.
 #[test]
 fn stop_when_not_recording_is_noop() {
     let mut h = TestHarness::new(binary());
@@ -901,7 +902,7 @@ fn external_selection_appears_in_narration() {
 /// `narrate yank` when not recording exits cleanly (no-op).
 ///
 /// Invariant: yank without an active daemon returns immediately with
-/// exit code 0 and does not create any sentinel files.
+/// exit code 0 and does not create any command files.
 #[test]
 fn yank_when_not_recording_is_noop() {
     let mut h = TestHarness::new(binary());
@@ -920,7 +921,7 @@ fn yank_when_not_recording_is_noop() {
 /// `narrate yank` while recording writes narration files to the yanked
 /// directory and causes the daemon to exit.
 ///
-/// Invariant: the yank sentinel triggers the daemon to finalize all
+/// Invariant: the yank command triggers the daemon to finalize all
 /// capture streams, transcribe, and write output to `narration/yanked/`
 /// (not `narration/pending/`). The daemon removes the lock file and
 /// exits. The yanked files contain the injected speech.
@@ -940,7 +941,7 @@ fn yank_writes_to_yanked_dir() {
     h.inject_speech("yanked content here", 2000);
     h.advance_time(500);
 
-    // Yank via CLI. The CLI writes the sentinel, polls for daemon exit
+    // Yank via CLI. The CLI writes the command, polls for daemon exit
     // (using clock.sleep), then tries copy_yanked_to_clipboard (may fail
     // without a display server, but that's after the daemon has exited
     // and written files).
@@ -990,7 +991,7 @@ fn yank_writes_to_yanked_dir() {
 /// a new daemon.
 ///
 /// Invariant: when the daemon is idle (after stop), `narrate start`
-/// removes the pause sentinel, causing the daemon to resume. The resumed
+/// sends a "resume" command, causing the daemon to resume. The resumed
 /// session captures new speech independently. This is distinct from
 /// toggle-on (which also resumes) in that `start` on a recording daemon
 /// triggers flush rather than stop.
@@ -1087,11 +1088,11 @@ fn clipboard_text_appears_in_narration() {
 // Toggle while paused resumes
 // =========================================================================
 
-/// Toggle while paused resumes recording (daemon sees lock + pause sentinel).
+/// Toggle while paused resumes recording (daemon sees lock + status "paused").
 ///
 /// Invariant: when the daemon is paused (user-initiated), toggle
-/// sees `lock + pause sentinel` and removes the sentinel, causing
-/// the daemon to resume recording. Speech injected after the resume
+/// reads status "paused" and sends a "resume" command, causing the
+/// daemon to resume recording. Speech injected after the resume
 /// appears in the output.
 #[test]
 fn toggle_while_paused_resumes() {
@@ -1110,7 +1111,7 @@ fn toggle_while_paused_resumes() {
     h.tick_until_exit(pause);
     h.advance_time(200);
 
-    // Toggle while paused: resumes (sees lock + pause sentinel).
+    // Toggle while paused: resumes (reads status "paused", sends resume).
     let toggle = h.spawn(&["narrate", "toggle"]);
     h.tick_until_exit(toggle);
     h.advance_time(200);
@@ -1135,18 +1136,16 @@ fn toggle_while_paused_resumes() {
 }
 
 // =========================================================================
-// Stop while paused is no-op
+// Stop while paused delivers content
 // =========================================================================
 
-/// `narrate stop` when the daemon is paused (pause sentinel exists)
-/// is a no-op.
+/// `narrate stop` when the daemon is paused delivers buffered content.
 ///
-/// Invariant: the `stop()` function checks `pause_sentinel_path().exists()`
-/// and returns early if true (the daemon is already idle or paused).
-/// This prevents races between the CLI stop and the daemon's internal
-/// state. To stop a paused daemon, resume first then stop.
+/// Invariant: "paused" means "not capturing new events," not "protect the
+/// buffer from delivery." Stop while paused flushes whatever was buffered
+/// before the pause and delivers it normally.
 #[test]
-fn stop_while_paused_is_noop() {
+fn stop_while_paused_delivers_content() {
     let mut h = TestHarness::new(binary());
 
     activate(&mut h, "stop-pause-1");
@@ -1162,30 +1161,16 @@ fn stop_while_paused_is_noop() {
     h.tick_until_exit(pause);
     h.advance_time(200);
 
-    // `narrate stop` while paused: returns immediately (no-op).
+    // `narrate stop` while paused: delivers content.
     let stop = h.spawn(&["narrate", "stop"]);
     let event = h.tick_until_exit(stop);
     assert_eq!(event.exit_code, 0, "stop while paused should exit cleanly");
 
-    // Content is NOT delivered yet (daemon still alive, content buffered).
+    // Content IS delivered (stop flushes the buffer regardless of pause state).
     let narration = collect(&mut h, "stop-pause-1");
     assert!(
-        !narration.contains("<narration>"),
-        "stop while paused should not deliver content:\n{narration}"
-    );
-
-    // Resume and then stop properly to get the content.
-    let resume = h.spawn(&["narrate", "pause"]);
-    h.tick_until_exit(resume);
-    h.advance_time(200);
-
-    let toggle_off = h.spawn(&["narrate", "toggle"]);
-    h.tick_until_exit(toggle_off);
-
-    let narration_after = collect(&mut h, "stop-pause-1");
-    assert!(
-        narration_after.contains("buffered before pause"),
-        "content should be delivered after resume+stop:\n{narration_after}"
+        narration.contains("buffered before pause"),
+        "stop while paused should deliver buffered content:\n{narration}"
     );
 }
 
@@ -1271,7 +1256,7 @@ fn idle_resume_re_resolves_session() {
     // Session B activates while daemon is idle.
     activate(&mut h, "resolve-b");
 
-    // Resume from idle (toggle sees lock + pause sentinel).
+    // Resume from idle (toggle reads status "idle", sends resume command).
     let toggle_on2 = h.spawn(&["narrate", "toggle"]);
     h.tick_until_exit(toggle_on2);
 
@@ -1294,10 +1279,10 @@ fn idle_resume_re_resolves_session() {
 // =========================================================================
 
 /// `narrate stop` when the daemon is already idle (after a previous stop)
-/// is a no-op: it does not create a stop sentinel or produce content.
+/// is a no-op: it does not send a stop command or produce content.
 ///
 /// Invariant: calling stop on an idle daemon exits cleanly without
-/// creating duplicate sentinels or producing empty narration files.
+/// sending duplicate commands or producing empty narration files.
 #[test]
 fn stop_when_already_idle_is_noop() {
     let mut h = TestHarness::new(binary());

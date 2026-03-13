@@ -15,10 +15,8 @@
 //! cache_dir/
 //! ├── daemon/                  Recording daemon IPC
 //! │   ├── lock                 PID lock file (daemon is running)
-//! │   ├── stop                 Sentinel: request graceful stop
-//! │   ├── flush                Sentinel: request mid-session flush
-//! │   ├── pause                Sentinel: toggle pause/resume
-//! │   └── yank                 Sentinel: stop + copy to clipboard
+//! │   ├── command              CLI→daemon: atomic command file
+//! │   └── status               Daemon→CLI: current daemon state
 //! ├── narration/               Narration file lifecycle
 //! │   ├── pending/<key>/       Awaiting delivery to an agent session
 //! │   ├── yanked/<key>/        Written by yank (isolated from hook delivery)
@@ -168,7 +166,7 @@ pub(crate) fn cache_dir() -> Utf8PathBuf {
     crate::state::cache_dir().expect("cannot determine cache directory")
 }
 
-/// Root directory for recording daemon IPC (lock, sentinels).
+/// Root directory for recording daemon IPC (lock, command, status).
 pub(crate) fn daemon_dir() -> Utf8PathBuf {
     cache_dir().join("daemon")
 }
@@ -188,22 +186,21 @@ pub(crate) fn record_lock_path() -> Utf8PathBuf {
     daemon_dir().join("lock")
 }
 
-/// Path to the stop sentinel file.
-pub(crate) fn stop_sentinel_path() -> Utf8PathBuf {
-    daemon_dir().join("stop")
-}
-
-/// Path to the flush sentinel file.
-pub(crate) fn flush_sentinel_path() -> Utf8PathBuf {
-    daemon_dir().join("flush")
-}
-
-/// Path to the pause sentinel file.
+/// Path to the command file (CLI -> daemon).
 ///
-/// Exists = paused, absent = not paused. The CLI toggles this file;
-/// the daemon checks each loop iteration.
-pub(crate) fn pause_sentinel_path() -> Utf8PathBuf {
-    daemon_dir().join("pause")
+/// The CLI writes a command string ("stop", "flush", "pause", "resume",
+/// "yank") atomically. The daemon reads, acts, and removes the file.
+pub(crate) fn command_path() -> Utf8PathBuf {
+    daemon_dir().join("command")
+}
+
+/// Path to the status file (daemon -> CLI).
+///
+/// The daemon writes its current state ("recording", "paused", "idle")
+/// atomically after each state transition. The CLI reads this to decide
+/// what command to send.
+pub(crate) fn status_path() -> Utf8PathBuf {
+    daemon_dir().join("status")
 }
 
 /// Path to the receive lock file.
@@ -275,15 +272,6 @@ pub(crate) fn clipboard_staging_dir(session_id: Option<&SessionId>) -> Utf8PathB
 /// never sees the content (no race between yank CLI and hook delivery).
 pub(crate) fn yanked_dir(session_id: Option<&SessionId>) -> Utf8PathBuf {
     narration_root().join("yanked").join(dir_key(session_id))
-}
-
-/// Path to the yank sentinel file.
-///
-/// Signals the daemon to stop recording and write output to `yanked/`
-/// instead of `pending/`. The CLI writes this sentinel; the daemon
-/// checks it each loop iteration.
-pub(crate) fn yank_sentinel_path() -> Utf8PathBuf {
-    daemon_dir().join("yank")
 }
 
 // ── Generalized staging infrastructure ──────────────────────────────────────

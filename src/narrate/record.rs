@@ -2,10 +2,25 @@
 //!
 //! The recorder spawns as a detached child process via `_record-daemon`.
 //! The parent (toggle/start) exits immediately so the hotkey returns fast.
-//! The daemon records until a stop sentinel file appears, then transcribes,
+//! The daemon records until a stop command appears, then transcribes,
 //! merges all streams, and writes the result as a pending narration file.
+//!
+//! ## Command/status protocol
+//!
+//! The CLI and daemon communicate through two files in `daemon/`:
+//!
+//! - **`command`** (CLI -> daemon): the CLI atomically writes a command
+//!   string ("stop", "flush", "pause", "resume", "yank"). The daemon
+//!   reads, acts, and removes the file each loop iteration.
+//!
+//! - **`status`** (daemon -> CLI): the daemon atomically writes its
+//!   current state ("recording", "paused", "idle") after each state
+//!   transition. The CLI reads this to decide what command to send
+//!   (e.g., `pause` reads status to decide between "pause" and "resume").
 
+use std::fmt;
 use std::fs;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -22,8 +37,7 @@ use super::merge::{self, Event};
 use super::silence::SilenceDetector;
 use super::transcribe::{Engine, Word};
 use super::{
-    flush_sentinel_path, pause_sentinel_path, pending_dir, record_lock_path, resolve_session,
-    stop_sentinel_path, yank_sentinel_path, yanked_dir,
+    command_path, pending_dir, record_lock_path, resolve_session, status_path, yanked_dir,
 };
 use crate::clock::{Clock, SyncClock};
 use crate::config::Config;
@@ -33,17 +47,137 @@ use crate::util::format_utc_nanos;
 /// Target sample rate for transcription engines (Whisper, Parakeet).
 const TRANSCRIPTION_SAMPLE_RATE: u32 = 16_000;
 
-/// Number of poll iterations to wait for sentinel acknowledgement.
-const SENTINEL_WAIT_ITERATIONS: usize = 100;
+/// Number of poll iterations to wait for command acknowledgement.
+const COMMAND_WAIT_ITERATIONS: usize = 100;
 
-/// Interval between sentinel poll checks (ms).
-const SENTINEL_POLL_MS: u64 = 50;
+/// Interval between command poll checks (ms).
+const COMMAND_POLL_MS: u64 = 50;
 
 /// Main daemon loop poll interval (ms).
 const DAEMON_LOOP_POLL_MS: u64 = 100;
 
 /// Number of recent words to feed as transcription context.
 const TRANSCRIPTION_CONTEXT_WORDS: usize = 50;
+
+// ---------------------------------------------------------------------------
+// Command/status protocol types
+// ---------------------------------------------------------------------------
+
+/// Commands sent from the CLI to the daemon via the `command` file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DaemonCommand {
+    Stop,
+    Flush,
+    Pause,
+    Resume,
+    Yank,
+}
+
+impl fmt::Display for DaemonCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DaemonCommand::Stop => write!(f, "stop"),
+            DaemonCommand::Flush => write!(f, "flush"),
+            DaemonCommand::Pause => write!(f, "pause"),
+            DaemonCommand::Resume => write!(f, "resume"),
+            DaemonCommand::Yank => write!(f, "yank"),
+        }
+    }
+}
+
+impl FromStr for DaemonCommand {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim() {
+            "stop" => Ok(DaemonCommand::Stop),
+            "flush" => Ok(DaemonCommand::Flush),
+            "pause" => Ok(DaemonCommand::Pause),
+            "resume" => Ok(DaemonCommand::Resume),
+            "yank" => Ok(DaemonCommand::Yank),
+            other => Err(format!("unknown daemon command: {other:?}")),
+        }
+    }
+}
+
+/// Status reported by the daemon to the CLI via the `status` file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DaemonStatus {
+    Recording,
+    Idle,
+    Paused,
+}
+
+impl fmt::Display for DaemonStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DaemonStatus::Recording => write!(f, "recording"),
+            DaemonStatus::Idle => write!(f, "idle"),
+            DaemonStatus::Paused => write!(f, "paused"),
+        }
+    }
+}
+
+impl FromStr for DaemonStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim() {
+            "recording" => Ok(DaemonStatus::Recording),
+            "idle" => Ok(DaemonStatus::Idle),
+            "paused" => Ok(DaemonStatus::Paused),
+            other => Err(format!("unknown daemon status: {other:?}")),
+        }
+    }
+}
+
+/// Result of reading and processing a command file.
+#[derive(Debug)]
+pub(crate) enum CommandResult {
+    /// No command file present.
+    None,
+    /// Daemon should exit (stop or yank).
+    Exit(DaemonCommand),
+    /// Daemon should continue running (flush, pause, resume).
+    Continue(DaemonCommand),
+}
+
+/// Read and remove the command file, returning what the daemon should do.
+///
+/// If no file exists, returns [`CommandResult::None`]. If the file contains
+/// an unrecognized command, logs a warning, removes the file, and returns
+/// [`CommandResult::None`].
+pub(crate) fn check_command(cmd_path: &Utf8Path) -> CommandResult {
+    let content = match fs::read_to_string(cmd_path) {
+        Ok(c) => c,
+        Err(_) => return CommandResult::None,
+    };
+
+    // Remove the file unconditionally (even on parse failure).
+    let _ = fs::remove_file(cmd_path);
+
+    match content.parse::<DaemonCommand>() {
+        Ok(cmd @ (DaemonCommand::Stop | DaemonCommand::Yank)) => CommandResult::Exit(cmd),
+        Ok(cmd) => CommandResult::Continue(cmd),
+        Err(e) => {
+            tracing::warn!("Ignoring unrecognized command: {e}");
+            CommandResult::None
+        }
+    }
+}
+
+/// Write the daemon's current status to the status file.
+///
+/// Uses atomic write to avoid torn reads by the CLI.
+pub(crate) fn write_status(status: DaemonStatus) {
+    let path = status_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Err(e) = crate::util::atomic_write_str(&path, &status.to_string()) {
+        tracing::warn!("Failed to write status file: {e}");
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Deferred transcriber (background model loading)
@@ -134,10 +268,8 @@ struct DaemonState {
     last_drain: DateTime<Utc>,
     sample_rate: u32,
     session_id: Option<SessionId>,
-    stop_sentinel: camino::Utf8PathBuf,
-    flush_sentinel: camino::Utf8PathBuf,
-    pause_sentinel: camino::Utf8PathBuf,
-    yank_sentinel: camino::Utf8PathBuf,
+    /// Path to the command file (CLI -> daemon).
+    command_file: camino::Utf8PathBuf,
     /// Whether the daemon is currently paused (user-initiated or idle).
     paused: bool,
     /// When the current pause started (for time_base_secs adjustment on resume).
@@ -217,20 +349,15 @@ impl DaemonState {
             } else {
                 Chime::Stop
             },
-            &self.stop_sentinel.clone(),
         )
     }
 
-    /// Check for stop sentinel. Flush content and enter idle state.
+    /// Handle a stop command. Flush content and enter idle state.
     ///
     /// Unlike SIGTERM/yank, stop keeps the daemon alive with the model
     /// loaded. The daemon enters idle (paused) state and waits for a
     /// resume signal or idle timeout.
-    fn check_stop(&mut self) -> anyhow::Result<()> {
-        if !self.stop_sentinel.exists() {
-            return Ok(());
-        }
-
+    fn handle_stop(&mut self) -> anyhow::Result<()> {
         let to_clipboard = self.session_id.is_none();
         let chime = if to_clipboard {
             Chime::Yank
@@ -268,9 +395,6 @@ impl DaemonState {
             let _ = Chime::Empty.play();
         }
 
-        // Acknowledge stop by deleting sentinel.
-        let _ = fs::remove_file(&self.stop_sentinel);
-
         // Reset timing and context for next recording period.
         let now = self.clock.now();
         self.time_base_secs = 0.0;
@@ -292,37 +416,26 @@ impl DaemonState {
             editor.pause();
         }
 
-        // Write pause sentinel so CLI knows we're idle.
-        if let Some(parent) = self.pause_sentinel.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let _ = fs::write(&self.pause_sentinel, "");
-
         self.paused = true;
         self.idle = true;
         self.idle_since = Some(self.clock.now());
         self.pause_started_at = Some(self.clock.now());
+
+        // Write status AFTER state update so CLI sees the new state.
+        write_status(DaemonStatus::Idle);
 
         tracing::info!("Stop handled: flushed content, entering idle state.");
 
         Ok(())
     }
 
-    /// Check for yank sentinel. If found, finalize and write narration to
-    /// the `yanked/` directory (instead of `pending/`) so the yank CLI can
-    /// read it without racing with hook delivery.
+    /// Handle a yank command. Finalize and write narration to the `yanked/`
+    /// directory (instead of `pending/`) so the yank CLI can read it without
+    /// racing with hook delivery.
     ///
     /// Returns `true` if the daemon should exit (yank was handled).
-    fn check_yank(&mut self) -> anyhow::Result<bool> {
-        if !self.yank_sentinel.exists() {
-            return Ok(false);
-        }
-
-        self.finalize_and_write(
-            yanked_dir(self.session_id.as_ref()),
-            Chime::Yank,
-            &self.yank_sentinel.clone(),
-        )
+    fn handle_yank(&mut self) -> anyhow::Result<bool> {
+        self.finalize_and_write(yanked_dir(self.session_id.as_ref()), Chime::Yank)
     }
 
     /// Shared finalization: play chime, collect all streams, transcribe,
@@ -331,7 +444,6 @@ impl DaemonState {
         &mut self,
         dest_dir: camino::Utf8PathBuf,
         chime: Chime,
-        sentinel: &camino::Utf8Path,
     ) -> anyhow::Result<bool> {
         // Intentionally ignored: chime failure non-fatal.
         let _ = chime.play();
@@ -344,8 +456,6 @@ impl DaemonState {
             .stop();
         self.audio_capture = None;
         self.buffered_chunks.extend(recording.chunks);
-        // Best-effort cleanup.
-        let _ = fs::remove_file(sentinel);
 
         let editor = self
             .editor_capture
@@ -363,17 +473,11 @@ impl DaemonState {
         Ok(true)
     }
 
-    /// Check for flush sentinel. If found, write current narration and reset.
+    /// Handle a flush command. Write current narration and reset.
     ///
     /// When no agent session is active, writes to `yanked/` instead of
     /// `pending/` (same as stop without a session).
-    ///
-    /// Returns `true` if a flush was handled (caller should `continue`).
-    fn check_flush(&mut self) -> anyhow::Result<bool> {
-        if !self.flush_sentinel.exists() {
-            return Ok(false);
-        }
-
+    fn handle_flush(&mut self) -> anyhow::Result<()> {
         let to_clipboard = self.session_id.is_none();
 
         // Yank chime when going to clipboard, flush chime when going to agent.
@@ -423,122 +527,132 @@ impl DaemonState {
             detector.reset();
         }
 
-        // Acknowledge flush by deleting sentinel (best-effort).
-        let _ = fs::remove_file(&self.flush_sentinel);
-        Ok(true)
+        Ok(())
     }
 
-    /// Check for pause/resume transitions.
+    /// Handle a pause command. Suspend capture without flushing.
     ///
-    /// On pause (sentinel appears): suspend capture without flushing.
-    /// Content stays buffered — audio in `buffered_chunks`, editor events
+    /// Content stays buffered: audio in `buffered_chunks`, editor events
     /// in capture thread buffers, staging files on disk. Everything is
     /// written together at the next stop or flush.
-    ///
-    /// On resume from user-pause (sentinel disappears while paused, not idle):
-    /// resume capture. Timing is not reset — wall-clock timestamps span the gap.
-    ///
-    /// On resume from idle (sentinel disappears while idle): start a fresh
-    /// recording session. Re-resolves the session ID (may have changed while
-    /// idle), resets timing, and plays the start chime.
-    fn check_pause(&mut self) -> anyhow::Result<()> {
-        let sentinel_exists = self.pause_sentinel.exists();
+    fn handle_pause(&mut self) -> anyhow::Result<()> {
+        if self.paused {
+            return Ok(());
+        }
 
-        if sentinel_exists && !self.paused {
-            // Transition: recording -> paused.
-            tracing::info!("Pause detected, suspending capture.");
+        tracing::info!("Pause command received, suspending capture.");
+
+        // Intentionally ignored: chime failure non-fatal.
+        let _ = Chime::Pause.play();
+
+        // Drain remaining audio from the device buffer so it isn't lost
+        // during the pause. Chunks stay in self.buffered_chunks — they
+        // are NOT transcribed or written to pending.
+        let capture = self
+            .audio_capture
+            .as_ref()
+            .expect("audio capture already stopped");
+        let recording = capture.drain();
+        self.buffered_chunks.extend(recording.chunks);
+
+        // Suspend all capture.
+        if let Some(ref audio) = self.audio_capture {
+            // Intentionally ignored: pause failure non-fatal.
+            let _ = audio.pause();
+        }
+        if let Some(ref mut editor) = self.editor_capture {
+            editor.pause();
+        }
+
+        if let Some(ref mut detector) = self.silence_detector {
+            detector.reset();
+        }
+
+        self.paused = true;
+        self.pause_started_at = Some(self.clock.now());
+
+        // Write status AFTER state update.
+        write_status(DaemonStatus::Paused);
+
+        Ok(())
+    }
+
+    /// Handle a resume command.
+    ///
+    /// From idle: start a fresh recording session (re-resolve session,
+    /// reset timing, play start chime).
+    ///
+    /// From user-pause: resume capture. Timing is not reset: wall-clock
+    /// timestamps span the gap.
+    fn handle_resume(&mut self) -> anyhow::Result<()> {
+        if !self.paused {
+            return Ok(());
+        }
+
+        if self.idle {
+            // Transition: idle -> recording (new session).
+            tracing::info!("Resume from idle, starting new recording session.");
 
             // Intentionally ignored: chime failure non-fatal.
-            let _ = Chime::Pause.play();
+            let _ = Chime::Start.play();
 
-            // Drain remaining audio from the device buffer so it isn't lost
-            // during the pause. Chunks stay in self.buffered_chunks — they
-            // are NOT transcribed or written to pending.
-            let capture = self
-                .audio_capture
-                .as_ref()
-                .expect("audio capture already stopped");
-            let recording = capture.drain();
-            self.buffered_chunks.extend(recording.chunks);
+            // Re-resolve session: it may have changed while idle.
+            self.session_id = resolve_session(None);
 
-            // Suspend all capture.
+            // Resume all capture.
             if let Some(ref audio) = self.audio_capture {
-                // Intentionally ignored: pause failure non-fatal.
-                let _ = audio.pause();
+                // Intentionally ignored: resume failure non-fatal.
+                let _ = audio.resume();
             }
             if let Some(ref mut editor) = self.editor_capture {
-                editor.pause();
+                editor.resume();
             }
+
+            // Fresh timing for the new recording period.
+            let now = self.clock.now();
+            self.period_start = now;
+            self.time_base_secs = 0.0;
+            self.last_drain = now;
+
+            self.pre_transcribed.clear();
 
             if let Some(ref mut detector) = self.silence_detector {
                 detector.reset();
             }
 
-            self.paused = true;
-            self.pause_started_at = Some(self.clock.now());
-        } else if !sentinel_exists && self.paused {
-            if self.idle {
-                // Transition: idle -> recording (new session).
-                tracing::info!("Resume from idle, starting new recording session.");
+            self.paused = false;
+            self.idle = false;
+            self.idle_since = None;
+            self.pause_started_at = None;
+        } else {
+            // Transition: paused -> recording (resume existing session).
+            tracing::info!("Resume command received, resuming capture.");
 
-                // Intentionally ignored: chime failure non-fatal.
-                let _ = Chime::Start.play();
+            // Intentionally ignored: chime failure non-fatal.
+            let _ = Chime::Resume.play();
 
-                // Re-resolve session: it may have changed while idle.
-                self.session_id = resolve_session(None);
-
-                // Resume all capture.
-                if let Some(ref audio) = self.audio_capture {
-                    // Intentionally ignored: resume failure non-fatal.
-                    let _ = audio.resume();
-                }
-                if let Some(ref mut editor) = self.editor_capture {
-                    editor.resume();
-                }
-
-                // Fresh timing for the new recording period.
-                let now = self.clock.now();
-                self.period_start = now;
-                self.time_base_secs = 0.0;
-                self.last_drain = now;
-
-                self.pre_transcribed.clear();
-
-                if let Some(ref mut detector) = self.silence_detector {
-                    detector.reset();
-                }
-
-                self.paused = false;
-                self.idle = false;
-                self.idle_since = None;
-                self.pause_started_at = None;
-            } else {
-                // Transition: paused -> recording (resume existing session).
-                tracing::info!("Resume detected, resuming capture.");
-
-                // Intentionally ignored: chime failure non-fatal.
-                let _ = Chime::Resume.play();
-
-                // Resume all capture.
-                if let Some(ref audio) = self.audio_capture {
-                    // Intentionally ignored: resume failure non-fatal.
-                    let _ = audio.resume();
-                }
-                if let Some(ref mut editor) = self.editor_capture {
-                    editor.resume();
-                }
-
-                self.pause_started_at = None;
-
-                // Reset the silence detector: there is an audio discontinuity
-                // at the pause/resume boundary, so prior detector state is stale.
-                if let Some(ref mut detector) = self.silence_detector {
-                    detector.reset();
-                }
-
-                self.paused = false;
+            // Resume all capture.
+            if let Some(ref audio) = self.audio_capture {
+                // Intentionally ignored: resume failure non-fatal.
+                let _ = audio.resume();
             }
+            if let Some(ref mut editor) = self.editor_capture {
+                editor.resume();
+            }
+
+            self.pause_started_at = None;
+
+            // Reset the silence detector: there is an audio discontinuity
+            // at the pause/resume boundary, so prior detector state is stale.
+            if let Some(ref mut detector) = self.silence_detector {
+                detector.reset();
+            }
+
+            self.paused = false;
         }
+
+        // Write status AFTER state update.
+        write_status(DaemonStatus::Recording);
 
         Ok(())
     }
@@ -732,8 +846,8 @@ impl DaemonState {
 /// Toggle recording: start if idle/stopped, stop if recording.
 ///
 /// With persistent daemon:
-/// - **Lock + no pause sentinel** → recording → send stop (daemon enters idle).
-/// - **Lock + pause sentinel** → idle → delete pause sentinel (daemon resumes).
+/// - **Lock + status "idle"/"paused"** → send resume command.
+/// - **Lock + status "recording"** → send stop command (daemon enters idle).
 /// - **No lock** → spawn new daemon.
 pub fn toggle(clock: &dyn SyncClock) -> anyhow::Result<()> {
     let lock = record_lock_path();
@@ -741,29 +855,58 @@ pub fn toggle(clock: &dyn SyncClock) -> anyhow::Result<()> {
         if is_lock_stale(&lock) {
             tracing::warn!("Stale record lock detected, cleaning up.");
             let _ = fs::remove_file(&lock);
-            let _ = fs::remove_file(stop_sentinel_path());
-            let _ = fs::remove_file(pause_sentinel_path());
+            let _ = fs::remove_file(command_path());
+            let _ = fs::remove_file(status_path());
             spawn_daemon()
-        } else if pause_sentinel_path().exists() {
-            // Daemon is idle (or user-paused). Resume by removing sentinel.
-            resume()
         } else {
-            // Daemon is recording. Stop it (enters idle).
-            stop(clock)
+            match read_daemon_status() {
+                Some(DaemonStatus::Idle) | Some(DaemonStatus::Paused) => {
+                    // Daemon is idle or user-paused. Resume.
+                    send_resume(clock)
+                }
+                _ => {
+                    // Daemon is recording (or status unknown). Stop it.
+                    stop(clock)
+                }
+            }
         }
     } else {
         spawn_daemon()
     }
 }
 
-/// Resume an idle or paused daemon by removing the pause sentinel.
+/// Read the daemon's current status from the status file.
 ///
-/// The daemon detects the sentinel removal and resumes capture.
-fn resume() -> anyhow::Result<()> {
-    let sentinel = pause_sentinel_path();
-    if sentinel.exists() {
-        fs::remove_file(&sentinel)?;
+/// Returns `None` if the file doesn't exist or can't be parsed.
+fn read_daemon_status() -> Option<DaemonStatus> {
+    fs::read_to_string(status_path()).ok()?.parse().ok()
+}
+
+/// Send a command to the daemon via atomic write to the command file.
+fn send_command(cmd: DaemonCommand) -> anyhow::Result<()> {
+    let path = command_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
     }
+    crate::util::atomic_write_str(&path, &cmd.to_string())?;
+    Ok(())
+}
+
+/// Send a resume command and wait for the daemon to acknowledge.
+///
+/// Polls the status file until it changes to "recording" (or times out).
+fn send_resume(clock: &dyn SyncClock) -> anyhow::Result<()> {
+    send_command(DaemonCommand::Resume)?;
+
+    // Wait for daemon to transition to recording.
+    for _ in 0..COMMAND_WAIT_ITERATIONS {
+        if let Some(DaemonStatus::Recording) = read_daemon_status() {
+            return Ok(());
+        }
+        clock.sleep(Duration::from_millis(COMMAND_POLL_MS));
+    }
+
+    eprintln!("Resume signal sent; daemon may still be starting up.");
     Ok(())
 }
 
@@ -787,7 +930,7 @@ pub(crate) fn is_lock_stale(lock_path: &Utf8Path) -> bool {
 ///
 /// With persistent daemon:
 /// - **No lock** → spawn new daemon.
-/// - **Lock + pause sentinel (idle)** → resume by deleting pause sentinel.
+/// - **Lock + status idle/paused** → send resume command.
 /// - **Lock + recording** → flush (submit current narration, keep recording).
 pub fn start(clock: &dyn SyncClock) -> anyhow::Result<()> {
     let lock = record_lock_path();
@@ -796,15 +939,20 @@ pub fn start(clock: &dyn SyncClock) -> anyhow::Result<()> {
         if is_lock_stale(&lock) {
             tracing::warn!("Stale record lock detected, cleaning up.");
             let _ = fs::remove_file(&lock);
-            let _ = fs::remove_file(stop_sentinel_path());
-            let _ = fs::remove_file(flush_sentinel_path());
-            let _ = fs::remove_file(pause_sentinel_path());
+            let _ = fs::remove_file(command_path());
+            let _ = fs::remove_file(status_path());
             // Fall through to spawn below.
-        } else if pause_sentinel_path().exists() {
-            // Daemon is idle. Resume it.
-            return resume();
         } else {
-            return flush(clock);
+            return match read_daemon_status() {
+                Some(DaemonStatus::Idle) | Some(DaemonStatus::Paused) => {
+                    // Daemon is idle/paused. Resume it.
+                    send_resume(clock)
+                }
+                _ => {
+                    // Daemon is recording. Flush.
+                    flush(clock)
+                }
+            };
         }
     }
 
@@ -819,21 +967,18 @@ fn flush(clock: &dyn SyncClock) -> anyhow::Result<()> {
     let session_id = resolve_session(None);
     let to_clipboard = session_id.is_none();
 
-    let sentinel = flush_sentinel_path();
-    if let Some(parent) = sentinel.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&sentinel, "")?;
+    send_command(DaemonCommand::Flush)?;
 
-    // Wait for the daemon to delete the sentinel (acknowledging the flush).
-    for _ in 0..SENTINEL_WAIT_ITERATIONS {
-        if !sentinel.exists() {
+    // Wait for the daemon to consume the command file.
+    let cmd = command_path();
+    for _ in 0..COMMAND_WAIT_ITERATIONS {
+        if !cmd.exists() {
             break;
         }
-        clock.sleep(Duration::from_millis(SENTINEL_POLL_MS));
+        clock.sleep(Duration::from_millis(COMMAND_POLL_MS));
     }
 
-    if sentinel.exists() {
+    if cmd.exists() {
         eprintln!("Flush signal sent; daemon may still be transcribing.");
     }
 
@@ -906,11 +1051,11 @@ fn spawn_daemon() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Signal the recorder to stop by creating the stop sentinel.
+/// Signal the recorder to stop by writing the "stop" command.
 ///
 /// The daemon flushes content and enters idle state (persistent daemon).
-/// This function waits for the daemon to acknowledge by deleting the
-/// stop sentinel.
+/// This function waits for the daemon to acknowledge by updating the
+/// status file to "idle".
 ///
 /// When no agent session is active, the daemon writes to `yanked/` and
 /// this function copies the content to the clipboard.
@@ -922,34 +1067,31 @@ pub fn stop(clock: &dyn SyncClock) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Already idle — nothing to stop.
-    if pause_sentinel_path().exists() {
+    // Already idle: no content to deliver.
+    if matches!(read_daemon_status(), Some(DaemonStatus::Idle)) {
         return Ok(());
     }
 
     let session_id = resolve_session(None);
     let to_clipboard = session_id.is_none();
 
-    let sentinel = stop_sentinel_path();
-    if let Some(parent) = sentinel.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&sentinel, "")?;
+    send_command(DaemonCommand::Stop)?;
 
-    // Wait for the daemon to complete the stop: the stop sentinel is
-    // removed AND the pause sentinel appears (daemon has entered idle).
-    // Waiting for both conditions eliminates the TOCTOU race where the
-    // daemon has deleted the stop sentinel but hasn't finished its state
-    // transition yet.
-    let pause = pause_sentinel_path();
-    for _ in 0..SENTINEL_WAIT_ITERATIONS {
-        if !sentinel.exists() && pause.exists() {
+    // Wait for the daemon to complete the stop: the command file is
+    // consumed AND the status file shows "idle". Waiting for both
+    // conditions eliminates the TOCTOU race where the daemon has read
+    // the command but hasn't finished its state transition yet.
+    let cmd = command_path();
+    for _ in 0..COMMAND_WAIT_ITERATIONS {
+        if !cmd.exists()
+            && let Some(DaemonStatus::Idle) = read_daemon_status()
+        {
             break;
         }
-        clock.sleep(Duration::from_millis(SENTINEL_POLL_MS));
+        clock.sleep(Duration::from_millis(COMMAND_POLL_MS));
     }
 
-    if sentinel.exists() {
+    if cmd.exists() {
         eprintln!("Stop signal sent; daemon may still be transcribing.");
     }
 
@@ -960,34 +1102,32 @@ pub fn stop(clock: &dyn SyncClock) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Toggle pause state by writing or removing the pause sentinel.
+/// Toggle pause state by reading daemon status and sending the
+/// appropriate command ("pause" or "resume").
 ///
-/// If the daemon is recording, writes the sentinel to pause or removes it
-/// to resume. If not recording, prints a message and exits.
+/// If the daemon is recording, sends "pause". If paused, sends "resume".
+/// If not recording, prints a message and exits.
 pub fn pause() -> anyhow::Result<()> {
     if !record_lock_path().exists() {
         eprintln!("Not recording. Run `attend narrate toggle` or `attend narrate start` to begin.");
         return Ok(());
     }
 
-    let sentinel = pause_sentinel_path();
-    if sentinel.exists() {
-        // Resume: remove the sentinel.
-        fs::remove_file(&sentinel)?;
-    } else {
-        // Pause: create the sentinel.
-        if let Some(parent) = sentinel.parent() {
-            fs::create_dir_all(parent)?;
+    match read_daemon_status() {
+        Some(DaemonStatus::Recording) => send_command(DaemonCommand::Pause),
+        Some(DaemonStatus::Paused) | Some(DaemonStatus::Idle) => {
+            send_command(DaemonCommand::Resume)
         }
-        fs::write(&sentinel, "")?;
+        None => {
+            // Status file missing or unreadable. Best effort: send pause.
+            send_command(DaemonCommand::Pause)
+        }
     }
-
-    Ok(())
 }
 
 /// Yank: stop recording and copy rendered narration to the system clipboard.
 ///
-/// Writes the yank sentinel (not stop), waits for the daemon to exit, reads
+/// Writes the "yank" command, waits for the daemon to exit, reads
 /// the yanked output, renders to markdown, and copies to clipboard. If no
 /// content was captured, prints a message and leaves the clipboard unchanged.
 pub fn yank(clock: &dyn SyncClock) -> anyhow::Result<()> {
@@ -996,18 +1136,14 @@ pub fn yank(clock: &dyn SyncClock) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let sentinel = yank_sentinel_path();
-    if let Some(parent) = sentinel.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&sentinel, "")?;
+    send_command(DaemonCommand::Yank)?;
 
-    // Wait for daemon to exit (same pattern as stop).
-    for _ in 0..SENTINEL_WAIT_ITERATIONS {
+    // Wait for daemon to exit (yank causes the daemon to finalize and exit).
+    for _ in 0..COMMAND_WAIT_ITERATIONS {
         if !record_lock_path().exists() {
             break;
         }
-        clock.sleep(Duration::from_millis(SENTINEL_POLL_MS));
+        clock.sleep(Duration::from_millis(COMMAND_POLL_MS));
     }
 
     if record_lock_path().exists() {
@@ -1091,7 +1227,8 @@ fn collect_json_files(dir: &camino::Utf8Path) -> Vec<std::path::PathBuf> {
 /// The actual recording daemon entry point.
 ///
 /// Acquires the record lock, captures audio + editor state + file diffs,
-/// waits for stop/flush sentinels, transcribes, merges, and writes output.
+/// polls the command file for stop/flush/pause/resume/yank, transcribes,
+/// merges, and writes output.
 ///
 /// When silence-based segmentation is enabled (the default), completed speech
 /// segments are transcribed on the fly and their audio is freed. At stop/flush,
@@ -1130,14 +1267,10 @@ pub fn daemon(clock: Arc<dyn Clock>) -> anyhow::Result<()> {
     //   by design.
     let _ = fs::write(record_lock_path(), super::lock_file_content());
 
-    // Best-effort cleanup: sentinels may not exist.
-    let _ = fs::remove_file(stop_sentinel_path());
-    let _ = fs::remove_file(flush_sentinel_path());
-    let _ = fs::remove_file(pause_sentinel_path());
-    let _ = fs::remove_file(yank_sentinel_path());
+    // Best-effort cleanup: stale command/status files from a previous run.
+    let _ = fs::remove_file(command_path());
+    let _ = fs::remove_file(status_path());
 
-    // Set up audio capture, capture threads, and transcriber.
-    // In test mode: stub sources, no cpal, no model loading.
     // Set up audio capture, capture threads, and transcriber.
     // In test mode: stub sources, no cpal, no model loading.
     let (capture, capture_config, transcriber): (
@@ -1181,6 +1314,7 @@ pub fn daemon(clock: Arc<dyn Clock>) -> anyhow::Result<()> {
         silence_dur.map(|silence_dur| SilenceDetector::new(sample_rate, silence_dur));
 
     let now = clock.now();
+    let cmd_file = command_path();
     let mut state = DaemonState {
         clock: clock.for_thread(),
         transcriber,
@@ -1195,16 +1329,16 @@ pub fn daemon(clock: Arc<dyn Clock>) -> anyhow::Result<()> {
         last_drain: now,
         sample_rate,
         session_id,
-        stop_sentinel: stop_sentinel_path(),
-        flush_sentinel: flush_sentinel_path(),
-        pause_sentinel: pause_sentinel_path(),
-        yank_sentinel: yank_sentinel_path(),
+        command_file: cmd_file,
         paused: false,
         pause_started_at: None,
         idle: false,
         idle_since: None,
         idle_timeout,
     };
+
+    // Write initial status so CLI knows we are recording.
+    write_status(DaemonStatus::Recording);
 
     // In test mode, connect to the inject socket NOW — after all
     // initialization is complete. The harness interprets "daemon
@@ -1220,14 +1354,31 @@ pub fn daemon(clock: Arc<dyn Clock>) -> anyhow::Result<()> {
         if state.check_terminated()? {
             break;
         }
-        if state.check_yank()? {
-            break;
+
+        // Poll the command file for CLI commands.
+        match check_command(&state.command_file) {
+            CommandResult::Exit(DaemonCommand::Yank) => {
+                state.handle_yank()?;
+                break;
+            }
+            CommandResult::Exit(DaemonCommand::Stop) => {
+                state.handle_stop()?;
+            }
+            CommandResult::Exit(_) => unreachable!("only Stop and Yank map to Exit"),
+            CommandResult::Continue(DaemonCommand::Flush) => {
+                state.handle_flush()?;
+                continue;
+            }
+            CommandResult::Continue(DaemonCommand::Pause) => {
+                state.handle_pause()?;
+            }
+            CommandResult::Continue(DaemonCommand::Resume) => {
+                state.handle_resume()?;
+            }
+            CommandResult::Continue(_) => {}
+            CommandResult::None => {}
         }
-        state.check_stop()?;
-        if state.check_flush()? {
-            continue;
-        }
-        state.check_pause()?;
+
         if state.check_idle_timeout() {
             tracing::info!("Idle timeout reached, exiting.");
             break;
@@ -1237,8 +1388,11 @@ pub fn daemon(clock: Arc<dyn Clock>) -> anyhow::Result<()> {
             .sleep(Duration::from_millis(DAEMON_LOOP_POLL_MS));
     }
 
-    // Best-effort cleanup: remove pause sentinel on any exit path.
-    let _ = fs::remove_file(pause_sentinel_path());
+    // Best-effort cleanup: remove status file on any exit path.
+    let _ = fs::remove_file(status_path());
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
