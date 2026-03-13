@@ -254,6 +254,34 @@ fn is_our_hook_marker() {
     assert!(!is_our_hook(&wrong_value));
 }
 
+/// Legacy hook entries (pre-marker) are identified by command pattern.
+#[test]
+fn is_our_hook_legacy_fallback() {
+    // Legacy entry without marker but with attend command.
+    let legacy = serde_json::json!({
+        "hooks": [{"type": "command", "command": "attend hook session-start --agent claude"}]
+    });
+    assert!(is_our_hook(&legacy));
+
+    // Bare "attend" command (edge case).
+    let bare = serde_json::json!({
+        "hooks": [{"type": "command", "command": "attend"}]
+    });
+    assert!(is_our_hook(&bare));
+
+    // Non-attend command should not match.
+    let other = serde_json::json!({
+        "hooks": [{"type": "command", "command": "some-other-tool hook"}]
+    });
+    assert!(!is_our_hook(&other));
+
+    // Command containing "attend" as substring should not match.
+    let substring = serde_json::json!({
+        "hooks": [{"type": "command", "command": "unattend something"}]
+    });
+    assert!(!is_our_hook(&substring));
+}
+
 /// settings_path uses project-local path for project installs.
 #[test]
 fn settings_path_project() {

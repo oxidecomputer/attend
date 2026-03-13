@@ -21,8 +21,28 @@ const HOOK_MARKER_KEY: &str = "_installed_by";
 const HOOK_MARKER_VALUE: &str = "attend";
 
 /// Check whether a hook entry was installed by attend.
+///
+/// Primary check: the `_installed_by` marker added by current versions.
+/// Fallback: match legacy entries (pre-marker) by command pattern to
+/// prevent unbounded accumulation on reinstall/upgrade.
 fn is_our_hook(entry: &serde_json::Value) -> bool {
-    entry.get(HOOK_MARKER_KEY).and_then(|v| v.as_str()) == Some(HOOK_MARKER_VALUE)
+    if entry.get(HOOK_MARKER_KEY).and_then(|v| v.as_str()) == Some(HOOK_MARKER_VALUE) {
+        return true;
+    }
+    // Legacy fallback: check if any hook command starts with "attend hook".
+    entry
+        .get("hooks")
+        .and_then(|h| h.as_array())
+        .is_some_and(|hooks| {
+            hooks.iter().any(|h| {
+                h.get("command")
+                    .and_then(|c| c.as_str())
+                    .is_some_and(|cmd| {
+                        let trimmed = cmd.trim();
+                        trimmed == "attend" || trimmed.starts_with("attend ")
+                    })
+            })
+        })
 }
 
 /// Resolve the Claude Code settings file path.
