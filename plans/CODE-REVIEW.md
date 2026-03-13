@@ -28,28 +28,14 @@ conflicts and can run as concurrent worktree agents. Tiers must be
 executed sequentially (each tier depends on the prior tier being merged).
 
 ```
-Tier 3 — Config & foundational fixes:
-  └── #47  Consistent duration representation  [src/config.rs]
-
-Tier 4 — Integrations & pipeline fixes (parallel, independent modules):
-  ├── #16  Fill missing model checksums         [src/narrate/transcribe/whisper.rs, parakeet.rs]
+Tier 4 — Remaining pipeline fixes:
   ├── #17  DRY transcribe constants + download  [src/narrate/transcribe.rs, whisper.rs, parakeet.rs]
-       ⚠ #16 before #17 (checksums needed before refactoring download)
-  ├── #56  Deduplicate editor snapshot construction  [src/narrate/editor_capture.rs]
-  ├── #24  blake3 for clipboard image hashing        [src/narrate/clipboard_capture.rs]
-  ├── #39  Auto-detect install mode                  [src/cli/install.rs]
-  ├── #33  listen.rs documentation                   [src/narrate/receive/listen.rs]
-  ├── #46  Event Display impl                        [src/narrate/merge.rs]
   ├── #50  O(n²) subsume string cloning              [src/narrate/merge.rs]
   ├── #52  O(n²) net_change_diffs + collapse_ext     [src/narrate/merge.rs]
-       ⚠ #46, #50, #52 all touch merge.rs — group or serialize
+       ⚠ #50, #52 touch merge.rs — serialize
   ├── #51  Stronger Event field types                [src/narrate/merge.rs + consumers]
        ⚠ after #50/#52 (avoid merge conflicts)
-  ├── #21  Separate test transcriber from CaptureConfig  [src/narrate/capture.rs]
-  ├── #22  Simplify drain/collect return                 [src/narrate/capture.rs, record.rs]
-  ├── #27  render_markdown to impl Write                 [src/narrate/render.rs]
-  ├── #30  Sentinel → command/status protocol            [src/narrate/record.rs, status.rs]
-  └── #34  Separate status query from rendering          [src/narrate/status.rs]
+  └── #30  Sentinel → command/status protocol        [src/narrate/record.rs, status.rs]
 
 Tier 5 — Module decompositions (sequential, heavy dependencies):
   #5   state.rs decomposition          → then #10 (path centralization)
@@ -64,8 +50,8 @@ Tier 6 — Architecture (sequential, depends on everything above):
 ```
 
 Conflict groups (must serialize or combine into one agent):
-- **merge.rs**: #46, #50, #51, #52
-- **transcribe**: #16, #17
+- **merge.rs**: #50, #52, #51 (serialize in this order)
+- **transcribe**: #17 (standalone now that #16 is merged)
 
 ---
 
@@ -456,7 +442,7 @@ Files: `src/narrate.rs` (process_alive), lock file write sites in
 
 ---
 
-### ⬜ 16. `src/narrate/transcribe/{whisper,parakeet}.rs` — Incomplete checksums
+### ✅ 16. `src/narrate/transcribe/{whisper,parakeet}.rs` — Incomplete checksums
 
 **Fill in missing SHA-256 checksums for all downloadable model files.**
 Whisper: only `ggml-small.en.bin` is checksummed; `ggml-base.en.bin` and
@@ -714,7 +700,7 @@ Files: `src/config.rs`.
 
 ---
 
-### ⬜ 47. `src/config.rs` — Inconsistent duration representation
+### ✅ 47. `src/config.rs` — Inconsistent duration representation
 
 **`silence_duration` is `f64` seconds while `daemon_idle_timeout` and
 `archive_retention` are humantime strings.** Use humantime for all duration
@@ -995,7 +981,7 @@ Files: `src/cli/install.rs`.
 Fixes within the narration subsystem, ordered by pipeline stage:
 capture → transcribe → merge → render → receive.
 
-### ⬜ 21. `src/narrate/capture.rs:69-93` — Separation of concerns
+### ✅ 21. `src/narrate/capture.rs:69-93` — Separation of concerns
 
 **`CaptureConfig::test_mode()` should not return a `StubTranscriber`.**
 The transcriber is unrelated to capture config — they're bundled only because
@@ -1023,7 +1009,7 @@ Files: `src/narrate/capture.rs`, `src/test_mode.rs`,
 
 ---
 
-### ⬜ 22. `src/narrate/capture.rs` + `record.rs` — Simplify drain/collect return
+### ✅ 22. `src/narrate/capture.rs` + `record.rs` — Simplify drain/collect return
 
 **`drain()` and `collect()` should return a single `Vec<Event>`.**
 The 4-tuple `(editor, diff, ext, clipboard)` is immediately concatenated into
@@ -1061,7 +1047,7 @@ Files: `src/narrate/capture.rs`, `src/narrate/record.rs`.
 
 ---
 
-### ⬜ 56. `src/narrate/editor_capture.rs:165-214` — Duplicated event construction
+### ✅ 56. `src/narrate/editor_capture.rs:165-214` — Duplicated event construction
 
 **The `EditorSnapshot` construction is duplicated between `tick()` and `Emit`
 paths (lines 177–183 vs 198–203).** Extract a helper like
@@ -1108,7 +1094,7 @@ Files: `src/narrate/editor_capture.rs`.
 
 ---
 
-### ⬜ 24. `src/narrate/clipboard_capture.rs:168-172` — Use blake3 for image hashing
+### ✅ 24. `src/narrate/clipboard_capture.rs:168-172` — Use blake3 for image hashing
 
 **Replace `DefaultHasher` (SipHash) with `blake3` for clipboard image change
 detection.** SipHash is designed for HashMap collision resistance, not content
@@ -1302,7 +1288,7 @@ Files: `Cargo.toml`, `src/narrate/merge.rs`.
 
 ---
 
-### ⬜ 46. `Event` debuggability
+### ✅ 46. `Event` debuggability
 
 **No `Display` impl for `Event`.** Debugging merged event lists requires
 `{:?}` which dumps full file contents. Add a compact `Display` impl that
@@ -1347,7 +1333,7 @@ Files: `src/narrate/merge.rs`.
 
 ---
 
-### ⬜ 27. `src/narrate/render.rs` — Write to `impl Write` instead of String
+### ✅ 27. `src/narrate/render.rs` — Write to `impl Write` instead of String
 
 **`render_markdown` should write to an `impl Write` instead of building a
 `String`.** Eliminates intermediate allocation when writing directly to a file.
@@ -1541,7 +1527,7 @@ Files: `src/narrate.rs`, `src/narrate/record.rs`,
 
 ---
 
-### ⬜ 34. `src/narrate/status.rs` — Separate query from rendering
+### ✅ 34. `src/narrate/status.rs` — Separate query from rendering
 
 **`status()` mixes state querying with output formatting.** Extract a
 `StatusInfo` struct (recording state, engine, model status, session, listener,
@@ -1588,7 +1574,7 @@ Files: `src/narrate/status.rs`.
 
 ---
 
-### ⬜ 33. `src/narrate/receive/listen.rs` — Documentation
+### ✅ 33. `src/narrate/receive/listen.rs` — Documentation
 
 **Add high-level documentation connecting listen.rs to the hook/daemon
 lifecycle.** The file handles lock acquisition, session handoff, model
