@@ -64,11 +64,7 @@ impl CaptureConfig {
 
     /// Create a config using test stubs backed by the inject router's
     /// shared state (created during `test_mode::init()`).
-    ///
-    /// Returns the config, plus a `StubTranscriber` for the daemon to use.
-    pub fn test_mode(
-        clock: Arc<dyn Clock>,
-    ) -> (Self, crate::narrate::transcribe::stub::StubTranscriber) {
+    pub fn test_mode(clock: Arc<dyn Clock>) -> Self {
         use crate::test_mode::stubs::*;
 
         // The inject router was registered during init(). Pull shared
@@ -78,17 +74,14 @@ impl CaptureConfig {
         let ext_snapshot = Arc::clone(&router.ext_snapshot);
         let clipboard_text = Arc::clone(&router.clipboard_text);
 
-        let config = Self {
+        Self {
             clock,
             editor_source: Box::new(StubEditorSource::new(editor_state)),
             ext_source: Some(Box::new(StubExternalSource::new(ext_snapshot))),
             clipboard_source: Some(
                 Box::new(StubClipboardSource::new(clipboard_text)) as Box<dyn ClipboardSource>
             ),
-        };
-
-        let stub_transcriber = crate::test_mode::take_stub_transcriber();
-        (config, stub_transcriber)
+        }
     }
 }
 

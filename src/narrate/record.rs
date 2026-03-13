@@ -1178,7 +1178,8 @@ pub fn daemon(clock: Arc<dyn Clock>) -> anyhow::Result<()> {
         use crate::test_mode::stubs::StubAudioSource;
 
         let audio = Box::new(StubAudioSource::new(16000, Arc::clone(&clock)));
-        let (cap_config, stub_transcriber) = capture::CaptureConfig::test_mode(Arc::clone(&clock));
+        let cap_config = capture::CaptureConfig::test_mode(Arc::clone(&clock));
+        let stub_transcriber = crate::test_mode::take_stub_transcriber();
         let transcriber = DeferredTranscriber::preloaded(Box::new(stub_transcriber));
         (audio, cap_config, transcriber)
     } else {
