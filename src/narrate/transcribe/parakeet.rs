@@ -13,19 +13,10 @@ use camino::Utf8Path;
 use parakeet_rs::TimestampMode;
 use parakeet_rs::Transcriber as _;
 
-use super::Word;
+use super::{MAX_CHUNK_SAMPLES, SAMPLE_RATE, Word};
 
 /// Model variant names for benchmarking.
 pub(super) const MODEL_NAMES: &[&str] = &["parakeet-tdt-0.6b-v3"];
-
-/// Target sample rate for transcription (16 kHz).
-const SAMPLE_RATE: u32 = 16_000;
-
-/// Maximum chunk duration in seconds (4 minutes).
-const MAX_CHUNK_SECS: usize = 240;
-
-/// Maximum chunk length in samples (4 minutes at 16 kHz).
-const MAX_CHUNK_SAMPLES: usize = MAX_CHUNK_SECS * SAMPLE_RATE as usize;
 
 const REPO: &str = "istupakov/parakeet-tdt-0.6b-v3-onnx";
 
@@ -134,10 +125,7 @@ pub(super) fn ensure_model(dir: &Utf8Path) -> anyhow::Result<()> {
     if is_model_cached(dir) {
         return Ok(());
     }
-    download_model(dir)
-}
 
-fn download_model(dir: &Utf8Path) -> anyhow::Result<()> {
     fs::create_dir_all(dir)?;
 
     for filename in MODEL_FILES {
@@ -148,22 +136,7 @@ fn download_model(dir: &Utf8Path) -> anyhow::Result<()> {
 
         let url = format!("https://huggingface.co/{REPO}/resolve/main/{filename}");
         tracing::info!(filename, dir = %dir, "Downloading Parakeet model file...");
-
-        let response = ureq::get(&url).call()?;
-        let mut reader = response.into_body().into_reader();
-
-        let tmp_path = dest.with_extension("tmp");
-        let mut file = fs::File::create(&tmp_path)?;
-        std::io::copy(&mut reader, &mut file)?;
-
-        if let Some(expected) = expected_checksum(filename) {
-            super::verify_sha256(tmp_path.as_std_path(), expected).inspect_err(|_| {
-                // Intentionally ignored: best-effort cleanup of corrupt download.
-                let _ = fs::remove_file(&tmp_path);
-            })?;
-        }
-
-        fs::rename(&tmp_path, &dest)?;
+        super::download_verified(&url, dest.as_std_path(), expected_checksum(filename))?;
     }
 
     tracing::info!("Parakeet TDT model downloaded successfully.");

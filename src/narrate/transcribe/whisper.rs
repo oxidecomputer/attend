@@ -1,10 +1,8 @@
 //! Whisper (GGML) speech-to-text backend.
 
-use std::fs;
-
 use camino::Utf8Path;
 
-use super::Word;
+use super::{MAX_CHUNK_SAMPLES, SAMPLE_RATE, Word};
 
 /// Model file names available for benchmarking.
 pub(super) const MODEL_NAMES: &[&str] = &[
@@ -29,15 +27,6 @@ pub(super) fn expected_checksum(filename: &str) -> Option<&'static str> {
         _ => None,
     }
 }
-
-/// Target sample rate for transcription (16 kHz).
-const SAMPLE_RATE: u32 = 16_000;
-
-/// Maximum chunk duration in seconds (4 minutes).
-const MAX_CHUNK_SECS: usize = 240;
-
-/// Maximum chunk length in samples (4 minutes at 16 kHz).
-const MAX_CHUNK_SAMPLES: usize = MAX_CHUNK_SECS * SAMPLE_RATE as usize;
 
 /// Whisper timestamps are in centiseconds (hundredths of a second).
 const WHISPER_CENTISEC_DIVISOR: f64 = 100.0;
@@ -210,36 +199,14 @@ pub(super) fn ensure_model(model_path: &Utf8Path) -> anyhow::Result<()> {
     if model_path.exists() {
         return Ok(());
     }
-    download_model(model_path)
-}
 
-fn download_model(model_path: &Utf8Path) -> anyhow::Result<()> {
     let filename = model_path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("invalid model path"))?;
     let url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}");
 
     tracing::info!(path = %model_path, "Downloading Whisper model...");
-
-    if let Some(parent) = model_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let response = ureq::get(&url).call()?;
-    let mut reader = response.into_body().into_reader();
-
-    let tmp_path = model_path.with_extension("bin.tmp");
-    let mut file = fs::File::create(&tmp_path)?;
-    std::io::copy(&mut reader, &mut file)?;
-
-    if let Some(expected) = expected_checksum(filename) {
-        super::verify_sha256(tmp_path.as_std_path(), expected).inspect_err(|_| {
-            // Intentionally ignored: best-effort cleanup of corrupt download.
-            let _ = fs::remove_file(&tmp_path);
-        })?;
-    }
-
-    fs::rename(&tmp_path, model_path)?;
+    super::download_verified(&url, model_path.as_std_path(), expected_checksum(filename))?;
     tracing::info!("Whisper model downloaded successfully.");
 
     Ok(())

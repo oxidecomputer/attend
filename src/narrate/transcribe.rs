@@ -13,6 +13,15 @@ use std::path::Path;
 
 use camino::{Utf8Path, Utf8PathBuf};
 
+/// Target sample rate for transcription (16 kHz).
+pub(crate) const SAMPLE_RATE: u32 = 16_000;
+
+/// Maximum chunk duration in seconds (4 minutes).
+pub(crate) const MAX_CHUNK_SECS: usize = 240;
+
+/// Maximum chunk length in samples (4 minutes at 16 kHz).
+pub(crate) const MAX_CHUNK_SAMPLES: usize = MAX_CHUNK_SECS * SAMPLE_RATE as usize;
+
 /// A single transcribed word with its timing.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -114,6 +123,40 @@ impl Engine {
             Engine::Parakeet => parakeet::MODEL_NAMES,
         }
     }
+}
+
+/// Download a file to `dest`, optionally verifying its SHA-256 checksum.
+///
+/// Writes to a `.tmp` sibling first, then atomically renames to `dest`.
+/// On checksum mismatch the temp file is removed and an error is returned.
+/// Parent directories of `dest` are created if they don't exist.
+pub(super) fn download_verified(
+    url: &str,
+    dest: &Path,
+    expected_checksum: Option<&str>,
+) -> anyhow::Result<()> {
+    use std::fs;
+
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let response = ureq::get(url).call()?;
+    let mut reader = response.into_body().into_reader();
+
+    let tmp_path = dest.with_extension("tmp");
+    let mut file = fs::File::create(&tmp_path)?;
+    std::io::copy(&mut reader, &mut file)?;
+
+    if let Some(expected) = expected_checksum {
+        verify_sha256(&tmp_path, expected).inspect_err(|_| {
+            // Intentionally ignored: best-effort cleanup of corrupt download.
+            let _ = fs::remove_file(&tmp_path);
+        })?;
+    }
+
+    fs::rename(&tmp_path, dest)?;
+    Ok(())
 }
 
 /// Verify a downloaded file against an expected SHA-256 hex digest.
