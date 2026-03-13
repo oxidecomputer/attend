@@ -29,13 +29,13 @@ executed sequentially (each tier depends on the prior tier being merged).
 
 ```
 Tier 4 — Remaining pipeline fixes:
-  ├── #17  DRY transcribe constants + download  [src/narrate/transcribe.rs, whisper.rs, parakeet.rs]
-  ├── #50  O(n²) subsume string cloning              [src/narrate/merge.rs]
+  ├── ✅ #50  O(n²) subsume string cloning           [src/narrate/merge.rs]
   ├── #52  O(n²) net_change_diffs + collapse_ext     [src/narrate/merge.rs]
-       ⚠ #50, #52 touch merge.rs — serialize
+       ⚠ after #50 (merged), before #51
   ├── #51  Stronger Event field types                [src/narrate/merge.rs + consumers]
-       ⚠ after #50/#52 (avoid merge conflicts)
+       ⚠ after #52 (avoid merge conflicts)
   └── #30  Sentinel → command/status protocol        [src/narrate/record.rs, status.rs]
+       🔄 in progress (worktree agent)
 
 Tier 5 — Module decompositions (sequential, heavy dependencies):
   #5   state.rs decomposition          → then #10 (path centralization)
@@ -51,7 +51,6 @@ Tier 6 — Architecture (sequential, depends on everything above):
 
 Conflict groups (must serialize or combine into one agent):
 - **merge.rs**: #50, #52, #51 (serialize in this order)
-- **transcribe**: #17 (standalone now that #16 is merged)
 
 ---
 
@@ -1127,7 +1126,7 @@ Files: `Cargo.toml`, `src/narrate/clipboard_capture.rs`,
 
 ---
 
-### ⬜ 17. `src/narrate/transcribe/{whisper,parakeet}.rs` — DRY
+### ✅ 17. `src/narrate/transcribe/{whisper,parakeet}.rs` — DRY
 
 **Shared constants and download logic are duplicated.**
 `SAMPLE_RATE`, `MAX_CHUNK_SECS`, `MAX_CHUNK_SAMPLES` are identical in both
@@ -1208,7 +1207,7 @@ Files: `src/narrate/merge.rs`, `src/narrate/render.rs`,
 
 ---
 
-### ⬜ 50. `src/narrate/merge.rs:363-365` — O(n²) string cloning in subsume
+### ✅ 50. `src/narrate/merge.rs:363-365` — O(n²) string cloning in subsume
 
 **`subsume_progressive_selections` clones `app`, `window_title`, `text`
 strings inside the outer loop** because the inner loop borrows `events`
