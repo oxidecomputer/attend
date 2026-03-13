@@ -4,6 +4,8 @@
 //! interleaving prose (from speech) with fenced code blocks (from editor
 //! navigation) and fenced diff blocks (from file changes).
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 use super::merge::{self, Event, RedactedKind};
@@ -147,7 +149,18 @@ fn redacted_label(kind: &RedactedKind, keys: &[String]) -> String {
     }
 }
 
-/// Render a sorted/compressed event list as markdown.
+/// Emit the blank-line separator that precedes every non-prose block.
+///
+/// Unconditionally writes a newline (the blank line before a fenced block
+/// or blockquote), then sets `has_content = true`.
+fn start_block(out: &mut dyn fmt::Write, has_content: &mut bool) -> fmt::Result {
+    writeln!(out)?;
+    *has_content = true;
+    Ok(())
+}
+
+/// Render a sorted/compressed event list as markdown into a [`fmt::Write`]
+/// sink.
 ///
 /// The output interleaves prose text with fenced code/diff blocks:
 /// - Words become flowing prose text
@@ -157,9 +170,16 @@ fn redacted_label(kind: &RedactedKind, keys: &[String]) -> String {
 /// - External selections become attributed blockquotes
 /// - Browser selections become link-attributed blockquotes
 /// - Redacted events become `✂` markers, comma-separated when adjacent
-pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig, mode: RenderMode) -> String {
-    let mut out = String::new();
+fn render_markdown_to(
+    out: &mut dyn fmt::Write,
+    events: &[Event],
+    snip_cfg: SnipConfig,
+    mode: RenderMode,
+) -> fmt::Result {
     let mut in_prose = false;
+    // Tracks whether any content has been written, so the first block
+    // does not emit a leading blank line.
+    let mut has_content = false;
     let mut i = 0;
 
     while i < events.len() {
@@ -171,42 +191,44 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig, mode: RenderMode)
                     i += 1;
                     continue;
                 }
-                if !in_prose && !out.is_empty() {
-                    out.push('\n');
+                if !in_prose && has_content {
+                    writeln!(out)?;
                 }
                 // Skip the space before punctuation that attaches to previous word
                 if in_prose && !starts_with_punctuation(&cleaned) {
-                    out.push(' ');
+                    write!(out, " ")?;
                 }
-                out.push_str(&cleaned);
+                write!(out, "{cleaned}")?;
                 in_prose = true;
+                has_content = true;
             }
             Event::EditorSnapshot { regions, .. } => {
                 if in_prose {
-                    out.push('\n');
+                    writeln!(out)?;
                     in_prose = false;
                 }
+                // EditorSnapshot deliberately does not use start_block():
+                // each region emits its own blank-line separator so that
+                // multi-region snapshots are visually distinct.
                 for region in regions {
-                    if !out.is_empty() && !out.ends_with('\n') {
-                        out.push('\n');
-                    }
-                    out.push('\n');
+                    writeln!(out)?;
+                    has_content = true;
                     let annotated = crate::view::apply_markers(
                         &region.content,
                         region.first_line,
                         &region.selections,
                     );
                     let snipped = snip(&annotated, snip_cfg, Some(region.first_line as usize));
-                    out.push_str(&format!("`{}:{}`:\n", region.path, region.first_line));
+                    writeln!(out, "`{}:{}`:", region.path, region.first_line)?;
                     match &region.language {
-                        Some(lang) => out.push_str(&format!("```{lang}\n")),
-                        None => out.push_str("```\n"),
+                        Some(lang) => writeln!(out, "```{lang}")?,
+                        None => writeln!(out, "```")?,
                     }
-                    out.push_str(&snipped);
+                    write!(out, "{snipped}")?;
                     if !snipped.ends_with('\n') {
-                        out.push('\n');
+                        writeln!(out)?;
                     }
-                    out.push_str("```\n");
+                    writeln!(out, "```")?;
                 }
             }
             Event::FileDiff { path, old, new, .. } => {
@@ -216,22 +238,19 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig, mode: RenderMode)
                 }
                 let diff = merge::unified_diff(old, new);
                 if in_prose {
-                    out.push('\n');
+                    writeln!(out)?;
                     in_prose = false;
                 }
-                if !out.is_empty() && !out.ends_with('\n') {
-                    out.push('\n');
-                }
-                out.push('\n');
-                out.push_str(&format!("`{path}`:\n"));
-                out.push_str("```diff\n");
+                start_block(out, &mut has_content)?;
+                writeln!(out, "`{path}`:")?;
+                writeln!(out, "```diff")?;
                 // Diffs are not snipped: they represent transient on-disk state
                 // that cannot be reconstructed after the fact.
-                out.push_str(&diff);
+                write!(out, "{diff}")?;
                 if !diff.ends_with('\n') {
-                    out.push('\n');
+                    writeln!(out)?;
                 }
-                out.push_str("```\n");
+                writeln!(out, "```")?;
             }
             Event::ExternalSelection {
                 app,
@@ -240,49 +259,43 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig, mode: RenderMode)
                 ..
             } => {
                 if in_prose {
-                    out.push('\n');
+                    writeln!(out)?;
                     in_prose = false;
                 }
-                if !out.is_empty() && !out.ends_with('\n') {
-                    out.push('\n');
-                }
-                out.push('\n');
+                start_block(out, &mut has_content)?;
                 // Render as attribution label above a blockquote.
                 // External selections are not snipped: they represent ephemeral
                 // state (accessibility API) that cannot be reconstructed.
                 if window_title.is_empty() {
-                    out.push_str(&format!("{app}:\n"));
+                    writeln!(out, "{app}:")?;
                 } else {
-                    out.push_str(&format!("{app}: {window_title}:\n"));
+                    writeln!(out, "{app}: {window_title}:")?;
                 }
                 for line in text.trim().lines() {
-                    out.push_str(&format!("> {line}\n"));
+                    writeln!(out, "> {line}")?;
                 }
             }
             Event::BrowserSelection {
                 url, title, text, ..
             } => {
                 if in_prose {
-                    out.push('\n');
+                    writeln!(out)?;
                     in_prose = false;
                 }
-                if !out.is_empty() && !out.ends_with('\n') {
-                    out.push('\n');
-                }
-                out.push('\n');
+                start_block(out, &mut has_content)?;
                 // Browser selections are not snipped: they represent ephemeral
                 // page content that cannot be reconstructed after navigation.
                 // The text field contains markdown converted from HTML by the
                 // browser bridge (via htmd).
                 if title.is_empty() {
-                    out.push_str(&format!("<{url}>:\n"));
+                    writeln!(out, "<{url}>:")?;
                 } else {
-                    out.push_str(&format!("[{title}]({url}):\n"));
+                    writeln!(out, "[{title}]({url}):")?;
                 }
                 let trimmed = text.trim();
                 if !trimmed.is_empty() {
                     for line in trimmed.lines() {
-                        out.push_str(&format!("> {line}\n"));
+                        writeln!(out, "> {line}")?;
                     }
                 }
             }
@@ -295,67 +308,59 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig, mode: RenderMode)
                 ..
             } => {
                 if in_prose {
-                    out.push('\n');
+                    writeln!(out)?;
                     in_prose = false;
                 }
-                if !out.is_empty() && !out.ends_with('\n') {
-                    out.push('\n');
-                }
-                out.push('\n');
+                start_block(out, &mut has_content)?;
                 // Show the working directory when it's not the project root.
                 if !cwd.is_empty() && cwd != "." {
-                    out.push_str(&format!("In `{cwd}/`:\n"));
+                    writeln!(out, "In `{cwd}/`:")?;
                 }
-                out.push_str(&format!("```{shell}\n"));
-                out.push_str(&format!("$ {command}"));
+                writeln!(out, "```{shell}")?;
+                write!(out, "$ {command}")?;
                 // Append exit status and duration as a trailing shell comment
                 // for token efficiency. Omit when exit 0 and < 1s (trivial).
                 match (exit_status, duration_secs) {
                     (Some(code), Some(dur)) if *code != 0 || *dur >= 1.0 => {
-                        out.push_str(&format!("  # exit {code}, {dur:.1}s"));
+                        write!(out, "  # exit {code}, {dur:.1}s")?;
                     }
                     (Some(code), None) if *code != 0 => {
-                        out.push_str(&format!("  # exit {code}"));
+                        write!(out, "  # exit {code}")?;
                     }
                     (None, _) => {
                         // Preexec (command still running): no comment.
                     }
                     _ => {}
                 }
-                out.push('\n');
-                out.push_str("```\n");
+                writeln!(out)?;
+                writeln!(out, "```")?;
             }
             Event::ClipboardSelection { content, .. } => {
                 if in_prose {
-                    out.push('\n');
+                    writeln!(out)?;
                     in_prose = false;
                 }
-                if !out.is_empty() && !out.ends_with('\n') {
-                    out.push('\n');
-                }
-                out.push('\n');
+                start_block(out, &mut has_content)?;
                 match content {
                     merge::ClipboardContent::Text { text } => {
                         // Plain blockquote with no attribution.
                         // Clipboard selections are not snipped (ephemeral state).
                         for line in text.trim().lines() {
-                            out.push_str(&format!("> {line}\n"));
+                            writeln!(out, "> {line}")?;
                         }
                     }
                     merge::ClipboardContent::Image { path } => match mode {
                         RenderMode::Agent => {
-                            out.push_str(&format!("![clipboard]({path})\n"));
+                            writeln!(out, "![clipboard]({path})")?;
                         }
                         RenderMode::Yank => {
                             if let Ok(bytes) = std::fs::read(path) {
                                 use base64::Engine as _;
                                 let encoded =
                                     base64::engine::general_purpose::STANDARD.encode(&bytes);
-                                out.push_str(&format!(
-                                    "![clipboard](data:image/png;base64,{encoded})\n"
-                                ));
+                                writeln!(out, "![clipboard](data:image/png;base64,{encoded})")?;
                             } else {
-                                out.push_str("[clipboard image unavailable]\n");
+                                writeln!(out, "[clipboard image unavailable]")?;
                             }
                         }
                     },
@@ -363,13 +368,10 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig, mode: RenderMode)
             }
             Event::Redacted { kind, keys, .. } => {
                 if in_prose {
-                    out.push('\n');
+                    writeln!(out)?;
                     in_prose = false;
                 }
-                if !out.is_empty() && !out.ends_with('\n') {
-                    out.push('\n');
-                }
-                out.push('\n');
+                start_block(out, &mut has_content)?;
                 // Collect consecutive Redacted events onto one comma-separated line.
                 let mut labels = vec![redacted_label(kind, keys)];
                 while i + 1 < events.len() {
@@ -383,16 +385,27 @@ pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig, mode: RenderMode)
                         break;
                     }
                 }
-                out.push_str(&format!("\u{2702} {}\n", labels.join(", ")));
+                writeln!(out, "\u{2702} {}", labels.join(", "))?;
             }
         }
         i += 1;
     }
 
     if in_prose {
-        out.push('\n');
+        writeln!(out)?;
     }
 
+    Ok(())
+}
+
+/// Render a sorted/compressed event list as markdown.
+///
+/// Convenience wrapper around [`render_markdown_to`] that writes into a
+/// `String` (which implements [`fmt::Write`]).
+pub fn render_markdown(events: &[Event], snip_cfg: SnipConfig, mode: RenderMode) -> String {
+    let mut out = String::new();
+    // Writing to a String is infallible, so unwrap is safe.
+    render_markdown_to(&mut out, events, snip_cfg, mode).unwrap();
     out
 }
 
