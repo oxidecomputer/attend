@@ -27,9 +27,6 @@ Parallelism tiers for remaining work. Items within a tier have no file
 conflicts and can run as concurrent worktree agents. Tiers must be
 executed sequentially (each tier depends on the prior tier being merged).
 
-Tier 4 — Remaining pipeline fixes:
-  #51  Stronger Event field types                [src/narrate/merge.rs + consumers]
-
 Tier 5 — Module decompositions (sequential, heavy dependencies):
   #26  merge.rs decomposition          (independent of #5)
   #31  record.rs decomposition         → requires #30 first
@@ -1159,7 +1156,7 @@ Files: `src/narrate/transcribe.rs`, `src/narrate/transcribe/whisper.rs`,
 
 ---
 
-### ⬜ 51. `src/narrate/merge.rs` — Stronger typing for Event fields
+### ✅ 51. `src/narrate/merge.rs` — Stronger typing for Event fields
 
 **`Event::FileDiff` uses `String` for `path`** — should be `Utf8PathBuf`
 for consistency. **`Event::ShellCommand` uses `String` for `cwd`** — same.
