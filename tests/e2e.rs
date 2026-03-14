@@ -948,8 +948,9 @@ fn yank_writes_to_yanked_dir() {
     let yank = h.spawn(&["narrate", "yank"]);
     h.tick_until_exit(yank);
 
-    // Daemon should have exited (yank causes finalize + exit).
-    assert!(!h.has_daemon(), "daemon should have exited after yank");
+    // The yank CLI exits after sending the shutdown command; the daemon
+    // needs additional clock ticks to finalize and exit.
+    h.tick_until_daemon_exits();
 
     // The yank CLI archives yanked files after clipboard copy, so check
     // the archive directory (not yanked/) for the narration files.
@@ -1382,8 +1383,9 @@ fn yank_while_paused_delivers_content() {
     let yank = h.spawn(&["narrate", "yank"]);
     h.tick_until_exit(yank);
 
-    // Daemon should have exited (yank causes finalize + exit).
-    assert!(!h.has_daemon(), "daemon should have exited after yank");
+    // The yank CLI exits after sending the shutdown command; the daemon
+    // needs additional clock ticks to finalize and exit.
+    h.tick_until_daemon_exits();
 
     // Check the archive directory for yanked content (yank archives after
     // clipboard copy).

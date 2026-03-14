@@ -97,15 +97,14 @@ pub(super) fn spawn(
                     && *old_content != new_content
                 {
                     let timestamp = clock.now();
-                    // Keep absolute path — filtering deferred to receive.
-                    let display_path = path.as_str().to_string();
                     let Ok(mut guard) = events.lock() else {
                         tracing::error!("event mutex poisoned: diff capture thread exiting");
                         break 'outer;
                     };
+                    // Keep absolute path — filtering deferred to receive.
                     guard.push(Event::FileDiff {
                         timestamp,
-                        path: display_path,
+                        path: path.clone(),
                         old: old_content.clone(),
                         new: new_content.clone(),
                     });

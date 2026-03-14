@@ -95,7 +95,7 @@ fn arb_diff() -> impl Strategy<Value = Event> {
     )
         .prop_map(|(t, path, old, new)| Event::FileDiff {
             timestamp: ts(t),
-            path,
+            path: path.into(),
             old: format!("{old}\n"),
             new: format!("{new}\n"),
         })
@@ -141,7 +141,7 @@ fn arb_browser_selection() -> impl Strategy<Value = Event> {
 fn arb_shell_command() -> impl Strategy<Value = Event> {
     (
         0.0..100.0f64,
-        prop_oneof!["fish", "zsh"],
+        prop_oneof![Just(ShellKind::Fish), Just(ShellKind::Zsh)],
         prop_oneof!["cargo test", "cargo fmt", "make build", "git status"],
         prop_oneof!["/home/user/project", "/tmp/test", "."],
         prop_oneof![
@@ -154,7 +154,7 @@ fn arb_shell_command() -> impl Strategy<Value = Event> {
                 timestamp: ts(t),
                 shell,
                 command,
-                cwd,
+                cwd: cwd.into(),
                 exit_status,
                 duration_secs,
             }
@@ -580,7 +580,7 @@ proptest! {
                 }
                 Event::FileDiff { path, .. } => {
                     prop_assert!(
-                        !path.is_empty(),
+                        !path.as_str().is_empty(),
                         "empty diff path at index {i}"
                     );
                 }
@@ -714,11 +714,11 @@ proptest! {
         sorted.sort_by_key(|a| a.timestamp());
 
         // For each wordless run, compute expected surviving diff paths.
-        let mut expected_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut run_diffs: std::collections::HashMap<String, (String, String)> = std::collections::HashMap::new();
+        let mut expected_paths: std::collections::HashSet<camino::Utf8PathBuf> = std::collections::HashSet::new();
+        let mut run_diffs: std::collections::HashMap<camino::Utf8PathBuf, (String, String)> = std::collections::HashMap::new();
 
-        let flush_run = |run_diffs: &mut std::collections::HashMap<String, (String, String)>,
-                         expected: &mut std::collections::HashSet<String>| {
+        let flush_run = |run_diffs: &mut std::collections::HashMap<camino::Utf8PathBuf, (String, String)>,
+                         expected: &mut std::collections::HashSet<camino::Utf8PathBuf>| {
             for (path, (old, new)) in run_diffs.drain() {
                 if old != new {
                     expected.insert(path);
@@ -743,7 +743,7 @@ proptest! {
 
         let mut merged = events;
         compress_and_merge(&mut merged);
-        let output_paths: std::collections::HashSet<String> = merged
+        let output_paths: std::collections::HashSet<camino::Utf8PathBuf> = merged
             .iter()
             .filter_map(|e| match e {
                 Event::FileDiff { path, .. } => Some(path.clone()),

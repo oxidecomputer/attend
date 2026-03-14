@@ -7,7 +7,7 @@ use super::filter::{filter_events, relativize_events};
 use super::listen::try_lock;
 use super::pending::{collect_pending, collect_pending_dir};
 use super::read_pending;
-use crate::narrate::merge::{CapturedRegion, Event};
+use crate::narrate::merge::{CapturedRegion, Event, ShellKind};
 use crate::narrate::render::RenderMode;
 use crate::state::SessionId;
 
@@ -160,7 +160,7 @@ fn filter_events_redacts_outside_diff() {
     let cwd = Utf8Path::new("/project");
     let mut events = vec![Event::FileDiff {
         timestamp: ts(0.0),
-        path: "/other/file.rs".to_string(),
+        path: "/other/file.rs".into(),
         old: "a\n".to_string(),
         new: "b\n".to_string(),
     }];
@@ -229,7 +229,7 @@ fn relativize_events_strips_prefix() {
         },
         Event::FileDiff {
             timestamp: ts(1.0),
-            path: "/project/src/main.rs".to_string(),
+            path: "/project/src/main.rs".into(),
             old: "a\n".to_string(),
             new: "b\n".to_string(),
         },
@@ -387,9 +387,9 @@ fn filter_events_keeps_shell_command_inside_cwd() {
     let cwd = Utf8Path::new("/project");
     let mut events = vec![Event::ShellCommand {
         timestamp: ts(0.0),
-        shell: "fish".to_string(),
+        shell: ShellKind::Fish,
         command: "cargo test".to_string(),
-        cwd: "/project/src".to_string(),
+        cwd: "/project/src".into(),
         exit_status: Some(0),
         duration_secs: Some(2.5),
     }];
@@ -403,9 +403,9 @@ fn filter_events_redacts_shell_command_outside_cwd() {
     let cwd = Utf8Path::new("/project");
     let mut events = vec![Event::ShellCommand {
         timestamp: ts(0.0),
-        shell: "zsh".to_string(),
+        shell: ShellKind::Zsh,
         command: "ls".to_string(),
-        cwd: "/other-project".to_string(),
+        cwd: "/other-project".into(),
         exit_status: Some(0),
         duration_secs: Some(0.1),
     }];
@@ -430,9 +430,9 @@ fn relativize_events_strips_shell_command_cwd() {
     let cwd = Utf8Path::new("/project");
     let mut events = vec![Event::ShellCommand {
         timestamp: ts(0.0),
-        shell: "fish".to_string(),
+        shell: ShellKind::Fish,
         command: "cargo build".to_string(),
-        cwd: "/project/src/lib".to_string(),
+        cwd: "/project/src/lib".into(),
         exit_status: Some(0),
         duration_secs: Some(5.0),
     }];
@@ -451,9 +451,9 @@ fn relativize_events_shell_command_at_root() {
     let cwd = Utf8Path::new("/project");
     let mut events = vec![Event::ShellCommand {
         timestamp: ts(0.0),
-        shell: "fish".to_string(),
+        shell: ShellKind::Fish,
         command: "cargo fmt".to_string(),
-        cwd: "/project".to_string(),
+        cwd: "/project".into(),
         exit_status: Some(0),
         duration_secs: Some(0.3),
     }];
@@ -461,7 +461,7 @@ fn relativize_events_shell_command_at_root() {
 
     if let Event::ShellCommand { cwd: cmd_cwd, .. } = &events[0] {
         assert!(
-            cmd_cwd.is_empty(),
+            cmd_cwd.as_str().is_empty(),
             "project root should relativize to empty string"
         );
     } else {
@@ -476,9 +476,9 @@ fn filter_events_keeps_shell_command_in_include_dirs() {
     let include = vec![Utf8PathBuf::from("/shared")];
     let mut events = vec![Event::ShellCommand {
         timestamp: ts(0.0),
-        shell: "zsh".to_string(),
+        shell: ShellKind::Zsh,
         command: "make".to_string(),
-        cwd: "/shared/build".to_string(),
+        cwd: "/shared/build".into(),
         exit_status: Some(0),
         duration_secs: Some(1.0),
     }];
@@ -497,9 +497,9 @@ fn read_pending_renders_shell_command() {
         },
         Event::ShellCommand {
             timestamp: ts(1.0),
-            shell: "fish".to_string(),
+            shell: ShellKind::Fish,
             command: "cargo test --lib".to_string(),
-            cwd: "/project".to_string(),
+            cwd: "/project".into(),
             exit_status: Some(1),
             duration_secs: Some(3.2),
         },
@@ -710,19 +710,19 @@ fn collapse_redacted_merges_adjacent_same_kind() {
     let mut events = vec![
         Event::FileDiff {
             timestamp: ts(0.0),
-            path: "/other/a.rs".to_string(),
+            path: "/other/a.rs".into(),
             old: "a".to_string(),
             new: "b".to_string(),
         },
         Event::FileDiff {
             timestamp: ts(1.0),
-            path: "/other/a.rs".to_string(),
+            path: "/other/a.rs".into(),
             old: "b".to_string(),
             new: "c".to_string(),
         },
         Event::FileDiff {
             timestamp: ts(2.0),
-            path: "/other/b.rs".to_string(),
+            path: "/other/b.rs".into(),
             old: "x".to_string(),
             new: "y".to_string(),
         },
@@ -764,9 +764,9 @@ fn collapse_redacted_reorders_interleaved_kinds() {
         },
         Event::ShellCommand {
             timestamp: ts(1.0),
-            shell: "fish".to_string(),
+            shell: ShellKind::Fish,
             command: "ls".to_string(),
-            cwd: "/other".to_string(),
+            cwd: "/other".into(),
             exit_status: Some(0),
             duration_secs: Some(0.1),
         },
@@ -813,7 +813,7 @@ fn read_pending_redaction_only_returns_none() {
     let dir = tempfile::tempdir().unwrap();
     let events = vec![Event::FileDiff {
         timestamp: ts(0.0),
-        path: "/other/file.rs".to_string(),
+        path: "/other/file.rs".into(),
         old: "a\n".to_string(),
         new: "b\n".to_string(),
     }];
@@ -838,7 +838,7 @@ fn read_pending_renders_redaction_marker() {
         },
         Event::FileDiff {
             timestamp: ts(1.0),
-            path: "/other/file.rs".to_string(),
+            path: "/other/file.rs".into(),
             old: "a\n".to_string(),
             new: "b\n".to_string(),
         },

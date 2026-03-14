@@ -83,6 +83,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -126,6 +127,40 @@ pub enum RedactedKind {
     ShellCommand,
 }
 
+/// The shell that executed a command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShellKind {
+    #[serde(rename = "fish")]
+    Fish,
+    #[serde(rename = "zsh")]
+    Zsh,
+}
+
+impl ShellKind {
+    /// Parse a shell name string into a `ShellKind`.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "fish" => Some(Self::Fish),
+            "zsh" => Some(Self::Zsh),
+            _ => None,
+        }
+    }
+
+    /// The lowercase name used in code fences and display.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Fish => "fish",
+            Self::Zsh => "zsh",
+        }
+    }
+}
+
+impl fmt::Display for ShellKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// A timestamped event from one of the capture streams.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
@@ -155,8 +190,8 @@ pub enum Event {
     FileDiff {
         /// UTC wall-clock time of capture.
         timestamp: DateTime<Utc>,
-        /// Absolute path of the changed file.
-        path: String,
+        /// Path of the changed file (absolute at capture, relativized during receive).
+        path: Utf8PathBuf,
         /// File content before the change.
         old: String,
         /// File content after the change.
@@ -201,12 +236,12 @@ pub enum Event {
     ShellCommand {
         /// UTC wall-clock time when the command started.
         timestamp: DateTime<Utc>,
-        /// The shell (e.g. "fish", "zsh").
-        shell: String,
+        /// The shell that ran the command.
+        shell: ShellKind,
         /// The command as typed by the user.
         command: String,
         /// Working directory when the command was executed.
-        cwd: String,
+        cwd: Utf8PathBuf,
         /// Exit status (None for preexec-only, before the command completes).
         exit_status: Option<i32>,
         /// Wall-clock duration in seconds (None for preexec-only).
@@ -674,9 +709,9 @@ fn union_snapshots(snapshots: Vec<SnapshotTuple>) -> Option<SnapshotTuple> {
 /// **Invariant**: for each path, `old` is from the earliest diff and `new`
 /// is from the latest diff in the input.
 fn net_change_diffs(
-    diffs: Vec<(DateTime<Utc>, String, String, String)>,
-) -> Vec<(DateTime<Utc>, String, String, String)> {
-    let mut by_path: IndexMap<String, (DateTime<Utc>, String, String)> = IndexMap::new();
+    diffs: Vec<(DateTime<Utc>, Utf8PathBuf, String, String)>,
+) -> Vec<(DateTime<Utc>, Utf8PathBuf, String, String)> {
+    let mut by_path: IndexMap<Utf8PathBuf, (DateTime<Utc>, String, String)> = IndexMap::new();
 
     for (ts, path, old, new) in diffs {
         by_path

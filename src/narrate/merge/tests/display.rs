@@ -132,7 +132,7 @@ fn browser_selection_shows_title_and_url() {
 fn shell_command_with_exit_status() {
     let event = Event::ShellCommand {
         timestamp: ts(0.0),
-        shell: "fish".into(),
+        shell: ShellKind::Fish,
         command: "cargo test".into(),
         cwd: "/home/user".into(),
         exit_status: Some(0),
@@ -149,7 +149,7 @@ fn shell_command_with_exit_status() {
 fn shell_command_running() {
     let event = Event::ShellCommand {
         timestamp: ts(0.0),
-        shell: "zsh".into(),
+        shell: ShellKind::Zsh,
         command: "make".into(),
         cwd: "/tmp".into(),
         exit_status: None,
@@ -167,7 +167,7 @@ fn shell_command_truncates_long_command() {
     let long_cmd = "x".repeat(50);
     let event = Event::ShellCommand {
         timestamp: ts(0.0),
-        shell: "bash".into(),
+        shell: ShellKind::Fish,
         command: long_cmd,
         cwd: "/tmp".into(),
         exit_status: Some(1),
@@ -275,7 +275,7 @@ fn all_variants_include_timestamp() {
         },
         Event::ShellCommand {
             timestamp: t,
-            shell: "fish".into(),
+            shell: ShellKind::Fish,
             command: "ls".into(),
             cwd: "/".into(),
             exit_status: Some(0),

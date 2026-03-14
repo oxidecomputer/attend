@@ -817,7 +817,7 @@ fn yank_without_session_includes_all_content() {
         },
         super::merge::Event::FileDiff {
             timestamp: chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(200),
-            path: "/project-c/test.rs".to_string(),
+            path: "/project-c/test.rs".into(),
             old: "old\n".to_string(),
             new: "new\n".to_string(),
         },
@@ -918,17 +918,17 @@ fn collect_staging_uuid_suffix_prevents_collision() {
 
     let preexec = vec![merge::Event::ShellCommand {
         timestamp: chrono::DateTime::UNIX_EPOCH,
-        shell: "fish".to_string(),
+        shell: merge::ShellKind::Fish,
         command: "cd ..".to_string(),
-        cwd: "/project".to_string(),
+        cwd: "/project".into(),
         exit_status: None,
         duration_secs: None,
     }];
     let postexec = vec![merge::Event::ShellCommand {
         timestamp: chrono::DateTime::UNIX_EPOCH,
-        shell: "fish".to_string(),
+        shell: merge::ShellKind::Fish,
         command: "cd ..".to_string(),
-        cwd: "/other".to_string(),
+        cwd: "/other".into(),
         exit_status: Some(0),
         duration_secs: Some(0.001),
     }];
@@ -966,9 +966,9 @@ fn collect_staging_nanos_timestamp_parsed() {
 
     let event = vec![merge::Event::ShellCommand {
         timestamp: chrono::DateTime::UNIX_EPOCH,
-        shell: "fish".to_string(),
+        shell: merge::ShellKind::Fish,
         command: "ls".to_string(),
-        cwd: "/project".to_string(),
+        cwd: "/project".into(),
         exit_status: Some(0),
         duration_secs: Some(0.1),
     }];
@@ -1004,9 +1004,9 @@ fn collect_staging_legacy_timestamp_parsed() {
 
     let event = vec![merge::Event::ShellCommand {
         timestamp: chrono::DateTime::UNIX_EPOCH,
-        shell: "fish".to_string(),
+        shell: merge::ShellKind::Fish,
         command: "ls".to_string(),
-        cwd: "/project".to_string(),
+        cwd: "/project".into(),
         exit_status: Some(0),
         duration_secs: Some(0.1),
     }];

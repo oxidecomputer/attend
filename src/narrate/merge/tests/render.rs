@@ -75,7 +75,7 @@ fn diff_event() {
         },
         Event::FileDiff {
             timestamp: ts(1.0),
-            path: "src/lib.rs".to_string(),
+            path: "src/lib.rs".into(),
             old: "    pub timeout: u64,\n".to_string(),
             new: "    pub timeout: Duration,\n".to_string(),
         },
@@ -221,7 +221,7 @@ fn full_scenario_snapshot() {
             },
             Event::FileDiff {
                 timestamp: ts(5.5),
-                path: "src/lib.rs".to_string(),
+                path: "src/lib.rs".into(),
                 old: "    pub timeout: u64,\n".to_string(),
                 new: "    pub timeout: Duration,\n".to_string(),
             },
@@ -240,7 +240,7 @@ fn prose_after_diff() {
     let mut events = vec![
         Event::FileDiff {
             timestamp: ts(0.0),
-            path: "foo.rs".to_string(),
+            path: "foo.rs".into(),
             old: "".to_string(),
             new: "new line\n".to_string(),
         },
@@ -369,7 +369,7 @@ fn diff_block_not_snipped() {
     let new_content: String = (1..=25).map(|i| format!("line {i}\n")).collect();
     let mut events = vec![Event::FileDiff {
         timestamp: ts(0.0),
-        path: "big.rs".to_string(),
+        path: "big.rs".into(),
         old: String::new(),
         new: new_content,
     }];
@@ -399,7 +399,7 @@ fn code_only_scenario_snapshot() {
         },
         Event::FileDiff {
             timestamp: ts(1.0),
-            path: "src/config.rs".to_string(),
+            path: "src/config.rs".into(),
             old: "pub struct Config {\n    pub name: String,\n}\n".to_string(),
             new: "pub struct Config {\n    pub name: String,\n    pub port: u16,\n}\n".to_string(),
         },
@@ -418,13 +418,13 @@ fn multiple_diffs_snapshot() {
         },
         Event::FileDiff {
             timestamp: ts(1.0),
-            path: "src/api.rs".to_string(),
+            path: "src/api.rs".into(),
             old: "    timeout: u64,\n".to_string(),
             new: "    timeout: Duration,\n".to_string(),
         },
         Event::FileDiff {
             timestamp: ts(1.5),
-            path: "src/client.rs".to_string(),
+            path: "src/client.rs".into(),
             old: "    connect_timeout: u64,\n".to_string(),
             new: "    connect_timeout: Duration,\n".to_string(),
         },
@@ -494,9 +494,9 @@ fn language_tag_in_fence() {
 fn shell_command_postexec_failure() {
     let mut events = vec![Event::ShellCommand {
         timestamp: ts(1.0),
-        shell: "fish".to_string(),
+        shell: ShellKind::Fish,
         command: "cargo test".to_string(),
-        cwd: ".".to_string(),
+        cwd: ".".into(),
         exit_status: Some(1),
         duration_secs: Some(3.2),
     }];
@@ -518,9 +518,9 @@ fn shell_command_postexec_failure() {
 fn shell_command_postexec_fast_success() {
     let mut events = vec![Event::ShellCommand {
         timestamp: ts(1.0),
-        shell: "fish".to_string(),
+        shell: ShellKind::Fish,
         command: "cargo fmt".to_string(),
-        cwd: ".".to_string(),
+        cwd: ".".into(),
         exit_status: Some(0),
         duration_secs: Some(0.3),
     }];
@@ -537,9 +537,9 @@ fn shell_command_postexec_fast_success() {
 fn shell_command_postexec_slow_success() {
     let mut events = vec![Event::ShellCommand {
         timestamp: ts(1.0),
-        shell: "fish".to_string(),
+        shell: ShellKind::Fish,
         command: "cargo build".to_string(),
-        cwd: ".".to_string(),
+        cwd: ".".into(),
         exit_status: Some(0),
         duration_secs: Some(45.0),
     }];
@@ -555,9 +555,9 @@ fn shell_command_postexec_slow_success() {
 fn shell_command_preexec() {
     let mut events = vec![Event::ShellCommand {
         timestamp: ts(1.0),
-        shell: "zsh".to_string(),
+        shell: ShellKind::Zsh,
         command: "cargo test".to_string(),
-        cwd: ".".to_string(),
+        cwd: ".".into(),
         exit_status: None,
         duration_secs: None,
     }];
@@ -571,9 +571,9 @@ fn shell_command_preexec() {
 fn shell_command_with_cwd() {
     let mut events = vec![Event::ShellCommand {
         timestamp: ts(1.0),
-        shell: "fish".to_string(),
+        shell: ShellKind::Fish,
         command: "ls".to_string(),
-        cwd: "subdir/nested".to_string(),
+        cwd: "subdir/nested".into(),
         exit_status: Some(0),
         duration_secs: Some(0.1),
     }];
@@ -589,9 +589,9 @@ fn shell_command_with_cwd() {
 fn shell_command_project_root_no_cwd() {
     let mut events = vec![Event::ShellCommand {
         timestamp: ts(1.0),
-        shell: "fish".to_string(),
+        shell: ShellKind::Fish,
         command: "cargo test".to_string(),
-        cwd: ".".to_string(),
+        cwd: ".".into(),
         exit_status: Some(0),
         duration_secs: Some(0.1),
     }];
@@ -609,9 +609,9 @@ fn shell_command_interleaved_with_speech() {
         },
         Event::ShellCommand {
             timestamp: ts(1.0),
-            shell: "fish".to_string(),
+            shell: ShellKind::Fish,
             command: "cargo test".to_string(),
-            cwd: ".".to_string(),
+            cwd: ".".into(),
             exit_status: Some(1),
             duration_secs: Some(3.2),
         },

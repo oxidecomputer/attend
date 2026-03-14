@@ -12,24 +12,9 @@ fn ts(secs: f64) -> chrono::DateTime<chrono::Utc> {
 #[test]
 fn net_change_diffs_collapses_same_path() {
     let diffs = vec![
-        (
-            ts(1.0),
-            "a.rs".to_string(),
-            "v0".to_string(),
-            "v1".to_string(),
-        ),
-        (
-            ts(2.0),
-            "a.rs".to_string(),
-            "v1".to_string(),
-            "v2".to_string(),
-        ),
-        (
-            ts(3.0),
-            "a.rs".to_string(),
-            "v2".to_string(),
-            "v3".to_string(),
-        ),
+        (ts(1.0), "a.rs".into(), "v0".to_string(), "v1".to_string()),
+        (ts(2.0), "a.rs".into(), "v1".to_string(), "v2".to_string()),
+        (ts(3.0), "a.rs".into(), "v2".to_string(), "v3".to_string()),
     ];
     let result = net_change_diffs(diffs);
     assert_eq!(result.len(), 1, "same-path diffs collapse to one entry");
@@ -47,19 +32,19 @@ fn net_change_diffs_preserves_order() {
     let diffs = vec![
         (
             ts(1.0),
-            "a.rs".to_string(),
+            "a.rs".into(),
             "a_old".to_string(),
             "a_mid".to_string(),
         ),
         (
             ts(2.0),
-            "b.rs".to_string(),
+            "b.rs".into(),
             "b_old".to_string(),
             "b_new".to_string(),
         ),
         (
             ts(3.0),
-            "a.rs".to_string(),
+            "a.rs".into(),
             "a_mid".to_string(),
             "a_new".to_string(),
         ),
@@ -123,17 +108,17 @@ fn collapse_ext_survives_shell_command_retain() {
         },
         Event::ShellCommand {
             timestamp: ts(2.0),
-            shell: "fish".to_string(),
+            shell: ShellKind::Fish,
             command: "ls".to_string(),
-            cwd: "/tmp".to_string(),
+            cwd: "/tmp".into(),
             exit_status: None,
             duration_secs: None,
         },
         Event::ShellCommand {
             timestamp: ts(3.0),
-            shell: "fish".to_string(),
+            shell: ShellKind::Fish,
             command: "ls".to_string(),
-            cwd: "/tmp".to_string(),
+            cwd: "/tmp".into(),
             exit_status: Some(0),
             duration_secs: Some(0.1),
         },

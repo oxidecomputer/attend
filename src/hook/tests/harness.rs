@@ -227,7 +227,7 @@ impl TestHarness {
         // by cwd, so this event will be dropped, yielding None.
         let events = vec![Event::FileDiff {
             timestamp: ts(0.0),
-            path: "/nonexistent/outside/project/foo.rs".to_string(),
+            path: "/nonexistent/outside/project/foo.rs".into(),
             old: "old".to_string(),
             new: "new".to_string(),
         }];

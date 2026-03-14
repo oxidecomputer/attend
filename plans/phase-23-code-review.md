@@ -1942,6 +1942,34 @@ Files: depends on earlier items.
 
 ---
 
+### ⬜ 56. Flaky e2e yank tests — Bug
+
+**`yank_writes_to_yanked_dir` and `yank_while_paused_delivers_content` fail
+intermittently under parallel test load.** The failure is an empty archive
+directory: the daemon exits but the yanked/archived narration files are
+missing. Passes reliably in isolation; only fails when run alongside the
+full suite.
+
+**Root cause investigation so far:**
+- The daemon is a grandchild process (forked by the CLI), not in the
+  harness's `self.children`. Its exit is detected via socket EOF in
+  `advance_time`, not `try_wait`.
+- The bare `assert!(!h.has_daemon())` after `tick_until_exit(yank)` was
+  wrong because `daemon_pid` is only cleared by `advance_time` (socket
+  write/read), not by `has_daemon()`. Fixed to use `tick_until_daemon_exits`.
+- But the *content* assertion still fails intermittently: the archive dir
+  is empty. The daemon finalized and exited, but the files aren't there.
+  This suggests a race in the yank CLI's `copy_yanked_to_clipboard` or
+  in the daemon's `finalize_and_write`.
+
+**Reproduces on `main` (pre-existing).** Not introduced by #51.
+
+**Plan:** Instrument the yank flow to determine whether the daemon fails
+to write yanked files, or the CLI fails to read/archive them. Add a
+deterministic wait or synchronization point.
+
+Files: `tests/e2e.rs`, `src/narrate/record.rs`, `crates/test-harness/src/lib.rs`.
+
 ## Phase 9: Untriaged
 
 Items discovered after the initial review. Triage and slot into the

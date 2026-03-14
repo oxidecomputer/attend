@@ -313,7 +313,7 @@ fn render_markdown_to(
                 }
                 start_block(out, &mut has_content)?;
                 // Show the working directory when it's not the project root.
-                if !cwd.is_empty() && cwd != "." {
+                if cwd.as_str() != "" && cwd.as_str() != "." {
                     writeln!(out, "In `{cwd}/`:")?;
                 }
                 writeln!(out, "```{shell}")?;

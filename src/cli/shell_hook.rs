@@ -8,7 +8,9 @@ use std::fs;
 
 use clap::Subcommand;
 
-use crate::narrate::merge::Event;
+use camino::Utf8PathBuf;
+
+use crate::narrate::merge::{Event, ShellKind};
 use crate::narrate::shell_staging_dir;
 use crate::state;
 use crate::util;
@@ -68,14 +70,17 @@ fn stage_event(
         return Ok(());
     }
 
+    let shell_kind =
+        ShellKind::from_name(&shell).ok_or_else(|| anyhow::anyhow!("unknown shell: {shell}"))?;
+
     // Resolve the session, if any. When no agent session is active the
     // event is staged to the `_local` directory so it is still captured.
     let session_id = state::listening_session();
 
     // Capture the shell's working directory.
-    let cwd = std::env::current_dir()
+    let cwd: Utf8PathBuf = std::env::current_dir()
         .ok()
-        .and_then(|p| p.to_str().map(String::from))
+        .and_then(|p| Utf8PathBuf::try_from(p).ok())
         .unwrap_or_default();
 
     let now = crate::clock::process_clock().now();
@@ -83,7 +88,7 @@ fn stage_event(
         // Placeholder: the recording daemon overwrites this with the
         // UTC timestamp parsed from the staging filename.
         timestamp: now,
-        shell,
+        shell: shell_kind,
         command,
         cwd,
         exit_status,

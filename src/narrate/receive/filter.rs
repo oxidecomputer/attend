@@ -59,7 +59,7 @@ pub(super) fn filter_events(events: &mut Vec<Event>, cwd: &Utf8Path, include_dir
                 old,
                 new,
             } => {
-                if path_included(&path, cwd, include_dirs) {
+                if path_included(path.as_str(), cwd, include_dirs) {
                     filtered.push(Event::FileDiff {
                         timestamp,
                         path,
@@ -70,7 +70,7 @@ pub(super) fn filter_events(events: &mut Vec<Event>, cwd: &Utf8Path, include_dir
                     filtered.push(Event::Redacted {
                         timestamp,
                         kind: RedactedKind::FileDiff,
-                        keys: vec![path],
+                        keys: vec![path.into_string()],
                     });
                 }
             }
@@ -82,7 +82,7 @@ pub(super) fn filter_events(events: &mut Vec<Event>, cwd: &Utf8Path, include_dir
                 exit_status,
                 duration_secs,
             } => {
-                if path_included(&cmd_cwd, cwd, include_dirs) {
+                if path_included(cmd_cwd.as_str(), cwd, include_dirs) {
                     filtered.push(Event::ShellCommand {
                         timestamp,
                         shell,
@@ -169,10 +169,10 @@ pub(super) fn relativize_events(events: &mut [Event], cwd: &Utf8Path) {
                 }
             }
             Event::FileDiff { path, .. } => {
-                *path = relativize_str(path, cwd);
+                *path = relativize_path(path, cwd);
             }
             Event::ShellCommand { cwd: cmd_cwd, .. } => {
-                *cmd_cwd = relativize_str(cmd_cwd, cwd);
+                *cmd_cwd = relativize_path(cmd_cwd, cwd);
             }
             // External/browser/clipboard selections and redacted markers have no paths to relativize.
             Event::Words { .. }
@@ -190,5 +190,13 @@ fn relativize_str(path: &str, cwd: &Utf8Path) -> String {
     match p.strip_prefix(cwd) {
         Ok(rel) => rel.as_str().to_string(),
         Err(_) => path.to_string(),
+    }
+}
+
+/// Strip a cwd prefix from a `Utf8PathBuf`, returning the relative form.
+fn relativize_path(path: &Utf8PathBuf, cwd: &Utf8Path) -> Utf8PathBuf {
+    match path.strip_prefix(cwd) {
+        Ok(rel) => rel.to_path_buf(),
+        Err(_) => path.clone(),
     }
 }

@@ -124,7 +124,7 @@ fn keeps_diffs_between_snapshots() {
         cursor_snap(1.0, "a.rs"),
         Event::FileDiff {
             timestamp: ts(2.0),
-            path: "changed.rs".to_string(),
+            path: "changed.rs".into(),
             old: "".to_string(),
             new: "added\n".to_string(),
         },
@@ -163,13 +163,13 @@ fn merge_diffs_net_change() {
         },
         Event::FileDiff {
             timestamp: ts(1.0),
-            path: "f.rs".to_string(),
+            path: "f.rs".into(),
             old: "aaa\nbbb\nccc\n".to_string(),
             new: "aaa\nBBB\nccc\n".to_string(),
         },
         Event::FileDiff {
             timestamp: ts(2.0),
-            path: "f.rs".to_string(),
+            path: "f.rs".into(),
             old: "aaa\nBBB\nccc\n".to_string(),
             new: "aaa\nBBB\nCCC\n".to_string(),
         },
@@ -196,13 +196,13 @@ fn merge_diffs_cancelled_change_disappears() {
     let mut events = vec![
         Event::FileDiff {
             timestamp: ts(1.0),
-            path: "f.rs".to_string(),
+            path: "f.rs".into(),
             old: "original\n".to_string(),
             new: "changed\n".to_string(),
         },
         Event::FileDiff {
             timestamp: ts(2.0),
-            path: "f.rs".to_string(),
+            path: "f.rs".into(),
             old: "changed\n".to_string(),
             new: "original\n".to_string(),
         },
@@ -248,7 +248,7 @@ fn single_selection_snapshot() {
 fn single_diff_event() {
     let mut events = vec![Event::FileDiff {
         timestamp: ts(1.0),
-        path: "one.rs".to_string(),
+        path: "one.rs".into(),
         old: "old\n".to_string(),
         new: "new\n".to_string(),
     }];
@@ -284,19 +284,19 @@ fn all_diffs_same_path_no_words() {
     let mut events = vec![
         Event::FileDiff {
             timestamp: ts(1.0),
-            path: "f.rs".to_string(),
+            path: "f.rs".into(),
             old: "v1\n".to_string(),
             new: "v2\n".to_string(),
         },
         Event::FileDiff {
             timestamp: ts(2.0),
-            path: "f.rs".to_string(),
+            path: "f.rs".into(),
             old: "v2\n".to_string(),
             new: "v3\n".to_string(),
         },
         Event::FileDiff {
             timestamp: ts(3.0),
-            path: "f.rs".to_string(),
+            path: "f.rs".into(),
             old: "v3\n".to_string(),
             new: "v4\n".to_string(),
         },
@@ -317,19 +317,19 @@ fn all_diffs_different_paths_no_words() {
     let mut events = vec![
         Event::FileDiff {
             timestamp: ts(1.0),
-            path: "a.rs".to_string(),
+            path: "a.rs".into(),
             old: "".to_string(),
             new: "a\n".to_string(),
         },
         Event::FileDiff {
             timestamp: ts(2.0),
-            path: "b.rs".to_string(),
+            path: "b.rs".into(),
             old: "".to_string(),
             new: "b\n".to_string(),
         },
         Event::FileDiff {
             timestamp: ts(3.0),
-            path: "c.rs".to_string(),
+            path: "c.rs".into(),
             old: "".to_string(),
             new: "c\n".to_string(),
         },
@@ -376,7 +376,7 @@ fn diffs_separated_by_words_not_merged() {
     let mut events = vec![
         Event::FileDiff {
             timestamp: ts(1.0),
-            path: "f.rs".to_string(),
+            path: "f.rs".into(),
             old: "v1\n".to_string(),
             new: "v2\n".to_string(),
         },
@@ -386,7 +386,7 @@ fn diffs_separated_by_words_not_merged() {
         },
         Event::FileDiff {
             timestamp: ts(3.0),
-            path: "f.rs".to_string(),
+            path: "f.rs".into(),
             old: "v2\n".to_string(),
             new: "v3\n".to_string(),
         },
@@ -406,7 +406,7 @@ fn diffs_separated_by_words_not_merged() {
 fn noop_diff_filtered_by_render() {
     let mut events = vec![Event::FileDiff {
         timestamp: ts(1.0),
-        path: "noop.rs".to_string(),
+        path: "noop.rs".into(),
         old: "same\n".to_string(),
         new: "same\n".to_string(),
     }];
@@ -427,7 +427,7 @@ fn mixed_diffs_and_snapshots_in_wordless_run() {
         selection_snap_with(1.0, "view.rs", "fn view()\n"),
         Event::FileDiff {
             timestamp: ts(2.0),
-            path: "edit.rs".to_string(),
+            path: "edit.rs".into(),
             old: "old\n".to_string(),
             new: "new\n".to_string(),
         },
@@ -860,9 +860,9 @@ fn browser_and_external_far_apart_both_kept() {
 fn shell_cmd(t: f64, cmd: &str, exit_status: i32, duration: f64) -> Event {
     Event::ShellCommand {
         timestamp: ts(t),
-        shell: "fish".to_string(),
+        shell: ShellKind::Fish,
         command: cmd.to_string(),
-        cwd: "/home/user/project".to_string(),
+        cwd: "/home/user/project".into(),
         exit_status: Some(exit_status),
         duration_secs: Some(duration),
     }
@@ -872,9 +872,9 @@ fn shell_cmd(t: f64, cmd: &str, exit_status: i32, duration: f64) -> Event {
 fn shell_preexec(t: f64, cmd: &str) -> Event {
     Event::ShellCommand {
         timestamp: ts(t),
-        shell: "fish".to_string(),
+        shell: ShellKind::Fish,
         command: cmd.to_string(),
-        cwd: "/home/user/project".to_string(),
+        cwd: "/home/user/project".into(),
         exit_status: None,
         duration_secs: None,
     }
@@ -1252,7 +1252,7 @@ fn ext_selection_cross_run_with_other_events() {
         selection_snap_with(1.2, "src/main.rs", "fn main()"),
         Event::FileDiff {
             timestamp: ts(1.4),
-            path: "src/main.rs".to_string(),
+            path: "src/main.rs".into(),
             old: "old\n".to_string(),
             new: "new\n".to_string(),
         },
@@ -1284,17 +1284,17 @@ fn preexec_postexec_dedup_preserves_preexec_cwd() {
     let mut events = vec![
         Event::ShellCommand {
             timestamp: ts(1.0),
-            shell: "fish".to_string(),
+            shell: ShellKind::Fish,
             command: "cd ..".to_string(),
-            cwd: "/home/user/project".to_string(),
+            cwd: "/home/user/project".into(),
             exit_status: None,
             duration_secs: None,
         },
         Event::ShellCommand {
             timestamp: ts(1.1),
-            shell: "fish".to_string(),
+            shell: ShellKind::Fish,
             command: "cd ..".to_string(),
-            cwd: "/home/user".to_string(),
+            cwd: "/home/user".into(),
             exit_status: Some(0),
             duration_secs: Some(0.01),
         },
