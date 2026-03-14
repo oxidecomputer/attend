@@ -27,11 +27,15 @@ Parallelism tiers for remaining work. Items within a tier have no file
 conflicts and can run as concurrent worktree agents. Tiers must be
 executed sequentially (each tier depends on the prior tier being merged).
 
-Tier 5 — Module decompositions (sequential, heavy dependencies):
+Tier 5 — Independent fixes:
+  #10  Scattered path definitions      (standalone)
+  #56  Flaky e2e yank tests            (standalone)
+
+Tier 6 — Module decompositions (sequential, heavy dependencies):
   #26  merge.rs decomposition          (independent of #5)
   #31  record.rs decomposition         → requires #30 first
 
-Tier 6 — Architecture (sequential, depends on everything above):
+Tier 7 — Architecture (sequential, depends on everything above):
   #42  Extract lib.rs
   #41  narrate/ module reorganization  → after all Phase 7 decompositions
 
