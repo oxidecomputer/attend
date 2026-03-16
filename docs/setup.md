@@ -33,12 +33,12 @@ Narration is controlled by four commands. You'll have the best experience if
 these are bound to hotkeys accessible without leaving your editor (or other
 applications of interest, like [browsers](#browser-integration), etc.).
 
-| Command                 | Purpose                                            |
-|-------------------------|----------------------------------------------------|
-| `attend narrate toggle` | Start if idle, or send and stop if recording       |
-| `attend narrate start`  | Start if idle, or send and keep recording          |
-| `attend narrate pause`  | Pause/resume recording                             |
-| `attend narrate yank`   | Stop, exit daemon, and copy narration to clipboard |
+| Command                 | Purpose                                                  |
+|-------------------------|----------------------------------------------------------|
+| `attend narrate toggle` | Start recording if idle, or send and stop recording      |
+| `attend narrate start`  | Start recording if idle, or send and keep recording      |
+| `attend narrate pause`  | Pause/resume recording                                   |
+| `attend narrate yank`   | Stop recording, and copy to clipboard instead of sending |
 
 ### Zed
 
