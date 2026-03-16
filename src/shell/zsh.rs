@@ -15,9 +15,74 @@ fn completions_path() -> Option<Utf8PathBuf> {
     Some(super::xdg_config_home()?.join("attend/completions/_attend"))
 }
 
-/// Completions directory (for fpath instructions).
+/// Completions directory (for fpath).
 fn completions_dir() -> Option<Utf8PathBuf> {
     Some(super::xdg_config_home()?.join("attend/completions"))
+}
+
+/// Path to the user's `~/.zshrc`.
+fn zshrc_path() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|h| h.join(".zshrc"))
+}
+
+/// Marker comment appended to lines we add to `~/.zshrc`.
+const HOOKS_MARKER: &str = "# attend:hooks";
+const COMPLETIONS_MARKER: &str = "# attend:completions";
+
+/// Append a line to `~/.zshrc` if no line containing `marker` is already
+/// present. Creates the file if it doesn't exist.
+fn add_to_zshrc(line: &str, marker: &str) -> anyhow::Result<()> {
+    let path = zshrc_path().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+
+    let existing = if path.exists() {
+        fs::read_to_string(&path)?
+    } else {
+        String::new()
+    };
+
+    if existing.lines().any(|l| l.contains(marker)) {
+        return Ok(()); // already present
+    }
+
+    let mut content = existing;
+    if !content.is_empty() && !content.ends_with('\n') {
+        content.push('\n');
+    }
+    content.push_str(line);
+    content.push_str("  ");
+    content.push_str(marker);
+    content.push('\n');
+
+    crate::util::atomic_write_str(&path, &content)?;
+    Ok(())
+}
+
+/// Remove all lines containing `marker` from `~/.zshrc`.
+fn remove_from_zshrc(marker: &str) -> anyhow::Result<()> {
+    let path = match zshrc_path() {
+        Some(p) if p.exists() => p,
+        _ => return Ok(()),
+    };
+
+    let content = fs::read_to_string(&path)?;
+    let filtered: String = content
+        .lines()
+        .filter(|line| !line.contains(marker))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Preserve trailing newline if original had one.
+    let filtered = if content.ends_with('\n') && !filtered.is_empty() {
+        filtered + "\n"
+    } else {
+        filtered
+    };
+
+    if filtered != content {
+        crate::util::atomic_write_str(&path, &filtered)?;
+    }
+
+    Ok(())
 }
 
 pub struct Zsh;
@@ -77,12 +142,11 @@ add-zsh-hook precmd __attend_precmd
         }
         crate::util::atomic_write_str(&path, &script)?;
 
+        // Auto-source from ~/.zshrc.
+        let source_line = format!("[[ -f {path} ]] && source {path}");
+        add_to_zshrc(&source_line, HOOKS_MARKER)?;
+
         println!("Installed zsh hooks to {path}");
-        println!();
-        println!("Add this line to your ~/.zshrc:");
-        println!();
-        println!("    source {path}");
-        println!();
 
         Ok(())
     }
@@ -93,8 +157,8 @@ add-zsh-hook precmd __attend_precmd
         {
             fs::remove_file(&path)?;
             println!("Removed zsh hooks from {path}");
-            println!("  Remember to remove the `source` line from your ~/.zshrc");
         }
+        remove_from_zshrc(HOOKS_MARKER)?;
         Ok(())
     }
 
@@ -117,12 +181,11 @@ add-zsh-hook precmd __attend_precmd
         );
         crate::util::atomic_write_str(&path, &String::from_utf8_lossy(&buf))?;
 
+        // Auto-add fpath to ~/.zshrc.
+        let fpath_line = format!("fpath=({dir} $fpath)");
+        add_to_zshrc(&fpath_line, COMPLETIONS_MARKER)?;
+
         println!("Installed zsh completions to {path}");
-        println!();
-        println!("Add this line to your ~/.zshrc (before compinit):");
-        println!();
-        println!("    fpath=({dir} $fpath)");
-        println!();
 
         Ok(())
     }
@@ -133,8 +196,8 @@ add-zsh-hook precmd __attend_precmd
         {
             fs::remove_file(&path)?;
             println!("Removed zsh completions from {path}");
-            println!("  Remember to remove the `fpath` line from your ~/.zshrc");
         }
+        remove_from_zshrc(COMPLETIONS_MARKER)?;
         Ok(())
     }
 

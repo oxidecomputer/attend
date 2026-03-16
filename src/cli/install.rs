@@ -148,17 +148,319 @@ impl std::fmt::Display for Outcome {
 }
 
 // ---------------------------------------------------------------------------
-// Auto-detect install: try every known integration, report results
+// Auto-detect install: detect available integrations, prompt, install
 // ---------------------------------------------------------------------------
 
-/// Install all known integrations, catching errors as skips.
-///
-/// Prints a summary and succeeds if at least one integration was installed.
+/// Check whether a known integration appears to be present on this system.
+fn is_detected(category: Category, name: &str) -> bool {
+    match (category, name) {
+        (Category::Agent, "claude") => {
+            which::which("claude").is_ok()
+                || dirs::home_dir().is_some_and(|h| h.join(".claude").is_dir())
+        }
+        (Category::Editor, "zed") => which::which("zed").is_ok() || has_macos_app("Zed"),
+        (Category::Browser, "firefox") => {
+            which::which("firefox").is_ok() || has_macos_app("Firefox")
+        }
+        (Category::Browser, "chrome") => {
+            which::which("google-chrome").is_ok()
+                || which::which("google-chrome-stable").is_ok()
+                || which::which("chromium-browser").is_ok()
+                || which::which("chromium").is_ok()
+                || has_macos_app("Google Chrome")
+        }
+        (Category::Shell, shell) => which::which(shell).is_ok(),
+        _ => false,
+    }
+}
+
+/// Check for a macOS `/Applications/*.app` bundle. Always returns `false`
+/// on other platforms.
+fn has_macos_app(_name: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        std::path::Path::new(&format!("/Applications/{_name}.app")).exists()
+    }
+    #[cfg(not(target_os = "macos"))]
+    false
+}
+
+/// Brief description of what each integration does, shown during prompting.
+fn integration_description(category: Category, name: &str) -> &'static str {
+    match (category, name) {
+        (Category::Agent, "claude") => "Claude Code: allows using /attend in Claude",
+        (Category::Editor, "zed") => "Zed keybindings: adds hotkeys for attend within Zed",
+        (Category::Browser, "firefox") => {
+            "Firefox extension: captures text you select on web pages while narrating"
+        }
+        (Category::Browser, "chrome") => {
+            "Chrome extension: captures text you select on web pages while narrating"
+        }
+        (Category::Shell, "fish") => "Fish hooks: captures commands you run while narrating",
+        (Category::Shell, "zsh") => "Zsh hooks: captures commands you run while narrating",
+        _ => "",
+    }
+}
+
+/// Read a single keypress: y/Y/Enter → `Some(true)`, n/N → `Some(false)`,
+/// Ctrl-C → `None` (abort).
+fn read_yn() -> Option<bool> {
+    use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+
+    loop {
+        let Ok(Event::Key(KeyEvent {
+            code, modifiers, ..
+        })) = event::read()
+        else {
+            continue;
+        };
+        if modifiers.contains(KeyModifiers::CONTROL) && code == KeyCode::Char('c') {
+            return None;
+        }
+        return match code {
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => Some(true),
+            KeyCode::Char('n') | KeyCode::Char('N') => Some(false),
+            _ => continue,
+        };
+    }
+}
+
+/// Prompt for a y/n answer with a single keypress (no Enter required).
+/// Returns `Some(true)` for yes, `Some(false)` for no, `None` on Ctrl-C.
+fn prompt_yn(label: &str) -> Option<bool> {
+    use crossterm::terminal;
+    use std::io::Write;
+
+    print!("{label} [Y/n] ");
+    std::io::stdout().flush().ok();
+
+    // If we can't enter raw mode (e.g., not a real TTY), fall back to
+    // line-based input.
+    if terminal::enable_raw_mode().is_err() {
+        return Some(prompt_yn_line());
+    }
+
+    let answer = read_yn();
+    terminal::disable_raw_mode().ok();
+
+    match answer {
+        Some(true) => println!("y"),
+        Some(false) => println!("n\n"),
+        None => println!(),
+    }
+
+    answer
+}
+
+/// Line-based y/n fallback when raw mode is unavailable.
+fn prompt_yn_line() -> bool {
+    use std::io::BufRead;
+
+    let mut line = String::new();
+    if std::io::stdin().lock().read_line(&mut line).is_err() {
+        return true;
+    }
+    let answer = line.trim();
+    answer.is_empty() || answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes")
+}
+
+/// Route to interactive or non-interactive install.
 fn install_auto(project: Option<Utf8PathBuf>, dev: bool) -> anyhow::Result<()> {
+    use std::io::IsTerminal;
+
+    if std::io::stdin().is_terminal() {
+        install_interactive(project, dev)
+    } else {
+        install_noninteractive(project, dev)
+    }
+}
+
+/// Interactive install: detect, prompt per integration, install immediately.
+fn install_interactive(project: Option<Utf8PathBuf>, dev: bool) -> anyhow::Result<()> {
+    let bin_cmd = crate::agent::resolve_bin_cmd(dev)?;
+    let mut outcomes: Vec<Outcome> = Vec::new();
+    let mut any_detected = false;
+    let mut browser_wrapper: Option<anyhow::Result<String>> = None;
+
+    println!(
+        "These integrations allow attend to interleave what you do with what\n\
+        you say, and deliver that combined narration to your coding agent:\n"
+    );
+
+    // Agents
+    for agent in crate::agent::AGENTS {
+        if !is_detected(Category::Agent, agent.name()) {
+            continue;
+        }
+        any_detected = true;
+        let desc = integration_description(Category::Agent, agent.name());
+        match prompt_yn(desc) {
+            Some(true) => {}
+            Some(false) => continue,
+            None => return Ok(()),
+        }
+        let name = agent.name().to_string();
+        match agent.install(&bin_cmd, project.clone()) {
+            Ok(()) => {
+                outcomes.push(Outcome::Installed {
+                    category: Category::Agent,
+                    name,
+                });
+                println!();
+            }
+            Err(e) => {
+                let reason = concise_reason(&e);
+                println!("  Failed: {reason}");
+                outcomes.push(Outcome::Skipped {
+                    category: Category::Agent,
+                    name,
+                    reason,
+                });
+            }
+        }
+    }
+
+    // Editors
+    for editor in crate::editor::EDITORS {
+        if !is_detected(Category::Editor, editor.name()) {
+            continue;
+        }
+        any_detected = true;
+        let desc = integration_description(Category::Editor, editor.name());
+        match prompt_yn(desc) {
+            Some(true) => {}
+            Some(false) => continue,
+            None => return Ok(()),
+        }
+        let name = editor.name().to_string();
+        match editor.install_narration(&bin_cmd) {
+            Ok(()) => {
+                outcomes.push(Outcome::Installed {
+                    category: Category::Editor,
+                    name,
+                });
+                println!();
+            }
+            Err(e) => {
+                let reason = concise_reason(&e);
+                println!("  Failed: {reason}\n");
+                outcomes.push(Outcome::Skipped {
+                    category: Category::Editor,
+                    name,
+                    reason,
+                });
+            }
+        }
+    }
+
+    // Browsers
+    for browser in crate::browser::BROWSERS {
+        if !is_detected(Category::Browser, browser.name()) {
+            continue;
+        }
+        any_detected = true;
+        let desc = integration_description(Category::Browser, browser.name());
+        match prompt_yn(desc) {
+            Some(true) => {}
+            Some(false) => continue,
+            None => return Ok(()),
+        }
+        // Lazily create the browser wrapper on first confirmed browser.
+        let wp = browser_wrapper.get_or_insert_with(|| install_browser_wrapper(&bin_cmd));
+        let name = browser.name().to_string();
+        match wp {
+            Ok(wp) => match browser.install(wp) {
+                Ok(()) => {
+                    outcomes.push(Outcome::Installed {
+                        category: Category::Browser,
+                        name,
+                    });
+                    println!();
+                }
+                Err(e) => {
+                    let reason = concise_reason(&e);
+                    println!("  Failed: {reason}\n");
+                    outcomes.push(Outcome::Skipped {
+                        category: Category::Browser,
+                        name,
+                        reason,
+                    });
+                }
+            },
+            Err(e) => {
+                let reason = concise_reason(e);
+                println!("  Failed: {reason}");
+                outcomes.push(Outcome::Skipped {
+                    category: Category::Browser,
+                    name,
+                    reason,
+                });
+            }
+        }
+    }
+
+    // Shells
+    for shell in crate::shell::SHELLS {
+        if !is_detected(Category::Shell, shell.name()) {
+            continue;
+        }
+        any_detected = true;
+        let desc = integration_description(Category::Shell, shell.name());
+        match prompt_yn(desc) {
+            Some(true) => {}
+            Some(false) => continue,
+            None => return Ok(()),
+        }
+        let name = shell.name().to_string();
+        match shell.install_hooks(&bin_cmd) {
+            Ok(()) => {
+                if let Err(e) = shell.install_completions(&bin_cmd) {
+                    tracing::warn!("shell {name}: completions failed: {e}");
+                }
+                outcomes.push(Outcome::Installed {
+                    category: Category::Shell,
+                    name,
+                });
+                println!();
+            }
+            Err(e) => {
+                let reason = concise_reason(&e);
+                println!("  Failed: {reason}\n");
+                outcomes.push(Outcome::Skipped {
+                    category: Category::Shell,
+                    name,
+                    reason,
+                });
+            }
+        }
+    }
+
+    if !any_detected {
+        anyhow::bail!("no supported integrations detected on this system");
+    }
+
+    // Summary
+    let installed_count = outcomes.iter().filter(|o| o.is_installed()).count();
+    if installed_count > 0 {
+        println!(
+            "{installed_count} integration{} installed.",
+            if installed_count == 1 { "" } else { "s" }
+        );
+    } else if outcomes.is_empty() {
+        println!("Nothing to install.");
+    }
+
+    // Save metadata.
+    save_outcomes_meta(&outcomes, &project, dev);
+
+    Ok(())
+}
+
+/// Non-interactive install: try every known integration, report results.
+fn install_noninteractive(project: Option<Utf8PathBuf>, dev: bool) -> anyhow::Result<()> {
     let bin_cmd = crate::agent::resolve_bin_cmd(dev)?;
     let mut outcomes: Vec<Outcome> = Vec::new();
 
-    // Agents
     for agent in crate::agent::AGENTS {
         let name = agent.name().to_string();
         match agent.install(&bin_cmd, project.clone()) {
@@ -174,7 +476,6 @@ fn install_auto(project: Option<Utf8PathBuf>, dev: bool) -> anyhow::Result<()> {
         }
     }
 
-    // Editors
     for editor in crate::editor::EDITORS {
         let name = editor.name().to_string();
         match editor.install_narration(&bin_cmd) {
@@ -190,7 +491,6 @@ fn install_auto(project: Option<Utf8PathBuf>, dev: bool) -> anyhow::Result<()> {
         }
     }
 
-    // Browsers
     let wrapper_path = install_browser_wrapper(&bin_cmd);
     for browser in crate::browser::BROWSERS {
         let name = browser.name().to_string();
@@ -214,12 +514,10 @@ fn install_auto(project: Option<Utf8PathBuf>, dev: bool) -> anyhow::Result<()> {
         }
     }
 
-    // Shells
     for shell in crate::shell::SHELLS {
         let name = shell.name().to_string();
         match shell.install_hooks(&bin_cmd) {
             Ok(()) => {
-                // Hooks installed; also try completions (best-effort).
                 if let Err(e) = shell.install_completions(&bin_cmd) {
                     tracing::warn!("shell {name}: completions failed: {e}");
                 }
@@ -236,7 +534,6 @@ fn install_auto(project: Option<Utf8PathBuf>, dev: bool) -> anyhow::Result<()> {
         }
     }
 
-    // Print summary
     let installed_count = outcomes.iter().filter(|o| o.is_installed()).count();
     println!();
     for outcome in &outcomes {
@@ -253,11 +550,17 @@ fn install_auto(project: Option<Utf8PathBuf>, dev: bool) -> anyhow::Result<()> {
         if installed_count == 1 { "" } else { "s" }
     );
 
-    // Save metadata for successfully installed integrations only.
+    save_outcomes_meta(&outcomes, &project, dev);
+
+    Ok(())
+}
+
+/// Save install metadata from a list of outcomes.
+fn save_outcomes_meta(outcomes: &[Outcome], project: &Option<Utf8PathBuf>, dev: bool) {
     let mut meta = crate::state::installed_meta().unwrap_or_default();
     meta.version = env!("CARGO_PKG_VERSION").to_string();
     meta.dev = dev;
-    for outcome in &outcomes {
+    for outcome in outcomes {
         if let Outcome::Installed { category, name } = outcome {
             let list = match category {
                 Category::Agent => &mut meta.agents,
@@ -270,14 +573,12 @@ fn install_auto(project: Option<Utf8PathBuf>, dev: bool) -> anyhow::Result<()> {
             }
         }
     }
-    if let Some(ref p) = project
+    if let Some(p) = project
         && !meta.project_paths.contains(p)
     {
         meta.project_paths.push(p.clone());
     }
     crate::state::save_install_meta(&meta);
-
-    Ok(())
 }
 
 /// Extract a concise one-line reason from an error chain.
