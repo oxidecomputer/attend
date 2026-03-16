@@ -1179,15 +1179,24 @@ fn copy_yanked_to_clipboard(session_id: Option<&crate::state::SessionId>) -> any
         &config.include_dirs,
         super::render::RenderMode::Yank,
     ) {
-        let mut clipboard = arboard::Clipboard::new()
-            .map_err(|e| anyhow::anyhow!("cannot access clipboard: {e}"))?;
-        clipboard
-            .set_text(&content)
-            .map_err(|e| anyhow::anyhow!("cannot write to clipboard: {e}"))?;
-
-        let lines = content.lines().count();
-        let chars = content.len();
-        eprintln!("Copied {lines} lines ({chars} chars) to clipboard.");
+        if crate::test_mode::is_active() {
+            let lines = content.lines().count();
+            let chars = content.len();
+            eprintln!("Skipped clipboard in test mode ({lines} lines, {chars} chars).");
+        } else {
+            // Best-effort: clipboard failures (no display server, concurrent
+            // access) must not prevent archival of the yanked files below.
+            match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(&content)) {
+                Ok(()) => {
+                    let lines = content.lines().count();
+                    let chars = content.len();
+                    eprintln!("Copied {lines} lines ({chars} chars) to clipboard.");
+                }
+                Err(e) => {
+                    eprintln!("Could not copy to clipboard: {e}");
+                }
+            }
+        }
     } else {
         eprintln!("No narration content.");
     }
