@@ -2,9 +2,7 @@
 
 ## Narration commands
 
-These control the recording lifecycle. You'll typically bind them to hotkeys
-(see [Narration hotkeys](setup.md#narration-hotkeys)) rather than running them
-in a terminal.
+These control the recording lifecycle. They accept no flags.
 
 ### `attend narrate toggle`
 
@@ -14,29 +12,59 @@ narration to the active agent session.
 ### `attend narrate start`
 
 Start recording if idle. If already recording, deliver the current narration and
-**keep recording** — useful for continuous narration across multiple deliveries
-without stopping the daemon.
+**keep recording** — the daemon continues without stopping.
 
 ### `attend narrate stop`
 
-Stop recording, transcribe, and deliver. Unlike `toggle`, this is a no-op if
-not currently recording (it won't start a new recording).
+Stop recording, transcribe, and deliver. No-op if not currently recording.
 
 ### `attend narrate pause`
 
-Pause recording without delivering. Press again to resume. Audio capture and
+Pause recording without delivering. Run again to resume. Audio capture and
 context polling are suspended while paused.
 
 ### `attend narrate yank`
 
 Stop recording, transcribe, and **copy the rendered narration to the clipboard**
-instead of delivering it to an agent. Useful for pasting narration into other
-contexts, or for seeing what `attend` produces.
+instead of delivering it to an agent.
+
+### `attend narrate status`
+
+Print narration system status: recording state, engine, session, listener,
+installed integrations, permissions, pending narrations, and detected problems.
+
+```
+Recording:      idle
+Engine:         Parakeet TDT (model downloaded)
+Idle timeout:   5m (default)
+Session:        a33c5803-8369-430d-9acf-70f24a5ba2d4
+Listener:       active
+Editors:        zed (ok)
+Shells:         fish (ok)
+Browsers:       firefox (ok)
+Accessibility:  ok
+Clipboard:      enabled
+Pending:        0 narration(s)
+Archive:        424.0 KB
+```
+
+### `attend narrate clean`
+
+Remove old archived narrations. Delivered narrations are kept as a safety net
+and pruned automatically after each delivery based on
+[`archive_retention`](configuration.md#fields) (default 7 days).
+
+```bash
+attend narrate clean                  # remove archives older than 7 days
+attend narrate clean --older-than 1d  # remove archives older than 1 day
+```
+
+### `attend narrate model download`
+
+Download the transcription model for the configured engine. The model is also
+downloaded automatically on first recording.
 
 ## Inspection tools
-
-These let you see what `attend` sees in your editor, directly from the terminal.
-Useful for debugging, demos, and understanding the editor integration.
 
 ### `attend glance`
 
@@ -58,7 +86,7 @@ Each line is a file path followed by comma-separated positions. A position is
 | `--watch`, `-w` | Live-updating view |
 | `--dir`, `-d` | Resolve and display paths relative to this directory |
 | `--format`, `-f` | Output format: `human` (default) or `json` |
-| `--interval`, `-i` | Override polling interval in seconds |
+| `--interval`, `-i` | Polling interval in seconds |
 
 ### `attend look`
 
@@ -68,25 +96,19 @@ On a TTY, cursors and selections are highlighted with inverse video. Otherwise
 (or when `NO_COLOR` is set), cursors are marked with `❘` and selections with
 `⟦⟧`.
 
-Show file content with specific positions:
-
 ```bash
 $ attend look src/foo.rs 5:12 19:40-24:6 src/bar.rs 10:1
 ```
 
-Positions use the same format as `attend glance` output, and `attend look -`
+Positions use the same format as `attend glance` output. `attend look -`
 reads positions from stdin:
 
 ```bash
 attend glance | attend look -
 ```
 
-With no arguments, `attend look` queries the editor and shows current state
-(equivalent to the pipe above):
-
-```bash
-attend look
-```
+With no arguments, queries the editor and shows current state (equivalent to
+the pipe above).
 
 **Flags:**
 
@@ -98,26 +120,23 @@ attend look
 | `-A` | Context lines after each excerpt |
 | `--dir`, `-d` | Resolve and display paths relative to this directory |
 | `--format`, `-f` | Output format: `human` (default) or `json` |
-| `--interval`, `-i` | Override polling interval in seconds |
+| `--interval`, `-i` | Polling interval in seconds |
 
-**Caveat:** `attend look` reads live editor selection state but shows file
-contents from disk. Results from unsaved files may not be accurate.
+**Caveat:** Reads live editor selection state but shows file contents from disk.
+Results from unsaved files may not be accurate.
 
 ### `attend meditate`
 
 Run as a background daemon that continuously polls the editor and warms the
-state cache, without producing output.
-
-If you're not using narration, running this in the background mildly improves
-the accuracy of editor context provided to your agent at every turn, because it
-maintains a more precise ordering of which cursors or selections you most
-recently touched. Only relevant with multiple editor panes or cursors.
+state cache, without producing output. Maintains a more precise ordering of
+which cursors or selections were most recently touched. Only relevant with
+multiple editor panes or cursors.
 
 **Flags:**
 
 | Flag | Description |
 |------|-------------|
-| `--interval`, `-i` | Override polling interval in seconds |
+| `--interval`, `-i` | Polling interval in seconds |
 
 ## Setup commands
 
@@ -130,14 +149,13 @@ attend install --agent claude --editor zed
 attend install --browser firefox --shell fish
 ```
 
-With no flags, `attend install` detects which integrations are available on your
-system and prompts you to confirm each one. With explicit flags, it installs
-only what you specify and fails on errors.
+With no flags, detects which integrations are available and prompts for
+confirmation. With explicit flags, installs only what is specified.
 
 If the `attend` Claude Code plugin is already enabled, `--agent claude` writes
 only the permission grants that the plugin needs (plugins cannot set
-permissions). Without the plugin, it performs a full manual installation of
-hooks and skills.
+permissions). Without the plugin, performs a full manual installation of hooks
+and skills.
 
 **Flags:**
 
@@ -176,55 +194,26 @@ attend completions fish > ~/.config/fish/completions/attend.fish
 
 **Argument:** shell name (`bash`, `fish`, `zsh`, `elvish`, `powershell`).
 
-Note: `attend install --shell <shell>` installs completions automatically;
-this command is for manual setup.
-
-## Maintenance commands
-
-### `attend narrate status`
-
-Show narration system status: recording state, engine, session, listener,
-installed integrations, permissions, and any detected problems.
-
-```
-Recording:      idle
-Engine:         Parakeet TDT (model downloaded)
-Idle timeout:   5m (default)
-Session:        a33c5803-8369-430d-9acf-70f24a5ba2d4
-Listener:       active
-Editors:        zed (ok)
-Shells:         fish (ok)
-Browsers:       firefox (ok)
-Accessibility:  ok
-Clipboard:      enabled
-Pending:        0 narration(s)
-Archive:        424.0 KB
-```
-
-This is the first thing to check when something isn't working.
-
-### `attend narrate clean`
-
-Remove old archived narrations. `attend` keeps delivered narrations as a safety
-net (in case of agent crashes or delivery failures); they're pruned
-automatically after each delivery based on `archive_retention` (default 7 days).
-
-This command lets you clean up manually:
-
-```bash
-attend narrate clean                  # remove archives older than 7 days
-attend narrate clean --older-than 1d  # remove archives older than 1 day
-```
+`attend install --shell <shell>` installs completions automatically; this
+command is for manual setup.
 
 ## Agent integration commands
 
-These commands are called by your agent, not by you directly. They're documented
-here for completeness.
+Called by agent hooks, not directly by users.
 
 ### `attend hook`
 
-Respond to agent lifecycle events. Called by the hooks that `attend install`
-sets up.
+Respond to agent lifecycle events. Reads hook input from stdin (format is
+agent-specific) and writes hook output to stdout.
+
+**Required flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--agent`, `-a` | Agent backend to use (e.g., `claude`) |
+
+**Argument:** one of `session-start`, `user-prompt`, `pre-tool-use`,
+`post-tool-use`, `stop`, `session-end`.
 
 ```bash
 attend hook --agent claude session-start
@@ -237,9 +226,9 @@ attend hook --agent claude session-end
 
 ### `attend listen`
 
-Wait for pending narration and deliver it to the agent. Started as a background
-task by the agent after `/attend` (or `/attend:start` with the plugin) is
-invoked.
+Wait for pending narration and deliver it to the agent. Blocks until narration
+arrives, then exits to wake up the agent. Started as a background task by the
+agent after narration is activated.
 
 | Flag | Description |
 |------|-------------|
@@ -249,7 +238,7 @@ invoked.
 
 ## Internal commands
 
-These are implementation details, not user-facing:
+Implementation details, not user-facing:
 
 - `attend _record-daemon` — the persistent recording daemon (spawned by
   narration commands)

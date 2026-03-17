@@ -26,7 +26,7 @@ and shell commands ([Fish](https://fishshell.com/) or
 (macOS only) — all in chronological order, so it can understand your words and
 actions in context with one another while you're narrating.
 
-See [example narration](docs/example-narration.md) for what the agent receives.
+See [example narration](docs/tutorial/example-narration.md) for what the agent receives.
 
 ## Installation
 
@@ -69,19 +69,47 @@ browsers, shells) and prompts you to confirm each one. It also provides the
 option of pre-downloading a local transcription model, so that it's ready on
 first-run (it will be downloaded anyhow when you first narrate).
 
-Then follow the [getting started guide](docs/getting-started.md) to start your
-first narrated session with your coding agent.
+Then follow [your first narration session](docs/tutorial/getting-started.md) to
+start narrating with your coding agent.
 
 ## Documentation
 
-- [**Getting started**](docs/getting-started.md) — your first narration session,
-  step by step
-- [**Setup guide**](docs/setup.md) — hotkeys, browser and shell integration,
-  transcription model, configuration, troubleshooting, and uninstall
-- [**Command reference**](docs/commands.md) — every `attend` subcommand
-- [**How it works**](docs/how-it-works.md) — architecture, data flow, and the
-  merge pipeline
-- [**Extending attend**](docs/extending.md) — adding support for new editors,
+**Start here:**
+- [**Your first narration session**](docs/tutorial/getting-started.md) — a
+  step-by-step tutorial for your first narration
+- [**Example narration**](docs/tutorial/example-narration.md) — see what the
+  agent actually receives
+
+**How-to guides:**
+- [**Hotkeys**](docs/how-to/hotkeys.md) — configure narration hotkeys in Zed,
+  globally, and in iTerm2
+- [**Browser integration**](docs/how-to/browser-integration.md) — capture text
+  selections from Firefox and Chrome
+- [**Shell integration**](docs/how-to/shell-integration.md) — capture shell
+  commands from Fish and Zsh
+- [**Troubleshooting**](docs/how-to/troubleshooting.md) — diagnose common
+  problems and macOS permissions
+- [**Uninstall**](docs/how-to/uninstall.md) — remove attend and its
+  integrations
+
+**Reference:**
+- [**Command reference**](docs/reference/commands.md) — every `attend`
+  subcommand
+- [**Configuration**](docs/reference/configuration.md) — config files, fields,
+  and transcription engines
+- [**Narration format**](docs/reference/narration-format.md) — event types and
+  rendering format
+- [**Extending reference**](docs/extending/reference.md) — trait APIs, hook
+  events, and message templates
+
+**Understanding attend:**
+- [**How it works**](docs/explanation/how-it-works.md) — data flow, the
+  recording daemon, sessions, and the merge pipeline
+- [**Architecture**](docs/explanation/architecture.md) — design patterns, test
+  architecture, and rationale
+
+**Extending and contributing:**
+- [**Extending attend**](docs/extending/) — adding support for new editors,
   agents, shells, and browsers
-- [**Development**](docs/development.md) — building, testing, project structure,
-  and dev installation
+- [**Development**](docs/extending/development.md) — building, testing, and dev
+  installation

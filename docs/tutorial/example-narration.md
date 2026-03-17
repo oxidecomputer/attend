@@ -1,13 +1,12 @@
 # Example narration
 
 This is a realistic example of what your coding agent receives when you narrate.
-You never see this directly (unless you [yank to clipboard](commands.md#attend-narrate-yank));
-it's delivered behind the scenes as a prompt to the agent.
+You never see this directly (unless you [yank to
+clipboard](../reference/commands.md#attend-narrate-yank)); it's delivered behind
+the scenes as a prompt to the agent.
 
 The narration below could have been produced by speaking for about 30 seconds
-while navigating code, selecting text on a web page, and running a command. Five
-of the seven context sources appear here (voice, editor snapshots, file diffs,
-browser selections, shell commands):
+while navigating code, selecting text on a web page, and running a command:
 
 ---
 
@@ -35,11 +34,11 @@ I already started changing the struct to support optional fields
 
 `src/config.rs`:
 ```diff
--pub struct Config {
+ pub struct Config {
 -    pub engine: Engine,
 -    pub model: PathBuf,
 -    pub timeout: u64,
-+pub struct Config {
+ pub struct Config {
 +    pub engine: Option<Engine>,
 +    pub model: Option<PathBuf>,
 +    pub timeout: Option<Duration>,
@@ -67,12 +66,11 @@ and concatenating arrays.
 
 ---
 
-Notice how the narration interleaves the developer's spoken thoughts (plain
-text) with the code they were looking at (editor snapshots), changes they made
-(file diffs), documentation they referenced in the browser (browser selections),
-and commands they ran (shell commands). The agent receives all of this as a
-single chronological narrative.
+The narration interleaves spoken thoughts (plain text) with code the developer
+was looking at (editor snapshots), changes they made (file diffs), documentation
+they referenced in the browser (browser selections), and commands they ran
+(shell commands). The agent receives all of this as a single chronological
+narrative.
 
-External selections (text highlighted in other apps), clipboard content (copied
-text or images), and redaction markers (for files outside the project scope) can
-also appear; they aren't shown in this particular example.
+For the complete list of event types and their rendering format, see the
+[narration format reference](../reference/narration-format.md).

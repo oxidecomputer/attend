@@ -1,7 +1,9 @@
-# Adding a new shell
+# How to add a new shell
 
 A shell backend installs hooks that fire on every command (preexec/postexec)
 and stage events for the narration pipeline. It also installs tab completions.
+See [extending reference](reference.md#shell-trait) for the full
+trait API.
 
 ## How shell hooks work
 
@@ -14,11 +16,11 @@ on each command:
 The CLI handler (`src/cli/shell_hook.rs`) checks the record lock (fast no-op
 when not recording), resolves the active session, and atomically writes a
 `ShellCommand` event to the shell staging directory. The recording daemon
-collects these events and merges them chronologically into the narration.
+collects these events and merges them into the narration.
 
-## 1. Create the module — `src/shell/<name>.rs`
+## 1. Create the module
 
-Implement the `Shell` trait:
+Create `src/shell/<name>.rs` implementing the `Shell` trait:
 
 ```rust
 pub struct Name;
@@ -31,52 +33,30 @@ impl Shell for Name {
         //   {bin_cmd} shell-hook preexec --shell <name> --command "$cmd"
         //   {bin_cmd} shell-hook postexec --shell <name> --command "$cmd" \
         //       --exit-status $status --duration $secs
-        //
-        // The hook should check `record_lock_path().exists()` as a fast
-        // path to skip work when not recording.
-        //
-        // If the shell doesn't auto-source from a config directory,
-        // print the `source` line the user needs to add to their rc file.
         Ok(())
     }
 
     fn uninstall_hooks(&self) -> anyhow::Result<()> {
-        // Remove the hook script written by install_hooks().
         Ok(())
     }
 
     fn install_completions(&self, bin_cmd: &str) -> anyhow::Result<()> {
-        // Generate completions via clap_complete::generate() and write
-        // to the shell's completions directory.
         Ok(())
     }
 
     fn uninstall_completions(&self) -> anyhow::Result<()> {
-        // Remove the completions file.
         Ok(())
     }
 
     fn check(&self) -> anyhow::Result<Vec<String>> {
-        // Optional: return diagnostic warnings (empty = healthy).
         Ok(Vec::new())
     }
 }
 ```
 
-### `Shell` trait methods
+## 2. Register the backend
 
-| Method                   | Required | Purpose                                          |
-|--------------------------|----------|--------------------------------------------------|
-| `name()`                 | yes      | CLI name, e.g. `"fish"`                          |
-| `install_hooks()`        | yes      | Write hook script that calls `attend shell-hook` |
-| `uninstall_hooks()`      | yes      | Remove the hook script                           |
-| `install_completions()`  | yes      | Generate and write tab completions               |
-| `uninstall_completions()`| yes      | Remove the completions file                      |
-| `check()`                | no       | Return diagnostic warnings (empty = healthy)     |
-
-## 2. Register the backend in `src/shell.rs`
-
-Add the module and register it in the `SHELLS` slice:
+In `src/shell.rs`, add the module and register it:
 
 ```rust
 mod fish;
@@ -92,9 +72,6 @@ pub const SHELLS: &[&dyn Shell] = &[
 ];
 ```
 
-The CLI (`install --shell <name>`, `uninstall --shell <name>`) is built
-automatically from the registered backends.
-
 ## Implementation notes
 
 - **Fast path**: Hook scripts should check `record_lock_path()` (resolved at
@@ -102,12 +79,11 @@ automatically from the registered backends.
   the hook free when narration is inactive. See `src/shell/fish.rs` for the
   fish pattern.
 - **Auto-sourcing**: Fish hooks go in `~/.config/fish/conf.d/` and are
-  loaded automatically. Zsh hooks go in `~/.config/attend/hooks/` and
-  require a `source` line in `~/.zshrc` (printed by the installer). Choose
-  whichever pattern your shell supports.
+  loaded automatically. Zsh hooks require a `source` line in `~/.zshrc`.
+  Choose whichever pattern your shell supports.
 - **Duration**: The postexec hook should report command duration in seconds.
   Fish provides `$CMD_DURATION` (milliseconds); zsh uses `$EPOCHREALTIME`
-  deltas. Use whatever mechanism your shell exposes.
+  deltas.
 - **Idempotency**: `install_hooks()` must be safe to call repeatedly.
 
 ## Checklist

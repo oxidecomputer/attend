@@ -1,7 +1,9 @@
-# Adding a new browser
+# How to add a new browser
 
 A browser backend installs a native messaging host manifest so the browser
-extension can communicate with `attend`, and provides the extension itself.
+extension can communicate with `attend`, and provides the extension itself. See
+[extending reference](reference.md#browser-trait) for the full trait
+API.
 
 ## How browser capture works
 
@@ -19,9 +21,9 @@ The bridge is a one-shot process (Firefox launches a new process per
 message). The same extension source (`extension/`) is shared across browsers;
 only the manifest format differs.
 
-## 1. Create the module — `src/browser/<name>.rs`
+## 1. Create the module
 
-Implement the `Browser` trait:
+Create `src/browser/<name>.rs` implementing the `Browser` trait:
 
 ```rust
 pub struct Name;
@@ -30,35 +32,21 @@ impl Browser for Name {
     fn name(&self) -> &'static str { "<name>" }
 
     fn install(&self, bin_cmd: &str) -> anyhow::Result<()> {
-        // 1. Install a native messaging host manifest pointing at
-        //    bin_cmd (the attend-browser-bridge wrapper script).
-        //    Use the `native_messaging::install` crate.
+        // 1. Install a native messaging host manifest.
         //    Host name: "attend".
-        //
         // 2. Install or print instructions for loading the extension.
-        //    Firefox: write the signed .xpi and open it.
-        //    Chrome: write the unpacked extension directory.
         Ok(())
     }
 
     fn uninstall(&self) -> anyhow::Result<()> {
-        // Remove the native messaging manifest and any extension files.
         Ok(())
     }
 }
 ```
 
-### `Browser` trait methods
+## 2. Register the backend
 
-| Method         | Required | Purpose                                          |
-|----------------|----------|--------------------------------------------------|
-| `name()`       | yes      | CLI name, e.g. `"firefox"`                       |
-| `install()`    | yes      | Install native messaging manifest + extension    |
-| `uninstall()`  | yes      | Remove manifest and extension files              |
-
-## 2. Register the backend in `src/browser.rs`
-
-Add the module and register it in the `BROWSERS` slice:
+In `src/browser.rs`, add the module and register it:
 
 ```rust
 mod chrome;
@@ -73,9 +61,6 @@ pub const BROWSERS: &[&'static dyn Browser] = &[
     &<name>::Name,
 ];
 ```
-
-The CLI (`install --browser <name>`, `uninstall --browser <name>`) is built
-automatically from the registered backends.
 
 ## Implementation notes
 
