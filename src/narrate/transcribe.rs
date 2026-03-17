@@ -85,6 +85,29 @@ impl Engine {
         }
     }
 
+    /// Download model files to `path` if not already present, reporting
+    /// progress via `on_progress(filename, bytes_so_far, content_length)`.
+    pub fn ensure_model_with_progress(
+        &self,
+        path: &Utf8Path,
+        on_progress: &mut dyn FnMut(&str, u64, Option<u64>),
+    ) -> anyhow::Result<()> {
+        match self {
+            Engine::Whisper => whisper::ensure_model_with_progress(path, on_progress),
+            Engine::Parakeet => parakeet::ensure_model_with_progress(path, on_progress),
+        }
+    }
+
+    /// Approximate total download size of the default model for this engine.
+    pub fn approx_download_size(&self) -> &'static str {
+        match self {
+            // ggml-small.en.bin
+            Engine::Whisper => "~470 MB",
+            // encoder-model.onnx + .data + decoder + vocab
+            Engine::Parakeet => "~600 MB",
+        }
+    }
+
     /// Human-readable engine name for status messages.
     pub fn display_name(&self) -> &'static str {
         match self {
@@ -130,23 +153,46 @@ impl Engine {
 /// Writes to a `.tmp` sibling first, then atomically renames to `dest`.
 /// On checksum mismatch the temp file is removed and an error is returned.
 /// Parent directories of `dest` are created if they don't exist.
+///
+/// If `on_progress` is provided, it is called periodically with
+/// `(bytes_written_so_far, content_length)`.
 pub(super) fn download_verified(
     url: &str,
     dest: &Path,
     expected_checksum: Option<&str>,
+    mut on_progress: Option<&mut dyn FnMut(u64, Option<u64>)>,
 ) -> anyhow::Result<()> {
     use std::fs;
+    use std::io::Read;
 
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
     }
 
     let response = ureq::get(url).call()?;
+    let content_length: Option<u64> = response
+        .headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok());
     let mut reader = response.into_body().into_reader();
 
     let tmp_path = dest.with_extension("tmp");
     let mut file = fs::File::create(&tmp_path)?;
-    std::io::copy(&mut reader, &mut file)?;
+
+    let mut buf = [0u8; 65_536];
+    let mut written: u64 = 0;
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        std::io::Write::write_all(&mut file, &buf[..n])?;
+        written += n as u64;
+        if let Some(cb) = &mut on_progress {
+            cb(written, content_length);
+        }
+    }
 
     if let Some(expected) = expected_checksum {
         verify_sha256(&tmp_path, expected).inspect_err(|_| {

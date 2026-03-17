@@ -439,6 +439,9 @@ fn install_interactive(project: Option<Utf8PathBuf>, dev: bool) -> anyhow::Resul
         anyhow::bail!("no supported integrations detected on this system");
     }
 
+    // Offer to download the default transcription model.
+    prompt_model_download();
+
     // Summary
     let installed_count = outcomes.iter().filter(|o| o.is_installed()).count();
     if installed_count > 0 {
@@ -533,6 +536,9 @@ fn install_noninteractive(project: Option<Utf8PathBuf>, dev: bool) -> anyhow::Re
             }),
         }
     }
+
+    // Download the default transcription model (non-interactive: no prompt).
+    download_default_model();
 
     let installed_count = outcomes.iter().filter(|o| o.is_installed()).count();
     println!();
@@ -771,6 +777,57 @@ fn remove_browser_wrapper() {
     if let Ok(path) = which::which("attend") {
         let wrapper = path.with_file_name("attend-browser-bridge");
         let _ = std::fs::remove_file(wrapper);
+    }
+}
+
+/// Resolve the configured engine and default model path.
+fn resolve_default_engine() -> (crate::narrate::transcribe::Engine, camino::Utf8PathBuf) {
+    use crate::narrate::transcribe::Engine;
+
+    let cwd = camino::Utf8PathBuf::try_from(std::env::current_dir().unwrap_or_default())
+        .unwrap_or_default();
+    let config = crate::config::Config::load(&cwd);
+    let engine = config.engine.unwrap_or(Engine::Parakeet);
+    let model_path = config.model.unwrap_or_else(|| engine.default_model_path());
+    (engine, model_path)
+}
+
+/// Prompt to download the default transcription model (interactive install).
+fn prompt_model_download() {
+    let (engine, model_path) = resolve_default_engine();
+    if engine.is_model_cached(&model_path) {
+        return;
+    }
+
+    let desc = format!(
+        "Download {} transcription model ({})",
+        engine.display_name(),
+        engine.approx_download_size(),
+    );
+    match prompt_yn(&desc) {
+        Some(true) => {
+            if let Err(e) = super::model::download_with_progress(engine, &model_path) {
+                println!("  Model download failed: {}\n", concise_reason(&e));
+            }
+        }
+        Some(false) => {
+            println!(
+                "  Skipped. You can download later with: attend narrate model download\n"
+            );
+        }
+        None => {}
+    }
+}
+
+/// Download the default transcription model without prompting (non-interactive install).
+fn download_default_model() {
+    let (engine, model_path) = resolve_default_engine();
+    if engine.is_model_cached(&model_path) {
+        return;
+    }
+
+    if let Err(e) = super::model::download_with_progress(engine, &model_path) {
+        eprintln!("Model download failed: {}", concise_reason(&e));
     }
 }
 

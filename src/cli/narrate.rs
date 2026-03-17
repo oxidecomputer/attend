@@ -1,5 +1,7 @@
 use clap::Subcommand;
 
+use super::model::ModelCommand;
+
 /// Parse a human-friendly duration string (e.g. "7d", "24h", "30days").
 fn parse_duration(s: &str) -> Result<std::time::Duration, String> {
     humantime::parse_duration(s).map_err(|e| e.to_string())
@@ -20,6 +22,9 @@ pub enum NarrateCommand {
     Yank,
     /// Show recording and system status.
     Status,
+    /// Manage transcription models.
+    #[command(subcommand)]
+    Model(ModelCommand),
     /// Remove old archived narration files.
     Clean {
         /// Remove archives older than this duration (e.g. "7d", "24h", "30days").
@@ -68,6 +73,7 @@ impl NarrateCommand {
             NarrateCommand::Pause => record::pause(),
             NarrateCommand::Yank => record::yank(&*clock.for_thread()),
             NarrateCommand::Status => crate::narrate::status(),
+            NarrateCommand::Model(cmd) => cmd.run(),
             NarrateCommand::Clean { older_than } => crate::narrate::clean(older_than),
             NarrateCommand::RecordDaemon => record::daemon(clock),
             NarrateCommand::Bench => bench(),

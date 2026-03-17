@@ -6,6 +6,7 @@ mod install;
 mod listen;
 mod look;
 mod meditate;
+mod model;
 mod narrate;
 mod shell_hook;
 

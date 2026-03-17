@@ -136,9 +136,34 @@ pub(super) fn ensure_model(dir: &Utf8Path) -> anyhow::Result<()> {
 
         let url = format!("https://huggingface.co/{REPO}/resolve/main/{filename}");
         tracing::info!(filename, dir = %dir, "Downloading Parakeet model file...");
-        super::download_verified(&url, dest.as_std_path(), expected_checksum(filename))?;
+        super::download_verified(&url, dest.as_std_path(), expected_checksum(filename), None)?;
     }
 
     tracing::info!("Parakeet TDT model downloaded successfully.");
+    Ok(())
+}
+
+/// Like [`ensure_model`], but reports download progress via a callback.
+pub(super) fn ensure_model_with_progress(
+    dir: &Utf8Path,
+    on_progress: &mut dyn FnMut(&str, u64, Option<u64>),
+) -> anyhow::Result<()> {
+    if is_model_cached(dir) {
+        return Ok(());
+    }
+
+    fs::create_dir_all(dir)?;
+
+    for filename in MODEL_FILES {
+        let dest = dir.join(filename);
+        if dest.exists() {
+            continue;
+        }
+
+        let url = format!("https://huggingface.co/{REPO}/resolve/main/{filename}");
+        let mut cb = |bytes, total| on_progress(filename, bytes, total);
+        super::download_verified(&url, dest.as_std_path(), expected_checksum(filename), Some(&mut cb))?;
+    }
+
     Ok(())
 }
