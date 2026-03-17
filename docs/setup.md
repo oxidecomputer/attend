@@ -11,12 +11,12 @@ Narration is controlled by four commands. These are most convenient when bound
 to hotkeys you can reach without leaving your editor (or other applications
 like [browsers](#browser-integration)).
 
-| Command                 | Purpose                                                  |
-|-------------------------|----------------------------------------------------------|
-| `attend narrate toggle` | Start recording if idle, or send and stop recording      |
-| `attend narrate start`  | Start recording if idle, or send and keep recording      |
-| `attend narrate pause`  | Pause/resume recording                                   |
-| `attend narrate yank`   | Stop recording, and copy to clipboard instead of sending |
+| Command                 | Purpose                                                    |
+|-------------------------|------------------------------------------------------------|
+| `attend narrate toggle` | Start recording if idle, or send and stop recording        |
+| `attend narrate start`  | Start recording if idle, or send and keep recording        |
+| `attend narrate pause`  | Pause/resume recording *without* sending it                |
+| `attend narrate yank`   | Stop recording, and copy to clipboard *instead of* sending |
 
 ### Zed
 
@@ -24,10 +24,10 @@ like [browsers](#browser-integration)).
 
 | macOS  | Linux     | Task                     |
 |--------|-----------|--------------------------|
-| `⌘ ;` | `Super ;` | attend: toggle narration |
-| `⌘ :` | `Super :` | attend: start narration  |
-| `⌘ {` | `Super {` | attend: pause narration  |
-| `⌘ }` | `Super }` | attend: yank narration   |
+| `⌘ ;`  | `Super ;` | attend: toggle narration |
+| `⌘ :`  | `Super :` | attend: start narration  |
+| `⌘ {`  | `Super {` | attend: pause narration  |
+| `⌘ }`  | `Super }` | attend: yank narration   |
 
 Reinstallation respects any keybinding changes you've made within Zed.
 
