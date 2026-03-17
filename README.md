@@ -81,6 +81,8 @@ start narrating with your coding agent.
   agent actually receives
 
 **How-to guides:**
+- [**Narrating effectively**](docs/how-to/narrating-effectively.md) — get the
+  most out of voice-driven pair programming
 - [**Hotkeys**](docs/how-to/hotkeys.md) — configure narration hotkeys in Zed,
   globally, and in iTerm2
 - [**Browser integration**](docs/how-to/browser-integration.md) — capture text
