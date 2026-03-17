@@ -223,6 +223,7 @@ If you installed the Claude Code plugin, also uninstall it:
 
 ```
 /plugin uninstall attend@attend
+/plugin marketplace remove attend
 ```
 
 Or, specify a particular `--agent` or `--editor` for `attend uninstall` to
