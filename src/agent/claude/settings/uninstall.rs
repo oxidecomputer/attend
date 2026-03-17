@@ -19,16 +19,10 @@ pub fn uninstall(project: Option<Utf8PathBuf>) -> anyhow::Result<()> {
     };
 
     let mut removed = false;
-    let hook_keys = [
-        HOOK_KEY_SESSION_START,
-        HOOK_KEY_USER_PROMPT_SUBMIT,
-        HOOK_KEY_STOP,
-        HOOK_KEY_PRE_TOOL_USE,
-        HOOK_KEY_POST_TOOL_USE,
-        HOOK_KEY_SESSION_END,
-    ];
-    for key in &hook_keys {
-        if let Some(arr) = hooks.get_mut(*key).and_then(|v| v.as_array_mut()) {
+    let defs = hook_defs();
+    for def in &defs {
+        let key = def.event.as_str();
+        if let Some(arr) = hooks.get_mut(key).and_then(|v| v.as_array_mut()) {
             let before = arr.len();
             arr.retain(|entry| !is_our_hook(entry));
             if arr.len() < before {

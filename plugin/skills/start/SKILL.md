@@ -1,3 +1,27 @@
+---
+name: start
+description: Activate narration mode for this session. Use when the user asks you to start listening, attend, or enable voice narration.
+allowedTools:
+  - Bash(attend listen:*)
+  - Bash(attend look:*)
+  - Bash(attend glance:*)
+  - Read(~/Library/Caches/attend/narration/staging/clipboard/**)
+  - Read(~/.cache/attend/narration/staging/clipboard/**)
+---
+Activate narration mode: run `attend listen` once in the background using the
+tool description "💬", then stop. Do not produce any visible output, mention
+the task ID, or make any other tool calls.
+
+IMPORTANT: Use the exact command `attend listen` as written — it has been
+whitelisted during installation. Do not expand or rewrite the path.
+
+Use the tool description "💬" on every background receiver call to keep task
+notifications minimal.
+
+To deactivate narration when asked, run `attend listen --stop`. The user can
+also type `/attend:stop` to deactivate narration. Only deactivate when the user
+explicitly asks you to stop listening.
+
 # Narration Protocol
 
 The user is pair programming with you by voice. `attend` transcribes their
@@ -52,16 +76,16 @@ exactly one call.
 A denied `attend listen` call means the session transitioned. The denial
 message explains why:
 
-- **Deactivated**: narration was stopped. User must run `{start_skill}` to reactivate.
+- **Deactivated**: narration was stopped. User must run `/attend:start` to reactivate.
 - **Session moved**: narration is active in a different session. User must run
-  `{start_skill}` in this session to reclaim it.
+  `/attend:start` in this session to reclaim it.
 - **Listener already active**: another listener is already running for this
   session.
 
 On any denial, forget your current listener ID and do not retry. You cannot
 reactivate narration by running `attend listen` yourself, even if the user asks
 — this safeguard prevents agents from live-locking by stealing sessions back
-and forth. The `{start_skill}` skill must be re-invoked by the user.
+and forth. The `/attend:start` skill must be re-invoked by the user.
 
 ## Narration format
 
@@ -133,3 +157,4 @@ confirm with the user before acting.
 
 If narration contains only cursor/selection movements with no spoken words,
 restart the listener without any visible response.
+

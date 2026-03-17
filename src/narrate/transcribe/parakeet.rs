@@ -162,7 +162,12 @@ pub(super) fn ensure_model_with_progress(
 
         let url = format!("https://huggingface.co/{REPO}/resolve/main/{filename}");
         let mut cb = |bytes, total| on_progress(filename, bytes, total);
-        super::download_verified(&url, dest.as_std_path(), expected_checksum(filename), Some(&mut cb))?;
+        super::download_verified(
+            &url,
+            dest.as_std_path(),
+            expected_checksum(filename),
+            Some(&mut cb),
+        )?;
     }
 
     Ok(())

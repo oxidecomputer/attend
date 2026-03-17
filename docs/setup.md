@@ -219,5 +219,11 @@ attend uninstall
 cargo uninstall attend
 ```
 
+If you installed the Claude Code plugin, also uninstall it:
+
+```
+/plugin uninstall attend@attend
+```
+
 Or, specify a particular `--agent` or `--editor` for `attend uninstall` to
 uninstall only the integrations for that.

@@ -39,19 +39,21 @@ The important lines:
 
 ## 2. Activate narration for your agent
 
-In your agent session, run the `/attend` slash command. This tells `attend` to
-deliver narration to *this session* and nowhere else. The agent is instructed
-not to emit confirmation, but you should see a background task start `attend
-listen`.
+In your agent session, run the activation slash command:
+
+- **Plugin install:** `/attend:start` (stop with `/attend:stop`)
+- **Manual install:** `/attend` (stop with `/unattend`)
+
+This tells `attend` to deliver narration to *this session* and nowhere else.
+The agent is instructed not to emit confirmation, but you should see a
+background task start `attend listen`.
 
 Without this step, narration will have no place to be delivered, and will
 default to the system clipboard instead.
 
-**Switching sessions:** if you have multiple Claude Code sessions, run
-`/attend` in whichever one you want to receive narration. The previous
+**Switching sessions:** if you have multiple Claude Code sessions, run the
+activation command in whichever one you want to receive narration. The previous
 session releases ownership automatically.
-
-**Stopping delivery:** use `/unattend`, or ask the agent to stop listening.
 
 ## 3. Your first narration
 

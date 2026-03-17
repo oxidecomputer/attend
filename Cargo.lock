@@ -5284,6 +5284,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "serde",
+ "serde_json",
  "serde_yaml 0.9.34+deprecated",
  "tempfile",
  "ureq",

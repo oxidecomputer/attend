@@ -1,0 +1,22 @@
+{
+  "name": "attend",
+  "owner": {
+    "name": "Oxide Computer Company"
+  },
+  "metadata": {
+    "description": "Voice-driven pair programming plugins",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "attend",
+      "source": "./plugin",
+      "description": "Voice-driven pair programming. Requires the attend binary (cargo install attend).",
+      "version": "0.1.0",
+      "author": { "name": "Oxide Computer Company" },
+      "repository": "https://github.com/oxidecomputer/attend",
+      "license": "MIT",
+      "keywords": ["voice", "narration", "pair-programming", "accessibility"]
+    }
+  ]
+}

@@ -4,13 +4,29 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use camino::Utf8PathBuf;
 
-/// Claude Code hook configuration keys.
-const HOOK_KEY_SESSION_START: &str = "SessionStart";
-const HOOK_KEY_USER_PROMPT_SUBMIT: &str = "UserPromptSubmit";
-const HOOK_KEY_STOP: &str = "Stop";
-const HOOK_KEY_PRE_TOOL_USE: &str = "PreToolUse";
-const HOOK_KEY_POST_TOOL_USE: &str = "PostToolUse";
-const HOOK_KEY_SESSION_END: &str = "SessionEnd";
+/// Shared hook definitions: the single source of truth for which Claude Code
+/// hooks attend installs, their subcommands, timeouts, and matchers.
+///
+/// Consumed by `install.rs` (manual hook injection into settings.json),
+/// `uninstall.rs` (removal), and `cargo xtask sync-plugin` (plugin
+/// hooks.json generation).
+const HOOK_DEFS_JSON: &str = include_str!("hook_defs.json");
+
+/// Parsed hook definition from `hook_defs.json`.
+#[derive(serde::Deserialize)]
+pub(super) struct HookDef {
+    pub event: String,
+    pub subcommand: String,
+    #[serde(default)]
+    pub matcher: Option<String>,
+    #[serde(default)]
+    pub timeout: Option<u64>,
+}
+
+/// Parse hook definitions from the embedded JSON.
+pub(super) fn hook_defs() -> Vec<HookDef> {
+    serde_json::from_str(HOOK_DEFS_JSON).expect("hook_defs.json is invalid")
+}
 
 /// Marker key added to every hook entry we install.
 ///

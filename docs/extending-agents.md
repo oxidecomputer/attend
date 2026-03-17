@@ -192,7 +192,7 @@ all agents. Use `include_str!` to embed them:
 | Template | Purpose | Placeholders |
 |----------|---------|--------------|
 | `editor_context_instructions.txt` | How to interpret `<editor-context>` tags and use `attend look` | `{bin_cmd}` |
-| `narration_protocol.md` | Full narration protocol: silence requirement, two delivery paths, receiver restart behavior, `<narration>` tag format, cursor-only handling, `include_dirs` | None |
+| `narration_protocol.md` | Full narration protocol: silence requirement, two delivery paths, receiver restart behavior, `<narration>` tag format, cursor-only handling, `include_dirs` | `{start_skill}` |
 | `narration_pause.txt` | "Pause and consider narration before using tools" | None |
 | `activate_response.txt` | Confirmation when narration is activated | None |
 | `deactivate_response.txt` | Confirmation when narration is deactivated | None |
@@ -208,9 +208,10 @@ Agent-specific templates go in `src/agent/<name>/messages/`. Claude keeps
 two files there:
 
 - `skill_frontmatter.md` — YAML metadata for Claude Code's skill system
+  (`{skill_name}`, `{bin_cmd}`)
 - `skill_body.md` — Claude-specific activation instructions (how to run the
-  listener in the background, tool description hints) plus a
-  `{narration_protocol}` placeholder that pulls in the shared protocol
+  listener in the background, tool description hints) plus
+  `{narration_protocol}`, `{bin_cmd}`, and `{stop_skill}` placeholders
 
 Your agent may want to use different content because of differences in how its
 execution harness operates.

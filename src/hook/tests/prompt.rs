@@ -59,6 +59,18 @@ fn partial() {
     assert!(!is_attend_prompt(&input));
 }
 
+/// Plugin-namespaced `/attend:start` activates narration.
+#[test]
+fn plugin_attend_start() {
+    let input = HookInput {
+        kind: HookKind::UserPrompt {
+            prompt: Some("/attend:start".into()),
+        },
+        ..Default::default()
+    };
+    assert!(is_attend_prompt(&input));
+}
+
 // ---------------------------------------------------------------------------
 // is_unattend_prompt tests
 // ---------------------------------------------------------------------------
@@ -109,4 +121,16 @@ fn unattend_partial() {
         ..Default::default()
     };
     assert!(!is_unattend_prompt(&input));
+}
+
+/// Plugin-namespaced `/attend:stop` deactivates narration.
+#[test]
+fn plugin_attend_stop() {
+    let input = HookInput {
+        kind: HookKind::UserPrompt {
+            prompt: Some("/attend:stop".into()),
+        },
+        ..Default::default()
+    };
+    assert!(is_unattend_prompt(&input));
 }

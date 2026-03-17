@@ -163,18 +163,124 @@ fn sign_extension() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Generate the plugin's hooks.json and SKILL.md files from shared sources.
+///
+/// Both the manual install path (`attend install --agent claude`) and the
+/// plugin consume the same definitions:
+/// - `src/agent/claude/hook_defs.json` — hook events, subcommands, timeouts
+/// - `src/agent/claude/messages/skill_*.md` — skill templates
+/// - `src/agent/messages/narration_protocol.md` — narration protocol
+///
+/// This command substitutes `bin_cmd = "attend"` and plugin-appropriate
+/// skill names, then writes the results to `plugin/`.
+///
+/// Regenerate with:
+///
+///     cargo xtask sync-plugin
+fn sync_plugin() -> anyhow::Result<()> {
+    let root = workspace_root();
+
+    // --- hooks.json from hook_defs.json ---
+
+    let hook_defs: Vec<serde_json::Value> = serde_json::from_str(
+        &std::fs::read_to_string(root.join("src/agent/claude/hook_defs.json"))
+            .context("failed to read hook_defs.json")?,
+    )
+    .context("hook_defs.json is invalid")?;
+
+    let mut hooks_map = serde_json::Map::new();
+    for def in &hook_defs {
+        let event = def["event"].as_str().context("missing event")?;
+        let subcommand = def["subcommand"].as_str().context("missing subcommand")?;
+
+        let mut inner = serde_json::json!({
+            "type": "command",
+            "command": format!("attend hook {subcommand} --agent claude"),
+        });
+        if let Some(timeout) = def.get("timeout").and_then(|t| t.as_u64()) {
+            inner["timeout"] = serde_json::json!(timeout);
+        }
+
+        let mut entry = serde_json::json!({ "hooks": [inner] });
+        if let Some(matcher) = def.get("matcher").and_then(|m| m.as_str()) {
+            entry["matcher"] = serde_json::json!(matcher);
+        }
+
+        hooks_map.insert(event.to_string(), serde_json::json!([entry]));
+    }
+
+    let hooks_json =
+        serde_json::to_string_pretty(&serde_json::json!({ "hooks": hooks_map }))? + "\n";
+
+    let hooks_dir = root.join("plugin/hooks");
+    std::fs::create_dir_all(&hooks_dir)
+        .with_context(|| format!("failed to create {}", hooks_dir.display()))?;
+    std::fs::write(hooks_dir.join("hooks.json"), &hooks_json)
+        .context("failed to write hooks.json")?;
+    eprintln!("wrote plugin/hooks/hooks.json");
+
+    // --- SKILL.md files from skill templates ---
+
+    let frontmatter =
+        std::fs::read_to_string(root.join("src/agent/claude/messages/skill_frontmatter.md"))
+            .context("failed to read skill_frontmatter.md")?;
+    let body = std::fs::read_to_string(root.join("src/agent/claude/messages/skill_body.md"))
+        .context("failed to read skill_body.md")?;
+    let protocol = std::fs::read_to_string(root.join("src/agent/messages/narration_protocol.md"))
+        .context("failed to read narration_protocol.md")?;
+    let unattend_frontmatter = std::fs::read_to_string(
+        root.join("src/agent/claude/messages/skill_unattend_frontmatter.md"),
+    )
+    .context("failed to read skill_unattend_frontmatter.md")?;
+
+    // /attend:start skill
+    let start_content = format!(
+        "{}{}",
+        frontmatter
+            .replace("{skill_name}", "start")
+            .replace("{bin_cmd}", "attend"),
+        body.replace("{bin_cmd}", "attend")
+            .replace("{stop_skill}", "/attend:stop")
+            .replace(
+                "{narration_protocol}",
+                &protocol.replace("{start_skill}", "/attend:start"),
+            ),
+    );
+
+    let start_dir = root.join("plugin/skills/start");
+    std::fs::create_dir_all(&start_dir)
+        .with_context(|| format!("failed to create {}", start_dir.display()))?;
+    std::fs::write(start_dir.join("SKILL.md"), &start_content)
+        .context("failed to write start/SKILL.md")?;
+    eprintln!("wrote plugin/skills/start/SKILL.md");
+
+    // /attend:stop skill
+    let stop_content = unattend_frontmatter.replace("{skill_name}", "stop");
+
+    let stop_dir = root.join("plugin/skills/stop");
+    std::fs::create_dir_all(&stop_dir)
+        .with_context(|| format!("failed to create {}", stop_dir.display()))?;
+    std::fs::write(stop_dir.join("SKILL.md"), &stop_content)
+        .context("failed to write stop/SKILL.md")?;
+    eprintln!("wrote plugin/skills/stop/SKILL.md");
+
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     match args.first().map(|s| s.as_str()) {
         Some("gen-gfm-languages") => gen_gfm_languages(),
         Some("sign-extension") => sign_extension(),
+        Some("sync-plugin") => sync_plugin(),
         Some(other) => bail!("unknown command: {other}"),
         None => bail!(
             "usage: cargo xtask <command>\n\n\
              commands:\n  \
              gen-gfm-languages  Regenerate src/view/gfm_languages.rs from Linguist\n  \
-             sign-extension     Sign the Firefox extension via AMO (unlisted)"
+             sign-extension     Sign the Firefox extension via AMO (unlisted)\n  \
+             sync-plugin        Regenerate plugin/skills/ from shared templates"
         ),
     }
 }

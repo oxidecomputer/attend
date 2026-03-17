@@ -134,6 +134,11 @@ With no flags, `attend install` detects which integrations are available on your
 system and prompts you to confirm each one. With explicit flags, it installs
 only what you specify and fails on errors.
 
+If the `attend` Claude Code plugin is already enabled, `--agent claude` writes
+only the permission grants that the plugin needs (plugins cannot set
+permissions). Without the plugin, it performs a full manual installation of
+hooks and skills.
+
 **Flags:**
 
 | Flag | Description |
@@ -233,7 +238,8 @@ attend hook --agent claude session-end
 ### `attend listen`
 
 Wait for pending narration and deliver it to the agent. Started as a background
-task by the agent after `/attend` is invoked.
+task by the agent after `/attend` (or `/attend:start` with the plugin) is
+invoked.
 
 | Flag | Description |
 |------|-------------|

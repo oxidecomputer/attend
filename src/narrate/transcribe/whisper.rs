@@ -206,7 +206,12 @@ pub(super) fn ensure_model(model_path: &Utf8Path) -> anyhow::Result<()> {
     let url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}");
 
     tracing::info!(path = %model_path, "Downloading Whisper model...");
-    super::download_verified(&url, model_path.as_std_path(), expected_checksum(filename), None)?;
+    super::download_verified(
+        &url,
+        model_path.as_std_path(),
+        expected_checksum(filename),
+        None,
+    )?;
     tracing::info!("Whisper model downloaded successfully.");
 
     Ok(())
@@ -227,7 +232,12 @@ pub(super) fn ensure_model_with_progress(
     let url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}");
 
     let mut cb = |bytes, total| on_progress(filename, bytes, total);
-    super::download_verified(&url, model_path.as_std_path(), expected_checksum(filename), Some(&mut cb))?;
+    super::download_verified(
+        &url,
+        model_path.as_std_path(),
+        expected_checksum(filename),
+        Some(&mut cb),
+    )?;
 
     Ok(())
 }

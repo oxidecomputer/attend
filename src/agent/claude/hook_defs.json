@@ -1,0 +1,32 @@
+[
+  {
+    "event": "SessionStart",
+    "subcommand": "session-start",
+    "matcher": "startup|clear|compact"
+  },
+  {
+    "event": "UserPromptSubmit",
+    "subcommand": "user-prompt",
+    "timeout": 5
+  },
+  {
+    "event": "Stop",
+    "subcommand": "stop",
+    "timeout": 10
+  },
+  {
+    "event": "PreToolUse",
+    "subcommand": "pre-tool-use",
+    "timeout": 10
+  },
+  {
+    "event": "PostToolUse",
+    "subcommand": "post-tool-use",
+    "timeout": 10
+  },
+  {
+    "event": "SessionEnd",
+    "subcommand": "session-end",
+    "timeout": 5
+  }
+]

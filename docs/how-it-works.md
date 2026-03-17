@@ -61,13 +61,13 @@ could be improved for even lower latency in the future.)
 A **session** is one continuous conversation with a coding agent (e.g., one
 Claude Code session). Each session has a unique ID.
 
-When you run `/attend` in your agent, it creates a **listening file** that
-claims ownership of narration delivery for that session. Narration is delivered
-only to the session that owns the listening file, or to the clipboard if no
-session exists.
+When you activate narration in your agent (`/attend` or `/attend:start`), it
+creates a **listening file** that claims ownership of narration delivery for
+that session. Narration is delivered only to the session that owns the listening
+file, or to the clipboard if no session exists.
 
-**Displacement:** if you run `/attend` in a different session, it takes over
-the listening file. The previous session's background listener detects the
+**Displacement:** if you activate narration in a different session, it takes
+over the listening file. The previous session's background listener detects the
 change and exits gracefully. This means you can freely switch which session
 receives your narration.
 

@@ -125,6 +125,7 @@ fn has_explicit_is_false_when_all_empty() {
 
 /// Specific flags set `has_explicit` to true, using targeted mode.
 #[test]
+#[allow(clippy::type_complexity)]
 fn has_explicit_is_true_with_any_flag() {
     let cases: Vec<(Vec<String>, Vec<String>, Vec<String>, Vec<String>)> = vec![
         (vec!["claude".into()], vec![], vec![], vec![]),

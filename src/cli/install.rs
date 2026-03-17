@@ -811,9 +811,7 @@ fn prompt_model_download() {
             }
         }
         Some(false) => {
-            println!(
-                "  Skipped. You can download later with: attend narrate model download\n"
-            );
+            println!("  Skipped. You can download later with: attend narrate model download\n");
         }
         None => {}
     }

@@ -84,6 +84,7 @@ cargo xtask <command>
 |---------|---------|
 | `gen-gfm-languages` | Regenerate `src/view/gfm_languages.rs` from GitHub Linguist's `languages.yml` |
 | `sign-extension` | Sign the Firefox extension as an unlisted AMO add-on |
+| `sync-plugin` | Regenerate `plugin/` from shared templates and hook definitions |
 
 ### `gen-gfm-languages`
 

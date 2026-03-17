@@ -51,18 +51,20 @@ pub(super) fn parse_listen_command(cmd: &str, bin_name: &str) -> Option<ListenCo
     }
 }
 
-/// Check if the user prompt is `/attend`.
+/// Check if the user prompt is `/attend` (manual install) or `/attend:start` (plugin).
 pub(super) fn is_attend_prompt(input: &HookInput) -> bool {
     matches!(
         &input.kind,
-        HookKind::UserPrompt { prompt: Some(p) } if p.trim() == "/attend"
+        HookKind::UserPrompt { prompt: Some(p) }
+            if matches!(p.trim(), "/attend" | "/attend:start")
     )
 }
 
-/// Check if the user prompt is `/unattend`.
+/// Check if the user prompt is `/unattend` (manual install) or `/attend:stop` (plugin).
 pub(super) fn is_unattend_prompt(input: &HookInput) -> bool {
     matches!(
         &input.kind,
-        HookKind::UserPrompt { prompt: Some(p) } if p.trim() == "/unattend"
+        HookKind::UserPrompt { prompt: Some(p) }
+            if matches!(p.trim(), "/unattend" | "/attend:stop")
     )
 }

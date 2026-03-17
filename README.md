@@ -30,19 +30,41 @@ See [example narration](docs/example-narration.md) for what the agent receives.
 
 ## Installation
 
-You'll need [Rust](https://rust-lang.org/learn/get-started):
+You'll need [Rust](https://rust-lang.org/learn/get-started) to install `attend`:
 
 ```bash
 cargo install --locked --git https://github.com/oxidecomputer/attend attend
 ```
 
-Then, install `attend`'s context-capture integrations:
+### Claude Code plugin (recommended)
+
+The easiest way to integrate with Claude Code is to install the `attend`
+plugin:
+
+```
+/plugin marketplace add oxidecomputer/attend
+/plugin install attend@attend
+```
+
+Then write the required permissions (plugins cannot set these):
+
+```bash
+attend install --agent claude
+```
+
+When the plugin is detected, this writes only the permission grants that the
+plugin needs. Without the plugin, it performs a full manual installation of
+hooks and skills.
+
+### Other integrations
+
+Install editor, browser, and shell integrations:
 
 ```bash
 attend install
 ```
 
-This detects which integrations are available on your system (editors, agents,
+This detects which integrations are available on your system (editors,
 browsers, shells) and prompts you to confirm each one. It also provides the
 option of pre-downloading a local transcription model, so that it's ready on
 first-run (it will be downloaded anyhow when you first narrate).

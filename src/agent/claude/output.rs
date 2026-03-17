@@ -174,10 +174,12 @@ fn guidance_message(reason: &GuidanceReason) -> &'static str {
 /// Uses `skill_body.md` — the same body as the installed SKILL.md,
 /// so the instructions stay consistent with the skill template.
 fn narration_instructions(bin_cmd: &str) -> String {
-    let protocol = include_str!("../messages/narration_protocol.md");
+    let protocol =
+        include_str!("../messages/narration_protocol.md").replace("{start_skill}", "/attend");
     let body = format!(
         include_str!("messages/skill_body.md"),
         bin_cmd = bin_cmd,
+        stop_skill = "/unattend",
         narration_protocol = protocol,
     );
     format!("\n<narration-instructions>\n{body}</narration-instructions>\n")

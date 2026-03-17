@@ -2,6 +2,11 @@ use camino::Utf8PathBuf;
 
 use super::*;
 
+/// All hook event names, derived from the shared hook definitions.
+fn all_hook_keys() -> Vec<String> {
+    hook_defs().into_iter().map(|d| d.event).collect()
+}
+
 /// Helper: read the settings JSON from a project tempdir.
 fn read_settings(project: &std::path::Path) -> serde_json::Value {
     let path = project.join(".claude/settings.local.json");
@@ -23,22 +28,11 @@ fn install_fresh_project() {
     let settings = read_settings(dir.path());
     let hooks = settings["hooks"].as_object().unwrap();
 
-    // All five hook keys should be present
-    assert!(hooks.contains_key(HOOK_KEY_SESSION_START));
-    assert!(hooks.contains_key(HOOK_KEY_USER_PROMPT_SUBMIT));
-    assert!(hooks.contains_key(HOOK_KEY_STOP));
-    assert!(hooks.contains_key(HOOK_KEY_PRE_TOOL_USE));
-    assert!(hooks.contains_key(HOOK_KEY_POST_TOOL_USE));
+    // All hook keys from the shared defs should be present.
+    for key in all_hook_keys() {
+        assert!(hooks.contains_key(&key), "{key} should be present");
 
-    // Each should have exactly one entry with our marker
-    for key in [
-        HOOK_KEY_SESSION_START,
-        HOOK_KEY_USER_PROMPT_SUBMIT,
-        HOOK_KEY_STOP,
-        HOOK_KEY_PRE_TOOL_USE,
-        HOOK_KEY_POST_TOOL_USE,
-    ] {
-        let arr = hooks[key].as_array().unwrap();
+        let arr = hooks[&key].as_array().unwrap();
         assert_eq!(arr.len(), 1, "{key} should have exactly one entry");
         assert!(is_our_hook(&arr[0]), "{key} should be our hook");
     }
@@ -61,14 +55,8 @@ fn install_idempotent() {
     let hooks = settings["hooks"].as_object().unwrap();
 
     // Each hook array should still have exactly one entry
-    for key in [
-        HOOK_KEY_SESSION_START,
-        HOOK_KEY_USER_PROMPT_SUBMIT,
-        HOOK_KEY_STOP,
-        HOOK_KEY_PRE_TOOL_USE,
-        HOOK_KEY_POST_TOOL_USE,
-    ] {
-        let arr = hooks[key].as_array().unwrap();
+    for key in all_hook_keys() {
+        let arr = hooks[&key].as_array().unwrap();
         assert_eq!(
             arr.len(),
             1,
@@ -161,13 +149,11 @@ fn uninstall_leaves_other_hooks() {
     assert!(!is_our_hook(&ss_arr[0]));
 
     // Other hook arrays should be empty (only had attend entries)
-    for key in [
-        HOOK_KEY_USER_PROMPT_SUBMIT,
-        HOOK_KEY_STOP,
-        HOOK_KEY_PRE_TOOL_USE,
-        HOOK_KEY_POST_TOOL_USE,
-    ] {
-        let arr = hooks[key].as_array().unwrap();
+    for key in all_hook_keys() {
+        if key == "SessionStart" {
+            continue;
+        }
+        let arr = hooks[&key].as_array().unwrap();
         assert!(arr.is_empty(), "{key} should be empty after uninstall");
     }
 
@@ -230,14 +216,8 @@ fn install_uninstall_round_trip() {
     let hooks = settings["hooks"].as_object().unwrap();
 
     // All hook arrays should be empty
-    for key in [
-        HOOK_KEY_SESSION_START,
-        HOOK_KEY_USER_PROMPT_SUBMIT,
-        HOOK_KEY_STOP,
-        HOOK_KEY_PRE_TOOL_USE,
-        HOOK_KEY_POST_TOOL_USE,
-    ] {
-        let arr = hooks[key].as_array().unwrap();
+    for key in all_hook_keys() {
+        let arr = hooks[&key].as_array().unwrap();
         assert!(arr.is_empty(), "{key} should be empty after round-trip");
     }
 }
@@ -369,24 +349,14 @@ fn install_uses_bin_cmd() {
     assert!(cmd.starts_with("/usr/local/bin/attend"));
 }
 
-/// All hook keys we install, for exhaustive assertions.
-const ALL_HOOK_KEYS: &[&str] = &[
-    HOOK_KEY_SESSION_START,
-    HOOK_KEY_USER_PROMPT_SUBMIT,
-    HOOK_KEY_STOP,
-    HOOK_KEY_PRE_TOOL_USE,
-    HOOK_KEY_POST_TOOL_USE,
-    HOOK_KEY_SESSION_END,
-];
-
 /// Helper: count attend hook entries across all hook keys.
 fn count_attend_hooks(settings: &serde_json::Value) -> usize {
     let hooks = settings["hooks"].as_object().unwrap();
-    ALL_HOOK_KEYS
+    all_hook_keys()
         .iter()
         .map(|key| {
             hooks
-                .get(*key)
+                .get(key.as_str())
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter().filter(|e| is_our_hook(e)).count())
                 .unwrap_or(0)
@@ -409,9 +379,10 @@ fn install_many_times_no_duplicates() {
 
     let settings = read_settings(dir.path());
     let hooks = settings["hooks"].as_object().unwrap();
+    let keys = all_hook_keys();
 
-    for key in ALL_HOOK_KEYS {
-        let arr = hooks[*key].as_array().unwrap();
+    for key in &keys {
+        let arr = hooks[key.as_str()].as_array().unwrap();
         let ours: Vec<_> = arr.iter().filter(|e| is_our_hook(e)).collect();
         assert_eq!(
             ours.len(),
@@ -423,7 +394,7 @@ fn install_many_times_no_duplicates() {
 
     assert_eq!(
         count_attend_hooks(&settings),
-        ALL_HOOK_KEYS.len(),
+        keys.len(),
         "total attend hooks should equal number of hook keys"
     );
 }
@@ -467,5 +438,159 @@ fn install_uninstall_install_cycle() {
     assert_eq!(
         after_first_install["hooks"], after_reinstall["hooks"],
         "hooks should match after install-uninstall-install cycle"
+    );
+}
+
+/// When the attend plugin is enabled, install writes only permissions
+/// (no hooks, no skill files).
+#[test]
+fn install_plugin_mode_permissions_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings_dir = dir.path().join(".claude");
+    fs::create_dir_all(&settings_dir).unwrap();
+
+    // Simulate the plugin being enabled.
+    let existing = serde_json::json!({
+        "enabledPlugins": { "attend@attend": true }
+    });
+    fs::write(
+        settings_dir.join("settings.local.json"),
+        serde_json::to_string_pretty(&existing).unwrap(),
+    )
+    .unwrap();
+
+    install::install("attend", Some(project_path(&dir))).unwrap();
+
+    let settings = read_settings(dir.path());
+
+    // No hooks should be written.
+    assert!(
+        settings.get("hooks").is_none(),
+        "plugin mode should not write hooks"
+    );
+
+    // Permissions should still be present.
+    let allow = settings["permissions"]["allow"].as_array().unwrap();
+    assert!(allow.iter().any(|v| v.as_str().unwrap().contains("look")));
+    assert!(allow
+        .iter()
+        .any(|v| v.as_str().unwrap().contains("listen")));
+
+    // No skill files should be created.
+    assert!(
+        !dir.path().join(".claude/skills/attend").exists(),
+        "plugin mode should not write skill files"
+    );
+    assert!(
+        !dir.path().join(".claude/skills/unattend").exists(),
+        "plugin mode should not write skill files"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Plugin parity tests
+//
+// The manual install (`attend install --agent claude`) and the plugin
+// (`plugin/`) are generated from the same sources. These tests verify they
+// stay structurally equivalent.
+// ---------------------------------------------------------------------------
+
+/// The hooks written by manual install match the plugin's hooks.json.
+///
+/// Uses `bin_cmd = "attend"` so the command strings are identical.
+/// The only expected difference is the `_installed_by` marker that the
+/// manual install adds for idempotent re-install/uninstall.
+#[test]
+fn manual_hooks_match_plugin() {
+    let dir = tempfile::tempdir().unwrap();
+    install::install("attend", Some(project_path(&dir))).unwrap();
+
+    let settings = read_settings(dir.path());
+    let installed = settings["hooks"].as_object().unwrap();
+
+    let plugin_json: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../plugin/hooks/hooks.json")).unwrap();
+    let plugin = plugin_json["hooks"].as_object().unwrap();
+
+    // Same set of hook events.
+    let installed_events: std::collections::BTreeSet<&str> =
+        installed.keys().map(|s| s.as_str()).collect();
+    let plugin_events: std::collections::BTreeSet<&str> =
+        plugin.keys().map(|s| s.as_str()).collect();
+    assert_eq!(
+        installed_events, plugin_events,
+        "manual and plugin should install the same hook events"
+    );
+
+    // For each event, the hook entry should be identical after stripping
+    // the _installed_by marker.
+    for event in &installed_events {
+        let installed_arr = installed[*event].as_array().unwrap();
+        let plugin_arr = plugin[*event].as_array().unwrap();
+
+        assert_eq!(
+            installed_arr.len(),
+            plugin_arr.len(),
+            "{event}: should have the same number of entries"
+        );
+
+        for (i, (inst, plug)) in installed_arr.iter().zip(plugin_arr.iter()).enumerate() {
+            let mut normalized = inst.clone();
+            normalized.as_object_mut().unwrap().remove(HOOK_MARKER_KEY);
+            assert_eq!(
+                normalized, *plug,
+                "{event}[{i}]: manual install (minus marker) should equal plugin"
+            );
+        }
+    }
+}
+
+/// The /attend SKILL.md from manual install matches the plugin's
+/// /attend:start SKILL.md, modulo the parameterized names.
+///
+/// Substitutions that differ between the two paths:
+///   - skill name: "attend" vs "start"
+///   - stop skill: "/unattend" vs "/attend:stop"
+///   - start skill (in protocol): "/attend" vs "/attend:start"
+///
+/// After normalizing these, the content should be identical.
+#[test]
+fn manual_start_skill_matches_plugin() {
+    let dir = tempfile::tempdir().unwrap();
+    install::install("attend", Some(project_path(&dir))).unwrap();
+
+    let manual = fs::read_to_string(dir.path().join(".claude/skills/attend/SKILL.md")).unwrap();
+    let plugin = include_str!("../../../../plugin/skills/start/SKILL.md");
+
+    // Normalize manual install to plugin conventions.
+    // Skill invocations are always backtick-delimited, so target those
+    // precisely to avoid mangling "attend" in cache paths.
+    let normalized = manual
+        .replace("name: attend\n", "name: start\n")
+        .replace("`/unattend`", "`/attend:stop`")
+        .replace("`/attend`", "`/attend:start`");
+
+    assert_eq!(
+        normalized, plugin,
+        "manual /attend SKILL.md should match plugin /attend:start SKILL.md \
+         after normalizing parameterized names"
+    );
+}
+
+/// The /unattend SKILL.md from manual install matches the plugin's
+/// /attend:stop SKILL.md, modulo the skill name.
+#[test]
+fn manual_stop_skill_matches_plugin() {
+    let dir = tempfile::tempdir().unwrap();
+    install::install("attend", Some(project_path(&dir))).unwrap();
+
+    let manual = fs::read_to_string(dir.path().join(".claude/skills/unattend/SKILL.md")).unwrap();
+    let plugin = include_str!("../../../../plugin/skills/stop/SKILL.md");
+
+    let normalized = manual.replace("name: unattend\n", "name: stop\n");
+    assert_eq!(
+        normalized, plugin,
+        "manual /unattend SKILL.md should match plugin /attend:stop SKILL.md \
+         after normalizing the skill name"
     );
 }
