@@ -1,88 +1,65 @@
 # `attend` is all you need
 
-Let your coding agent hear your voice and see what you're doing, as if you were
-screen-sharing on a voice call with a collaborator.
+Speak your thoughts while navigating code, and `attend` uses a local
+transcription model to send your words to your coding agent, interleaved with
+what you were manipulating on-screen as you spoke.
 
-Speak your thoughts while navigating code, and `attend` transcribes and delivers
-them as prompts: your words interleaved with what you were looking at as you
-spoke. Even when you're not actively narrating, `attend` queries your editor for
-cursor positions and selections, and injects that context into the conversation
-so your coding agent knows what's in front of you.
-
-## What ends up in the narration
-
-A narration weaves together up to seven sources of context, interleaved
-chronologically:
-
-- **Voice**: your speech, transcribed to text via a local model.
-- **Editor snapshots**: the code around your cursor or selection, with file
-  path and language.
-- **File diffs**: the net change to files you edited while speaking.
-- **External selections**: text you highlighted in almost any other application
-  (macOS only; requires granting the accessibility permission).
-- **Browser selections**: rich text you selected on a web page, with the page
-  URL and title.
-- **Clipboard**: text *or images* you copied during recording.
-- **Shell commands**: commands you ran, with exit status and duration.
-
-Editor snapshots, file diffs, and shell commands are scoped to the agent's
-working directory; those from outside it are marked as redacted to prevent
-unintended disclosure.
-
-Personally, I've found "pair programming" using `attend`'s voice narration is
-a rather different experience from typing my thoughts to a coding agent. There's
+I've found that pair programming using `attend`'s voice narration is a rather
+different experience from typing my thoughts to a coding agent. There's
 something very specific about *saying what I mean out loud* that forces me to
 slow down and consider more deeply.
 
 I invite you to see if you feel the same way.
 
-## Supported editors, agents, browsers, shells, platforms...
+## What it looks like
 
-- Editors: [Zed](https://zed.dev)
-- Agents: [Claude Code](https://claude.com/product/claude-code)
-- Browsers (optional): [Firefox](https://www.mozilla.org/firefox/),
-  [Chrome](https://www.google.com/chrome/)
-- Shells (optional): [Fish](https://fishshell.com/), [Zsh](https://www.zsh.org/)
-- Platforms: anything Unix-esque should work (if it doesn't, it's a bug!);
-  Windows is not supported currently
+Press a hotkey, say out loud, *"this function should take a Duration instead of
+a raw u64"* while your cursor is on the relevant code, and press the hotkey
+again.
 
-The architecture supports adding new editors, agents, shells, and browsers
-independently of one another. See the [extending guide](docs/extending.md)
-for how to add new integrations. Contributions welcome!
+Your coding agent receives your words interleaved with edits and selections in
+your text editor ([Zed](https://zed.dev)), selections from within your browser
+([Firefox](https://www.mozilla.org/firefox/) or
+[Chrome](https://www.google.com/chrome/)), clipboard contents (text and images),
+and shell commands ([Fish](https://fishshell.com/) or
+[Zsh](https://www.zsh.org/)), and even selections from arbitrary other apps
+(macOS only) — all in chronological order, so it can understand your words and
+actions in context with one another while you're narrating.
 
-## Installing
+See [example narration](docs/example-narration.md) for what the agent receives.
 
-To install `attend`, you'll need
-[Rust](https://rust-lang.org/learn/get-started/); then, you should:
+## Installation
+
+You'll need [Rust](https://rust-lang.org/learn/get-started):
 
 ```bash
 cargo install --locked --git https://github.com/oxidecomputer/attend attend
-attend install --agent claude --editor zed   # for example
 ```
 
-This installs the hooks that provide editor context to Claude Code, plus
-keybindings for narration control (start, pause, toggle, yank) from within
-Zed. See [Narration hotkeys](docs/setup.md#narration-hotkeys) for the full
-list.
-
-Optional integrations capture additional context while you narrate:
+Then, install `attend`'s context-capture integrations:
 
 ```bash
-attend install --browser firefox   # or: --browser chrome
-attend install --shell fish        # or: --shell zsh
+attend install
 ```
 
-See the [setup guide](docs/setup.md) for details on each integration, and
-guidance on setting up global hotkeys for `attend` (recommended).
+This detects which integrations are available on your system (editors, agents,
+browsers, shells) and prompts you to confirm each one. It also provides the
+option of pre-downloading a local transcription model, so that it's ready on
+first-run (it will be downloaded anyhow when you first narrate).
 
-## Next steps
+Then follow the [getting started guide](docs/getting-started.md) to start your
+first narrated session with your coding agent.
 
-- [**Setup guide**](docs/setup.md) — browser integration, shell integration,
-  narration hotkeys, agent integration, transcription model, configuration,
-  troubleshooting, and uninstall
-- [**Command reference**](docs/commands.md) — standalone tools, narration
-  commands, and agent integration commands
-- [**Extending attend**](docs/extending.md) — how to add support for new
-  editors and agents
-- [**Development**](docs/development.md) — building, testing, dev
-  installation, and xtasks
+## Documentation
+
+- [**Getting started**](docs/getting-started.md) — your first narration session,
+  step by step
+- [**Setup guide**](docs/setup.md) — hotkeys, browser and shell integration,
+  transcription model, configuration, troubleshooting, and uninstall
+- [**Command reference**](docs/commands.md) — every `attend` subcommand
+- [**How it works**](docs/how-it-works.md) — architecture, data flow, and the
+  merge pipeline
+- [**Extending attend**](docs/extending.md) — adding support for new editors,
+  agents, shells, and browsers
+- [**Development**](docs/development.md) — building, testing, project structure,
+  and dev installation

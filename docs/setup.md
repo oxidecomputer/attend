@@ -1,37 +1,15 @@
 # Setup guide
 
-This guide covers optional integrations, configuration, and troubleshooting. For
-initial installation, see the [quickstart in the
-README](../README.md#quick-start).
-
-## Agent integration
-
-For the agent to receive your narration, ask it to attend.
-
-In Claude Code, this is done with the `/attend` slash-command. If you use
-multiple Claude Code sessions, you can move narration from one session to
-another by invoking `/attend` in whichever session you'd like to switch to.
-
-To stop narration being delivered to this agent, use the `/unattend`
-slash-command, or ask the agent to stop listening (it will run `attend listen
---stop` on your behalf). The running background listener detects the change and
-exits naturally.
-
-You can narrate responses to the agent without leaving your editor — the only
-time you need to switch is when the agent asks for keyboard input (plan
-approval, multiple-choice questions, or permission prompts).
-
-As a security precaution, the agent only sees editor context (cursors,
-selections, file contents, diffs) from within its own working directory. If you
-navigate to files elsewhere in your editor, the agent won't be able to follow
-along. You can expand this with `include_dirs` in the config file (see
-[Configuration](#configuration)).
+This guide covers hotkeys, optional integrations, configuration, and
+troubleshooting. For installation, see the [Quick start in the
+README](../README.md#quick-start). For a first-narration walkthrough, see
+[Getting started](getting-started.md).
 
 ## Narration hotkeys
 
-Narration is controlled by four commands. You'll have the best experience if
-these are bound to hotkeys accessible without leaving your editor (or other
-applications of interest, like [browsers](#browser-integration), etc.).
+Narration is controlled by four commands. These are most convenient when bound
+to hotkeys you can reach without leaving your editor (or other applications
+like [browsers](#browser-integration)).
 
 | Command                 | Purpose                                                  |
 |-------------------------|----------------------------------------------------------|
@@ -53,13 +31,18 @@ applications of interest, like [browsers](#browser-integration), etc.).
 
 Reinstallation respects any keybinding changes you've made within Zed.
 
+Installing these hotkeys in Zed alone, though, means that you can only control
+narration when the *editor* is focused; you might also want to be able to do so
+from other applications, since `attend` can also listen to events in your
+browser, terminal, etc. For that, you need:
+
 ### Global hotkeys
 
 If you use a hotkey manager that can assign commands to keys, you can bind
 *global* hotkeys to the narrate subcommands. On macOS, you can [bind a global
 keyboard shortcut to a script using the Shortcuts
 app](https://support.apple.com/guide/shortcuts-mac/launch-a-shortcut-from-another-app-apd163eb9f95/mac).
-Pre-made shortcuts for the above 4 `attend` actions are in [`shortcuts/`](shortcuts/);
+Pre-made shortcuts for the above 4 `attend` actions are in [`shortcuts/`](../shortcuts/);
 open them on your Mac to install. You will still need to manually open the Shortcuts app
 and edit each action to assign a keyboard shortcut, because the `.shortcut` format does
 not provide a way to embed a keymapping.
@@ -156,33 +139,7 @@ clipboard_capture = true                   # capture clipboard changes (text and
 daemon_idle_timeout = "5m"                 # how long daemon idles before auto-exit ("forever" to disable)
 ```
 
-## Troubleshooting
-
-Run `attend narrate status` to check that everything is wired up correctly. It
-will report something like this:
-
-```
-Recording:      recording
-Engine:         Parakeet TDT (model downloaded)
-Idle timeout:   5m (default)
-Session:        a33c5803-8369-430d-9acf-70f24a5ba2d4
-Listener:       active
-Editors:        zed (ok)
-Shells:         fish (ok)
-Browsers:       firefox (ok)
-Accessibility:  ok
-Clipboard:      enabled
-Pending:        0 narration(s)
-Archive:        424.0 KB
-
-Paths:
-  Cache:      ~/Library/Caches/attend
-  Archive:    ~/Library/Caches/attend/narration/archive
-  Lock:       ~/Library/Caches/attend/daemon/lock
-  Config:     ~/.config/attend/config.toml
-```
-
-### Microphone and accessibility permissions (macOS)
+## Permissions (macOS)
 
 The recording daemon needs **Microphone** access for speech capture and
 **Accessibility** access for capturing text selections in other applications.
@@ -215,6 +172,43 @@ attend`) for the change to take effect.
 **If the permission prompt never appeared**, the daemon may have been blocked
 silently. Try running `attend narrate toggle` directly in a terminal to
 trigger the prompt.
+
+## Troubleshooting
+
+Run `attend narrate status` to check that everything is wired up correctly. It
+will report something like this:
+
+```
+Recording:      recording
+Engine:         Parakeet TDT (model downloaded)
+Idle timeout:   5m (default)
+Session:        a33c5803-8369-430d-9acf-70f24a5ba2d4
+Listener:       active
+Editors:        zed (ok)
+Shells:         fish (ok)
+Browsers:       firefox (ok)
+Accessibility:  ok
+Clipboard:      enabled
+Pending:        0 narration(s)
+Archive:        424.0 KB
+
+Paths:
+  Cache:      ~/Library/Caches/attend
+  Archive:    ~/Library/Caches/attend/narration/archive
+  Lock:       ~/Library/Caches/attend/daemon/lock
+  Config:     ~/.config/attend/config.toml
+```
+
+**Common issues:**
+
+- **"model not yet downloaded"**: Normal on first run. The model downloads
+  automatically when you first run `/attend` in your agent.
+- **"Accessibility: not granted"**: Add `attend` in System Settings > Privacy
+  & Security > Accessibility. See [Permissions](#permissions-macos).
+- **Narration not arriving**: Check that **Listener** shows `active`. If not,
+  run `/attend` in your agent session.
+- **Narration arriving in the wrong session**: Run `/attend` in the session
+  you want to receive narration.
 
 ## Uninstall
 

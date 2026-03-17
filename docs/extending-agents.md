@@ -16,9 +16,15 @@ agent's settings. Five hook events drive the integration:
 |-------------------|----------------------------------|------------------------------------------------------------------|
 | `SessionStart`    | Session start, clear, compact    | Clear per-session cache, auto-upgrade hooks, emit instructions   |
 | `UserPromptSubmit`| Before each user prompt          | Detect `/attend`, or query + deduplicate + emit editor context   |
-| `Stop`            | Session stops                    | Deliver pending narration or guidance                            |
-| `PreToolUse`      | Before each tool call            | Deliver pending narration between tools within a response        |
-| `PostToolUse`     | After each tool call             | Deliver pending narration between tools within a response        |
+| `Stop`            | Session stops                    | Require the agent to call `attend listen` if narration pending   |
+| `PreToolUse`      | Before each tool call            | Require the agent to call `attend listen` if narration pending   |
+| `PostToolUse`     | After each tool call             | Require the agent to call `attend listen` if narration pending   |
+
+A special case is the `PreToolUse` hook on `attend listen`, which is the **sole
+place** where the narration is *actually delivered to the agent*. This design
+forces the delivery of narration to follow a linear sequence, where the agent is
+forced to keep *exactly one* background listener running, and to receive
+narration as soon as it arrives, before doing anything else.
 
 The orchestrator (`hook/`) calls `agent.parse_hook_input()` to get a
 `HookInput`, then calls the appropriate agent output method based on the
@@ -42,8 +48,9 @@ pub enum HookKind {
 }
 ```
 
-Claude reads this from JSON on stdin. Other agents might read environment
-variables, a socket, or a config file.
+Claude reads this from JSON on stdin. Other agents might synthesize the hook
+input in entirely different ways, so the interface is deliberately non-specific
+about the manner in which the `HookInput` is obtained.
 
 ### `HookDecision` describes semantic outcomes
 
@@ -61,13 +68,13 @@ pending narration is found during an `attend listen` PreToolUse hook.
 
 Guidance reasons:
 
-| Reason                  | Meaning                                            |
-|-------------------------|----------------------------------------------------|
-| `SessionMoved`          | Narration is active in a different session         |
-| `StartReceiver`         | No receiver running: agent should start one        |
-| `NarrationReady`        | Pending narration: agent should run `attend listen`|
-| `ListenerAlreadyActive` | A listener is already running for this session     |
-| `ListenerStarted`       | A listener was just started in the background      |
+| Reason                  | Meaning                                             |
+|-------------------------|-----------------------------------------------------|
+| `SessionMoved`          | Narration is active in a different session          |
+| `StartReceiver`         | No receiver running: agent should start one         |
+| `NarrationReady`        | Pending narration: agent should run `attend listen` |
+| `ListenerAlreadyActive` | A listener is already running for this session      |
+| `ListenerStarted`       | A listener was just started in the background       |
 | `Deactivated`           | Narration was deactivated via `attend listen --stop`|
 
 ## 1. Create the agent module — `src/agent/<name>/`
@@ -214,7 +221,7 @@ Agents need instructions that teach them how to interact with attend. The shared
 templates handle protocol-level content. Your agent adds mechanism-specific
 content explaining how to actually execute commands in its environment.
 
-At minimum, your agent should:
+At minimum, your agent harness should:
 
 1. **On session start**: emit `editor_context_instructions.txt` (formatted
    with `bin_cmd`) so the agent knows how to interpret editor context.

@@ -12,36 +12,30 @@ browser. Each integration type has its own guide:
 - [**Browsers**](extending-browsers.md) — capture browser text selections as
   narration context
 
-## Architecture overview
+Before starting, set up a [development environment](development.md) so you can
+build, test, and dev-install your changes.
+
+## The pattern
+
+All four integration types follow the same pattern:
+
+1. Implement a trait on a zero-sized struct.
+2. Register it in a static slice in the parent module.
+3. The CLI wires everything up automatically — `install`, `uninstall`, `hook`,
+   and `narrate` all discover backends from the registry.
 
 ```
-editor/            Reads state from editor backends (Zed, etc.)
-  mod.rs           Editor trait, merges results from all backends into QueryResult
-  zed/             Zed backend (submodule directory)
-    mod.rs         Query (SQLite), narration install, health checks
-    ...
-
-agent/             Hook installation and output rendering for each agent
-  mod.rs           Agent trait, backend registry, resolve_bin_cmd
-  messages/        Shared message templates (protocol descriptions, guidance)
-  claude/          Claude Code agent backend
-    mod.rs         Agent trait impl (delegates to submodules)
-    ...
-
-shell/             Shell hook installation for narration context capture
-  mod.rs           Shell trait, backend registry
-  fish.rs          Fish backend (conf.d hook + completions)
-  zsh.rs           Zsh backend (preexec/precmd hooks + completions)
-
-browser/           Browser extension installation for selection capture
-  mod.rs           Browser trait, backend registry
-  firefox.rs       Firefox backend (signed XPI + native messaging)
-  chrome.rs        Chrome backend (unpacked extension + native messaging)
+editor.rs  (trait)      agent.rs  (trait)       shell.rs  (trait)     browser.rs  (trait)
+editor/                 agent/                  shell/                browser/
+  zed/    (backend)       claude/ (backend)       fish.rs (backend)     firefox.rs (backend)
+                                                  zsh.rs  (backend)     chrome.rs  (backend)
 ```
 
-All four integration types follow the same pattern: implement a trait on a
-zero-sized struct, register it in a static slice, and the CLI wires everything
-up automatically.
+## Architecture context
+
+For an overview of how the entire system fits together — data flow, the
+recording daemon, session model, hook lifecycle — see
+[How it works](how-it-works.md).
 
 ## Supporting infrastructure
 
@@ -64,22 +58,28 @@ project-local config from accumulating.
 Narration reaches the agent through two paths:
 
 1. **Hook delivery** (non-blocking): The Stop, PreToolUse, and PostToolUse
-   hooks collect pending narration files, render them as markdown wrapped in
-   `<narration>` tags, and deliver via `attend_result(PendingNarration)`.
-   PreToolUse and PostToolUse ensure narration arrives between tools within
-   a single response, not just at the end.
+   hooks interrupt the agent whenever pending narration is available, preventing
+   it from ending its turn or invoking any further tools until it receives the
+   narration by re-invoking `attend listen` (whose PreToolUse hook actually
+   delivers the narration). This ensures that the user can interrupt the agent
+   at any time, even mid-turn, and that the agent must respond to narration
+   before finishing its turn.
 
 2. **Background receiver** (blocking): When `attend_result(StartReceiver)`
-   fires, the agent starts `attend listen` in the background. The receiver
-   polls for pending files and prints them when they arrive, then exits so
-   the agent can restart it for the next narration. This means that arriving
-   narration can **prompt** a new conversational turn for the agent; without
-   this mechanism, only narration *during* the agent's turn would register
-   without manual intervention.
+   fires, the agent starts `attend listen` in the background. The receiver polls
+   for pending files and then exits immediately when they arrive so the agent
+   can restart it for the next narration. Narration is delivered to the agent
+   *exclusively* by the PreToolUse hook on `Bash(attend listen)`, forcing the
+   agent to start the listener again in order to receive narration. This
+   mechanism means that arriving narration can **prompt** a new conversational
+   turn for the agent; without this mechanism, only narration *during* the
+   agent's turn would register without manual intervention.
 
-Both paths filter narration context to the project scope (cwd + `include_dirs`)
-and relativize paths before delivery, so that there is no leak of file contents
-from outside the agent's permissioned path.
+Delivered narration is filtered to the project scope (cwd + `include_dirs`) and
+paths are relativized before delivery, so that there is no leak of file contents
+from outside the agent's permissioned path. (This does not apply to
+non-project-scoped capture sources such as the system clipboard, accessibility
+API, or browser extension).
 
 ### Receiver output protocol
 
@@ -92,4 +92,4 @@ protocol based on XML tags:
 
 Each agent's instructions teach its LLM to expect this format. If an agent's
 LLM requires fundamentally different framing, it can implement a custom
-listener, but the default protocol works well for LLMs that handle XML tags.
+listener.
