@@ -349,7 +349,10 @@ fn collect_staging(
             continue;
         }
 
-        let timestamp = file_time.unwrap_or(now);
+        // Unparseable files should be skipped.
+        let Some(timestamp) = file_time else {
+            continue;
+        };
 
         if let Ok(content) = std::fs::read_to_string(path)
             && let Ok(file_events) = serde_json::from_str::<Vec<merge::Event>>(&content)
